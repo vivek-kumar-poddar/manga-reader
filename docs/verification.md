@@ -562,3 +562,253 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run electron:compile`: PASS.
   - `npm run format:check`: PASS.
   - `npm run electron:build`: PASS. Successfully built `release/Manga Reader Setup 1.1.0.exe` (112,980,308 bytes).
+
+## Tauri v2 Step 01 — Setup Rust Toolchain & Tauri Workspace Skeleton — 2026-11-10
+
+- Migration to Rust step 01 completed.
+- Installed Rust toolchain: `rustup` with `stable-x86_64-pc-windows-gnu` and Brecht Sanders WinLibs MinGW/GCC toolchain (`gcc 16.2.0`, `dlltool`, `ld`).
+- Initialized Tauri v2 workspace skeleton in `src-tauri/`:
+  - `src-tauri/Cargo.toml`: Package `manga-reader` v1.1.0, library crate `manga_reader_lib`, with dependencies `tauri` (v2.12), `tauri-plugin-dialog`, `tauri-plugin-single-instance`, `tauri-plugin-window-state`, `tauri-plugin-shell`, `tauri-plugin-log`, `serde`, `serde_json`, `tokio`, `walkdir`, `rayon`.
+  - `src-tauri/build.rs`: Standard Tauri build script calling `tauri_build::build()`.
+  - `src-tauri/src/main.rs`: Windows subsystem configuration and entrypoint invoking `manga_reader_lib::run()`.
+  - `src-tauri/src/lib.rs`: Tauri builder initialization with logging plugin setup.
+  - `src-tauri/tauri.conf.json`: Configured identifier `com.mangareader.app`, productName `Manga Reader`, default window (1280x900, min 480x600, #18181b background), frontendDist `../dist`, devUrl `http://localhost:5173`.
+  - `src-tauri/capabilities/default.json`: Configured default capability permissions for the `"main"` window.
+- Updated root configuration:
+  - `package.json`: Added devDependencies `@tauri-apps/api` and `@tauri-apps/cli`. Added scripts `tauri: "tauri"`, `tauri:dev: "tauri dev"`, `tauri:build: "tauri build"`.
+  - `vite.config.ts`: Added `clearScreen: false`, server options `port: 5173`, `strictPort: true`, HMR config, ignored `src-tauri`, and `envPrefix: ['VITE_', 'TAURI_ENV_*']`. Disabled service worker generation when `process.env.TAURI_ENV_PLATFORM` is set.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run build`: PASS (TypeScript compilation + production bundle generated).
+  - Dev server port: Vite server verified starting on `http://localhost:5173` without port hopping.
+  - `npm run test:validation`: PASS (16/16 unit tests passed).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Step 02 — Window Setup, State Persistence, and Zoom Lockdown in Rust — 2026-11-10
+
+- Migration to Rust step 02 completed.
+- Window configuration in `src-tauri/tauri.conf.json`:
+  - Default size 1280x900, min 480x600, background `#18181b`.
+  - Window starts hidden (`"visible": false`) and is shown only after setup completion to completely eliminate cold-start white flash.
+- Window state persistence:
+  - Registered `tauri-plugin-window-state` in `src-tauri/src/lib.rs` to automatically save and restore window position, dimensions, and maximized status across sessions.
+- Zoom & navigation lockdown in `src-tauri/src/commands/window.rs` and `src-tauri/src/lib.rs`:
+  - Created `src-tauri/src/commands/mod.rs` and `src-tauri/src/commands/window.rs`.
+  - Injected `INIT_SCRIPT` evaluating before page interactions:
+    - Intercepts Ctrl + `+`, `-`, `=`, and `0` to prevent keyboard visual zoom distortion.
+    - Intercepts Ctrl + Wheel to prevent trackpad/mouse scroll zoom distortions.
+    - Intercepts `dragover` and unhandled `drop` events to prevent the webview from navigating away from `index.html` on accidental file drops.
+    - Intercepts external `http://` and `https://` anchor clicks, forwarding them to the OS default browser via `plugin:shell|open`.
+- Permissions in `src-tauri/capabilities/default.json`:
+  - Added `shell:default` and `shell:allow-open` to allow external links to open safely.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run test:validation`: PASS (16/16 unit tests in 467ms).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Step 03 — Single-Instance Process Locking in Rust — 2026-11-10
+
+- Migration to Rust step 03 completed.
+- Registered `tauri-plugin-single-instance` in `src-tauri/src/lib.rs`.
+- Added second-instance callback handler:
+  - Locates the running `"main"` `WebviewWindow`.
+  - Automatically unminimizes the window if minimized, displays it, and brings it to foreground focus (`set_focus()`).
+  - Secondary process exits immediately without spawning additional windows or competing for IndexedDB/LevelDB filesystem locks.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run test:validation`: PASS (16/16 unit tests in 479ms).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Steps 04–06 — Native Rust File Operations & Taskbar Progress — 2026-11-10
+
+- Migration to Rust steps 04, 05, and 06 completed.
+- `src-tauri/src/commands/fs.rs`:
+  - `select_folder`: Uses `tauri_plugin_dialog::DialogExt` for native OS folder picker.
+  - `list_folder`: Multi-threaded parallel recursive directory scanner using `walkdir`:
+    - Depth bounded to 64 levels (`MAX_DEPTH`).
+    - File collection bounded to 100,000 files (`MAX_SCAN_FILES`).
+    - Skips hidden files/directories starting with `.` and junk directories (`.git`, `.svn`, `.hg`, `node_modules`, `$recycle.bin`, `system volume information`).
+    - Allowed image extensions allowlisted (`.jpg`, `.jpeg`, `.png`, `.webp`, `.avif`, `.gif`, `.bmp`, `.svg`, `.ico`, `.heic`, `.heif`, `.tif`, `.tiff`, `.jxl`).
+    - Normalizes relative paths with forward slashes (`/`) for cross-platform consistency.
+    - Records file byte size and millisecond modification time (`mtimeMs`).
+  - `read_file`: High-throughput asynchronous binary streaming via `tokio::fs`:
+    - Validates image extension allowlist.
+    - Resolves and canonicalizes path with `dunce`.
+    - Enforces 100 MiB safety ceiling (`MAX_FILE_READ_BYTES`).
+    - Returns raw binary bytes using zero-copy `tauri::ipc::Response`.
+- `src-tauri/src/commands/window.rs`:
+  - `set_progress_bar`: Windows taskbar progress state control:
+    - `progress < 0.0`: `ProgressBarStatus::None` (clears taskbar indicator).
+    - `0.0 <= progress <= 1.0`: `ProgressBarStatus::Normal` with percentage fill.
+    - `progress > 1.0`: `ProgressBarStatus::Indeterminate` animation for folder scanning.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+
+## Tauri v2 Steps 08–09 — Frontend Desktop Bridge & Consumer Refactoring — 2026-11-10
+
+- Migration to Rust steps 08 and 09 completed.
+- Created `src/tauriBridge.ts`:
+  - Unified `DesktopAPI` contract: `isDesktop`, `isTauri`, `selectFolder`, `listFolder`, `readFile`, `setProgressBar`.
+  - `TauriDesktopBridge`: Implements desktop operations over `@tauri-apps/api/core` `invoke`.
+  - Seamless fallback support for legacy Electron (`LegacyElectronDesktopBridge`) and browser (`WebDesktopBridge`).
+- Updated `src/vite-env.d.ts`:
+  - Added global declarations for `window.__TAURI_INTERNALS__`, `window.desktopAPI`, and `window.electronAPI`.
+- Refactored frontend consumers:
+  - `src/main.tsx`: Uses `desktopAPI.isDesktop` for desktop environment detection. Sets `HashRouter` and initial `#/'` hash route.
+  - `src/data.ts`: Renamed `ElectronHandle` to `DesktopHandle` (retaining alias); replaced `fromElectronFolder` with `fromDesktopFolder`; updated `fileFor` and `access` to invoke `desktopAPI`.
+  - `src/App.tsx`: Removed obsolete `getElectronAPI()`; updated `pick()`, `start()`, and `finish()` to invoke `desktopAPI.selectFolder()` and `desktopAPI.setProgressBar()`.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): PASS (0 errors).
+  - `npm run test:validation`: PASS (16/16 unit tests in 471ms).
+  - `npm run build`: PASS.
+
+## Tauri v2 Steps 10–12 — Bundling, Decommissioning Electron & Verification — 2026-11-10
+
+- Migration to Rust steps 10, 11, and 12 completed.
+- Icon generation:
+  - Ran `npx @tauri-apps/cli icon logo/logo.png` to generate native multi-resolution icons (`icon.ico`, `icon.png`, `icon.icns`, 32x32, 128x128, store logos) in `src-tauri/icons/`.
+- Bundler & release optimization:
+  - Configured `src-tauri/tauri.conf.json` with NSIS targets, per-user installation mode, and identifier `com.mangareader.desktop`.
+  - Configured `[profile.release]` in `src-tauri/Cargo.toml` with `lto = true`, `codegen-units = 1`, `panic = "abort"`, and `strip = true`.
+- Decommissioned Electron:
+  - Deleted obsolete files: `electron/main.ts`, `electron/preload.ts`, `electron/preload.cjs`, `electron/tsconfig.json`, and `electron-dist/`.
+  - In `package.json`: Removed `electron`, `electron-builder`, `wait-on`, and `concurrently` from `devDependencies`. Removed all `electron:*` scripts and `build` configuration.
+  - Pruned 273 obsolete npm packages (`npm prune`). Installed `@types/node` for `vite.config.ts`.
+  - Updated `README.md` with native Tauri commands (`npm run tauri:dev`, `npm run tauri:build`).
+- End-to-End Build & Benchmark Verification:
+  - `npx tauri build`: PASS (exit code 0).
+  - Built NSIS installer: `src-tauri/target/release/bundle/nsis/Manga Reader_1.1.0_x64-setup.exe`.
+  - Built release executable: `src-tauri/target/release/manga-reader.exe`.
+  - **Installer Size Benchmark**:
+    - Electron installer: `112.98 MB` (112,980,308 bytes).
+    - Rust / Tauri installer: `2.37 MB` (2,480,179 bytes).
+    - **Reduction: -110.61 MB (97.9% smaller!)**
+  - **Binary Executable Size**:
+    - Rust release executable: `6.26 MB` (6,568,448 bytes) with all IPC commands, single-instance locking, window-state persistence, and dialog integration.
+  - `npm run test:validation`: PASS (16/16 unit tests passed).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Step 01 — Setup Rust Toolchain & Tauri Workspace Skeleton — 2026-11-10
+
+- Migration to Rust step 01 completed.
+- Installed Rust toolchain: `rustup` with `stable-x86_64-pc-windows-gnu` and Brecht Sanders WinLibs MinGW/GCC toolchain (`gcc 16.2.0`, `dlltool`, `ld`).
+- Initialized Tauri v2 workspace skeleton in `src-tauri/`:
+  - `src-tauri/Cargo.toml`: Package `manga-reader` v1.1.0, library crate `manga_reader_lib`, with dependencies `tauri` (v2.12), `tauri-plugin-dialog`, `tauri-plugin-single-instance`, `tauri-plugin-window-state`, `tauri-plugin-shell`, `tauri-plugin-log`, `serde`, `serde_json`, `tokio`, `walkdir`, `rayon`.
+  - `src-tauri/build.rs`: Standard Tauri build script calling `tauri_build::build()`.
+  - `src-tauri/src/main.rs`: Windows subsystem configuration and entrypoint invoking `manga_reader_lib::run()`.
+  - `src-tauri/src/lib.rs`: Tauri builder initialization with logging plugin setup.
+  - `src-tauri/tauri.conf.json`: Configured identifier `com.mangareader.app`, productName `Manga Reader`, default window (1280x900, min 480x600, #18181b background), frontendDist `../dist`, devUrl `http://localhost:5173`.
+  - `src-tauri/capabilities/default.json`: Configured default capability permissions for the `"main"` window.
+- Updated root configuration:
+  - `package.json`: Added devDependencies `@tauri-apps/api` and `@tauri-apps/cli`. Added scripts `tauri: "tauri"`, `tauri:dev: "tauri dev"`, `tauri:build: "tauri build"`.
+  - `vite.config.ts`: Added `clearScreen: false`, server options `port: 5173`, `strictPort: true`, HMR config, ignored `src-tauri`, and `envPrefix: ['VITE_', 'TAURI_ENV_*']`. Disabled service worker generation when `process.env.TAURI_ENV_PLATFORM` is set.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run build`: PASS (TypeScript compilation + production bundle generated).
+  - Dev server port: Vite server verified starting on `http://localhost:5173` without port hopping.
+  - `npm run test:validation`: PASS (16/16 unit tests passed).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Step 02 — Window Setup, State Persistence, and Zoom Lockdown in Rust — 2026-11-10
+
+- Migration to Rust step 02 completed.
+- Window configuration in `src-tauri/tauri.conf.json`:
+  - Default size 1280x900, min 480x600, background `#18181b`.
+  - Window starts hidden (`"visible": false`) and is shown only after setup completion to completely eliminate cold-start white flash.
+- Window state persistence:
+  - Registered `tauri-plugin-window-state` in `src-tauri/src/lib.rs` to automatically save and restore window position, dimensions, and maximized status across sessions.
+- Zoom & navigation lockdown in `src-tauri/src/commands/window.rs` and `src-tauri/src/lib.rs`:
+  - Created `src-tauri/src/commands/mod.rs` and `src-tauri/src/commands/window.rs`.
+  - Injected `INIT_SCRIPT` evaluating before page interactions:
+    - Intercepts Ctrl + `+`, `-`, `=`, and `0` to prevent keyboard visual zoom distortion.
+    - Intercepts Ctrl + Wheel to prevent trackpad/mouse scroll zoom distortions.
+    - Intercepts `dragover` and unhandled `drop` events to prevent the webview from navigating away from `index.html` on accidental file drops.
+    - Intercepts external `http://` and `https://` anchor clicks, forwarding them to the OS default browser via `plugin:shell|open`.
+- Permissions in `src-tauri/capabilities/default.json`:
+  - Added `shell:default` and `shell:allow-open` to allow external links to open safely.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run test:validation`: PASS (16/16 unit tests in 467ms).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Step 03 — Single-Instance Process Locking in Rust — 2026-11-10
+
+- Migration to Rust step 03 completed.
+- Registered `tauri-plugin-single-instance` in `src-tauri/src/lib.rs`.
+- Added second-instance callback handler:
+  - Locates the running `"main"` `WebviewWindow`.
+  - Automatically unminimizes the window if minimized, displays it, and brings it to foreground focus (`set_focus()`).
+  - Secondary process exits immediately without spawning additional windows or competing for IndexedDB/LevelDB filesystem locks.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `npm run test:validation`: PASS (16/16 unit tests in 479ms).
+  - `npm run format:check`: PASS.
+
+## Tauri v2 Steps 04–06 — Native Rust File Operations & Taskbar Progress — 2026-11-10
+
+- Migration to Rust steps 04, 05, and 06 completed.
+- `src-tauri/src/commands/fs.rs`:
+  - `select_folder`: Uses `tauri_plugin_dialog::DialogExt` for native OS folder picker.
+  - `list_folder`: Multi-threaded parallel recursive directory scanner using `walkdir`:
+    - Depth bounded to 64 levels (`MAX_DEPTH`).
+    - File collection bounded to 100,000 files (`MAX_SCAN_FILES`).
+    - Skips hidden files/directories starting with `.` and junk directories (`.git`, `.svn`, `.hg`, `node_modules`, `$recycle.bin`, `system volume information`).
+    - Allowed image extensions allowlisted (`.jpg`, `.jpeg`, `.png`, `.webp`, `.avif`, `.gif`, `.bmp`, `.svg`, `.ico`, `.heic`, `.heif`, `.tif`, `.tiff`, `.jxl`).
+    - Normalizes relative paths with forward slashes (`/`) for cross-platform consistency.
+    - Records file byte size and millisecond modification time (`mtimeMs`).
+  - `read_file`: High-throughput asynchronous binary streaming via `tokio::fs`:
+    - Validates image extension allowlist.
+    - Resolves and canonicalizes path with `dunce`.
+    - Enforces 100 MiB safety ceiling (`MAX_FILE_READ_BYTES`).
+    - Returns raw binary bytes using zero-copy `tauri::ipc::Response`.
+- `src-tauri/src/commands/window.rs`:
+  - `set_progress_bar`: Windows taskbar progress state control:
+    - `progress < 0.0`: `ProgressBarStatus::None` (clears taskbar indicator).
+    - `0.0 <= progress <= 1.0`: `ProgressBarStatus::Normal` with percentage fill.
+    - `progress > 1.0`: `ProgressBarStatus::Indeterminate` animation for folder scanning.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+
+## Tauri v2 Steps 08–09 — Frontend Desktop Bridge & Consumer Refactoring — 2026-11-10
+
+- Migration to Rust steps 08 and 09 completed.
+- Created `src/tauriBridge.ts`:
+  - Unified `DesktopAPI` contract: `isDesktop`, `isTauri`, `selectFolder`, `listFolder`, `readFile`, `setProgressBar`.
+  - `TauriDesktopBridge`: Implements desktop operations over `@tauri-apps/api/core` `invoke`.
+  - Seamless fallback support for legacy Electron (`LegacyElectronDesktopBridge`) and browser (`WebDesktopBridge`).
+- Updated `src/vite-env.d.ts`:
+  - Added global declarations for `window.__TAURI_INTERNALS__`, `window.desktopAPI`, and `window.electronAPI`.
+- Refactored frontend consumers:
+  - `src/main.tsx`: Uses `desktopAPI.isDesktop` for desktop environment detection. Sets `HashRouter` and initial `#/'` hash route.
+  - `src/data.ts`: Renamed `ElectronHandle` to `DesktopHandle` (retaining alias); replaced `fromElectronFolder` with `fromDesktopFolder`; updated `fileFor` and `access` to invoke `desktopAPI`.
+  - `src/App.tsx`: Removed obsolete `getElectronAPI()`; updated `pick()`, `start()`, and `finish()` to invoke `desktopAPI.selectFolder()` and `desktopAPI.setProgressBar()`.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): PASS (0 errors).
+  - `npm run test:validation`: PASS (16/16 unit tests in 471ms).
+  - `npm run build`: PASS.
+
+## Tauri v2 Steps 10–12 — Bundling, Decommissioning Electron & Verification — 2026-11-10
+
+- Migration to Rust steps 10, 11, and 12 completed.
+- Icon generation:
+  - Ran `npx @tauri-apps/cli icon logo/logo.png` to generate native multi-resolution icons (`icon.ico`, `icon.png`, `icon.icns`, 32x32, 128x128, store logos) in `src-tauri/icons/`.
+- Bundler & release optimization:
+  - Configured `src-tauri/tauri.conf.json` with NSIS targets, per-user installation mode, and identifier `com.mangareader.desktop`.
+  - Configured `[profile.release]` in `src-tauri/Cargo.toml` with `lto = true`, `codegen-units = 1`, `panic = "abort"`, and `strip = true`.
+- Decommissioned Electron:
+  - Deleted obsolete files: `electron/main.ts`, `electron/preload.ts`, `electron/preload.cjs`, `electron/tsconfig.json`, and `electron-dist/`.
+  - In `package.json`: Removed `electron`, `electron-builder`, `wait-on`, and `concurrently` from `devDependencies`. Removed all `electron:*` scripts and `build` configuration.
+  - Pruned 273 obsolete npm packages (`npm prune`). Installed `@types/node` for `vite.config.ts`.
+  - Updated `README.md` with native Tauri commands (`npm run tauri:dev`, `npm run tauri:build`).
+- End-to-End Build & Benchmark Verification:
+  - `npx tauri build`: PASS (exit code 0).
+  - Built NSIS installer: `src-tauri/target/release/bundle/nsis/Manga Reader_1.1.0_x64-setup.exe`.
+  - Built release executable: `src-tauri/target/release/manga-reader.exe`.
+  - **Installer Size Benchmark**:
+    - Electron installer: `112.98 MB` (112,980,308 bytes).
+    - Rust / Tauri installer: `2.37 MB` (2,480,179 bytes).
+    - **Reduction: -110.61 MB (97.9% smaller!)**
+  - **Binary Executable Size**:
+    - Rust release executable: `6.26 MB` (6,568,448 bytes) with all IPC commands, single-instance locking, window-state persistence, and dialog integration.
+  - `npm run test:validation`: PASS (16/16 unit tests passed).
+  - `npm run format:check`: PASS.

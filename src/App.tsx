@@ -48,7 +48,7 @@ import {
   indexSource,
   fromHandle,
   fromFiles,
-  fromElectronFolder,
+  fromDesktopFolder,
   droppedSources,
   access,
   errorMessage,
@@ -68,15 +68,8 @@ const Reader = lazy(() => import('./Reader'));
 const MangaDetails = lazy(() => import('./MangaDetails'));
 const SettingsPanel = lazy(() => import('./SettingsPanel'));
 const ImportComplete = lazy(() => import('./ImportComplete'));
+import { desktopAPI } from './tauriBridge';
 
-interface ElectronAppAPI {
-  isElectron: boolean;
-  selectFolder(): Promise<string | null>;
-  setProgressBar(progress: number): void;
-}
-function getElectronAPI(): ElectronAppAPI | undefined {
-  return (window as unknown as { electronAPI?: ElectronAppAPI }).electronAPI;
-}
 interface Context {
   settings: Settings;
   setSettings: (s: Settings) => void;
@@ -568,7 +561,7 @@ export default function App() {
     setScan({ phase: 'discover', done: 0, total: 0 });
     controller.current = new AbortController();
     let last = 0;
-    getElectronAPI()?.setProgressBar(2); // Indeterminate mode while discovering
+    desktopAPI.setProgressBar(2); // Indeterminate mode while discovering
     return {
       signal: controller.current.signal,
       update: (s: ScanState) => {
@@ -577,9 +570,9 @@ export default function App() {
           setScan(s);
           last = now;
           if (s.total > 0) {
-            getElectronAPI()?.setProgressBar(Math.min(1, Math.max(0, s.done / s.total)));
+            desktopAPI.setProgressBar(Math.min(1, Math.max(0, s.done / s.total)));
           } else {
-            getElectronAPI()?.setProgressBar(2);
+            desktopAPI.setProgressBar(2);
           }
         }
       },
@@ -588,7 +581,7 @@ export default function App() {
   function finish() {
     locked.current = false;
     setBusy(false);
-    getElectronAPI()?.setProgressBar(-1);
+    desktopAPI.setProgressBar(-1);
   }
   async function discover(
     read: (options: ScanOptions) => Promise<Source[]>,
@@ -664,18 +657,17 @@ export default function App() {
   async function pick(m?: Summary | Manga) {
     if (locked.current) return;
     pending.current = m;
-    // In Electron, use the native folder dialog and IPC-based file access.
+    // On desktop, use the native folder dialog and IPC-based file access.
     // This avoids File System Access API permission issues in the installed app.
-    const api = getElectronAPI();
-    if (api?.isElectron) {
+    if (desktopAPI.isDesktop) {
       let folderPath: string | null = null;
       try {
-        folderPath = await api.selectFolder();
+        folderPath = await desktopAPI.selectFolder();
       } catch {
         // dialog error — do nothing
       }
       if (!folderPath) return;
-      await discover(async (opts) => [await fromElectronFolder(folderPath!, opts)], m);
+      await discover(async (opts) => [await fromDesktopFolder(folderPath!, opts)], m);
       return;
     }
     const picker = (window as unknown as { showDirectoryPicker?: () => Promise<Directory> })

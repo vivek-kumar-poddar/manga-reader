@@ -5,20 +5,16 @@ import './style.css';
 import './controls.css';
 import App from './App';
 import './updates';
+import { isDesktop } from './tauriBridge';
 
-const isElectron =
-  location.protocol === 'file:' ||
-  navigator.userAgent.includes('Electron') ||
-  !!(window as unknown as { electronAPI?: { isElectron: boolean } }).electronAPI?.isElectron;
-
-// In Electron with HashRouter, ensure the app always starts at the root route if no hash exists.
-if (isElectron && (!location.hash || location.hash === '')) {
+// On desktop (Tauri or Electron) with HashRouter, ensure the app always starts at root route if no hash exists.
+if (isDesktop && (!location.hash || location.hash === '')) {
   location.hash = '#/';
 }
 
 const basename = new URL(document.baseURI).pathname.replace(/\/$/, '') || '/';
 // Preserve bookmarks created by the previous hash-based router.
-if (!isElectron && location.hash.startsWith('#/')) {
+if (!isDesktop && location.hash.startsWith('#/')) {
   const legacy = location.hash.slice(1);
   if (legacy.startsWith('/') && !legacy.startsWith('//')) {
     const target =
@@ -29,10 +25,10 @@ if (!isElectron && location.hash.startsWith('#/')) {
   }
 }
 
-// Electron loads from file:// which breaks BrowserRouter path matching.
-// Use HashRouter so the app always starts at the root route.
-const Router = isElectron ? HashRouter : BrowserRouter;
-const routerProps = isElectron ? {} : { basename };
+// Desktop runs on local/hash routing (tauri:// or file://) which breaks BrowserRouter path matching.
+// Use HashRouter so the app always starts at the root route without route collision.
+const Router = isDesktop ? HashRouter : BrowserRouter;
+const routerProps = isDesktop ? {} : { basename };
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

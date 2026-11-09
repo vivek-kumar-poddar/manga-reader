@@ -49,6 +49,7 @@ import {
   assertMangaLimits,
   withinTime,
 } from './limits';
+import { desktopAPI, type FolderEntry } from './tauriBridge';
 /**
  * Generate a UUID v4. Prefers crypto.randomUUID() (secure contexts only),
  * and falls back to crypto.getRandomValues() which works everywhere.
@@ -292,12 +293,11 @@ export function errorMessage(e: unknown) {
 }
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
-  // Electron: read directly from the filesystem via IPC — works across restarts.
-  const api = electronAPI();
-  if (api?.isElectron && m.localPath) {
+  // Desktop: read directly from the filesystem via IPC — works across restarts.
+  if (desktopAPI.isDesktop && m.localPath) {
     const sep = m.localPath.includes('\\') ? '\\' : '/';
     const absPath = m.localPath + sep + p.path.split('/').join(sep);
-    const buf = await withinTime(api.readFile(absPath), limits.ioTimeoutMs, 'Reading file');
+    const buf = await withinTime(desktopAPI.readFile(absPath), limits.ioTimeoutMs, 'Reading file');
     if (!buf) throw new Error('File not found on disk. The folder may have moved.');
     return new File([buf], p.path.split('/').at(-1) ?? p.path);
   }
@@ -318,8 +318,8 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
   return readFile(f);
 }
 export async function access(m: Pick<Manga, 'id' | 'handle' | 'localPath'>, request = false) {
-  // Electron: local files are always accessible via IPC; no permission model needed.
-  if (electronAPI()?.isElectron) return m.localPath ? true : sessionFiles.has(m.id);
+  // Desktop: local files are always accessible via IPC; no permission model needed.
+  if (desktopAPI.isDesktop) return m.localPath ? true : sessionFiles.has(m.id);
   if (!m.handle) return sessionFiles.has(m.id);
   try {
     return (
@@ -477,20 +477,8 @@ async function thumbnail(file: File) {
     URL.revokeObjectURL(url);
   }
 }
-// ElectronAPI shape exposed by preload.ts.
-interface ElectronAPI {
-  isElectron: boolean;
-  selectFolder(): Promise<string | null>;
-  listFolder(
-    folderPath: string,
-  ): Promise<{ relativePath: string; absolutePath: string; size: number; modified: number }[]>;
-  readFile(absolutePath: string): Promise<ArrayBuffer | null>;
-}
-function electronAPI(): ElectronAPI | undefined {
-  return (window as unknown as { electronAPI?: ElectronAPI }).electronAPI;
-}
-// Lazily reads a local file through the Electron IPC bridge (no browser permission needed).
-class ElectronHandle {
+// Lazily reads a local file through the desktop IPC bridge (no browser permission needed).
+export class DesktopHandle {
   constructor(
     readonly name: string,
     private readonly absPath: string,
@@ -498,18 +486,18 @@ class ElectronHandle {
     readonly lastModified: number,
   ) {}
   async getFile(): Promise<File> {
-    const api = electronAPI();
-    if (!api) throw new Error('Electron API not available.');
-    const buf = await api.readFile(this.absPath);
+    if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
+    const buf = await desktopAPI.readFile(this.absPath);
     if (!buf) throw new Error('File not found on disk. The folder may have moved.');
     return new File([buf], this.name, { lastModified: this.lastModified });
   }
 }
-export type SourceFile = File | FileSystemFileHandle | ElectronHandle;
+export const ElectronHandle = DesktopHandle;
+export type SourceFile = File | FileSystemFileHandle | DesktopHandle;
 export type Source = {
   title: string;
   handle?: Directory;
-  localPath?: string; // Electron only: absolute path to the folder on disk.
+  localPath?: string; // Desktop only: absolute path to the folder on disk.
   files: Map<string, SourceFile>;
   issues: Issue[];
 };
@@ -754,18 +742,17 @@ export function fromFiles(list: File[]): Source[] {
   sources.forEach(assertSourceLimits);
   return sources;
 }
-export async function fromElectronFolder(
+export async function fromDesktopFolder(
   folderPath: string,
   options: ScanOptions = {},
 ): Promise<Source> {
-  const api = electronAPI();
-  if (!api) throw new Error('Electron API not available.');
+  if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
   const folderName = folderPath.split(/[\\/]/).at(-1) ?? folderPath;
   const source: Source = { title: folderName, localPath: folderPath, files: new Map(), issues: [] };
-  let entries: { relativePath: string; absolutePath: string; size: number; modified: number }[];
+  let entries: FolderEntry[];
   try {
     entries = await withinTime(
-      api.listFolder(folderPath),
+      desktopAPI.listFolder(folderPath),
       limits.ioTimeoutMs * 5,
       'Listing folder',
     );
@@ -784,7 +771,7 @@ export async function fromElectronFolder(
       const name = relPath.split('/').at(-1) ?? relPath;
       source.files.set(
         relPath,
-        new ElectronHandle(
+        new DesktopHandle(
           name,
           entry.absolutePath,
           entry.size,
@@ -807,6 +794,7 @@ export async function fromElectronFolder(
   await warmSources([source], options);
   return source;
 }
+export const fromElectronFolder = fromDesktopFolder;
 interface Entry {
   isFile: boolean;
   isDirectory: boolean;

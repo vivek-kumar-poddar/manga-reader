@@ -48,6 +48,18 @@ The generated `dist/` folder is a complete static deployment. Upload its content
 
 Hashed assets can be cached for one year. HTML and service worker responses should be revalidated. `_headers` is supplied for hosts that support it; configure equivalent headers on other hosts.
 
+## Desktop App (Tauri v2 & Rust)
+
+Manga Reader includes a native Windows desktop application powered by a lightweight Rust backend (Tauri v2).
+
+```sh
+# Run in desktop development mode (hot-reloaded Vite + native Rust backend):
+npm run tauri:dev
+
+# Build native Windows installer (NSIS bundle in src-tauri/target/release/bundle/nsis/):
+npm run tauri:build
+```
+
 ## Supported sources
 
 - Images directly in a folder, imported as one chapter.

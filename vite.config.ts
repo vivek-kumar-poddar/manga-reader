@@ -4,13 +4,33 @@ import tailwind from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
 const isElectron = !!process.env.ELECTRON_BUILD;
+const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   base: './',
+  clearScreen: false,
+  server: {
+    port: 5173,
+    strictPort: true,
+    host: host || false,
+    hmr: host
+      ? {
+          protocol: 'ws',
+          host,
+          port: 5183,
+        }
+      : undefined,
+    watch: {
+      ignored: ['**/src-tauri/**'],
+    },
+  },
+  envPrefix: ['VITE_', 'TAURI_ENV_*'],
   plugins: [
     react(),
     tailwind(),
     !isElectron &&
+      !isTauri &&
       VitePWA({
         registerType: 'prompt',
         injectRegister: false,

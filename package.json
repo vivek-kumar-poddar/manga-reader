@@ -1,9 +1,8 @@
 {
   "name": "manga-reader",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "main": "electron-dist/main.js",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build",
@@ -15,54 +14,22 @@
     "format:check": "prettier --check src tests scripts *.ts *.json README.md AGENTS.md docs/*.md",
     "test:limits": "playwright test --project=limits",
     "test:validation": "playwright test --config=playwright.unit.config.ts",
-    "electron:compile": "tsc -p electron/tsconfig.json && node -e \"require('node:fs').copyFileSync('electron/preload.cjs', 'electron-dist/preload.cjs')\"",
-    "electron:dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
-    "electron:preview": "npm run build && npm run electron:compile && electron .",
-    "electron:build": "cross-env ELECTRON_BUILD=1 npm run build && npm run electron:compile && electron-builder"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
-  "build": {
-    "appId": "com.mangareader.app",
-    "productName": "Manga Reader",
-    "compression": "maximum",
-    "electronLanguages": [
-      "en-US",
-      "en"
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": [
-        "nsis"
-      ],
-      "icon": "logo/logo.png"
-    },
-    "nsis": {
-      "oneClick": true,
-      "allowToChangeInstallationDirectory": false
-    },
-    "files": [
-      "dist/**/*",
-      "!dist/_headers",
-      "!dist/_redirects",
-      "electron-dist/**/*",
-      "logo/logo.png",
-      "package.json"
-    ]
-  },
-  "dependencies": {},
   "devDependencies": {
     "@playwright/test": "1.63.0",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-select": "2.1.6",
     "@tailwindcss/vite": "^4.1.0",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/cli": "^2.12.4",
+    "@types/node": "^26.6.6",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.4.1",
-    "concurrently": "^10.0.6",
     "cross-env": "^10.1.0",
-    "electron": "^45.0.0",
-    "electron-builder": "^26.18.0",
     "idb": "^8.0.3",
     "lucide-react": "^0.468.0",
     "prettier": "3.9.9",
@@ -72,7 +39,6 @@
     "tailwindcss": "^4.1.0",
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
-    "vite-plugin-pwa": "^1.0.0",
-    "wait-on": "^9.5.1"
+    "vite-plugin-pwa": "^1.0.0"
   }
 }
