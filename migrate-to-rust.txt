@@ -1,0 +1,305 @@
+MIGRATION TO RUST PLAN - MANGA READER
+
+Basis: Replacement of the Electron/Node.js desktop harness with a lightweight, secure,
+and high-performance Rust backend (via Tauri v2) while keeping the existing React 19,
+TypeScript, Tailwind CSS, and IndexedDB application completely intact ("as is").
+
+HOW TO USE
+Agent entry: AGENTS.md requires reading this file first, then re-code.txt.
+Status: [COMPLETED] = checks passed; [IN PROGRESS] = partial; unmarked = pending.
+As work is completed, mark the title as completed (e.g., "01. [COMPLETED] Setup...").
+Directly below the heading, add terse Changes:, Verified:, and Keep: notes with
+paths, functions, commands, and constraints needed by the next step.
+Update docs/verification.md with evidence; keep this plan concise.
+
+================================================================================
+CRITICAL ARCHITECTURAL INVARIANTS [PRESERVE AT ALL COSTS]
+================================================================================
+1. IDENTICAL UI & WORKFLOWS ("AS IS"):
+   - Keep the existing React components, Tailwind styling, Inter & Instrument Serif
+     typography, custom controls, and animations identical. No visual regressions.
+   - Keep all reading modes: continuous vertical scroll, single-page (LTR/RTL),
+     two-page spreads, webtoon, autoplay with seconds-per-screen speed, bookmarks,
+     chapter-number search, and recent reading resumption.
+
+2. STORAGE & PERSISTENCE CONTINUITY:
+   - The frontend's IndexedDB backing store (titles, chapters, progress, bookmarks,
+     settings) lives inside the desktop webview's storage partition.
+   - Do NOT break or wipe existing user library databases.
+   - Retain localPath on Manga records for native desktop file access.
+
+3. SINGLE INSTANCE LOCKING:
+   - The desktop app MUST enforce single-instance execution (via tauri-plugin-single-instance).
+   - If a second instance is launched, focus the existing window and exit immediately
+     to prevent storage/LevelDB concurrency corruption.
+
+4. SAFE NATIVE FILE ACCESS:
+   - File reads must be strictly bounded: 100 MiB safety ceiling per image file.
+   - Folder scanning must be depth-limited (max 64 levels) and item-limited (max 100,000 files).
+   - File extensions strictly allowlisted:
+     .jpg, .jpeg, .png, .webp, .avif, .gif, .bmp, .svg, .ico, .heic, .heif, .tif, .tiff, .jxl.
+   - Ignore junk/hidden directories: .git, .svn, .hg, node_modules, $recycle.bin, system volume information.
+
+5. DESKTOP WINDOW & INPUT CONTAINMENT:
+   - Window state (x, y, width, height, maximized) must persist in app configuration.
+   - Coordinates must be validated against active monitors to avoid off-screen spawn on disconnect.
+   - Visual zoom must be locked to 1:1; intercept Ctrl + [+/-/0] and Ctrl+Wheel zoom.
+   - Drag-and-drop must not trigger navigation away from the application.
+   - External HTTP/HTTPS URLs must open in the user's default OS browser.
+   - Native Windows taskbar progress feedback: indeterminate on scan start, fractional
+     (0..1) during indexing, and cleared (-1) on finish.
+
+6. LOCAL ROUTING:
+   - Retain HashRouter on desktop to ensure routing operates cleanly without server-side
+     or file-scheme path rewrites.
+
+================================================================================
+MASTER FILE INVENTORY: NEEDED FILES AND CHANGES
+================================================================================
+
+[NEW RUST BACKEND FILES]
+- src-tauri/Cargo.toml
+  Defines Rust package metadata, binary targets, and dependencies:
+  tauri, tauri-build, serde, serde_json, walkdir, rayon, tokio,
+  tauri-plugin-dialog, tauri-plugin-single-instance, tauri-plugin-window-state,
+  tauri-plugin-shell.
+- src-tauri/tauri.conf.json
+  Configures app identifier ("com.mangareader.app"), product name ("Manga Reader"),
+  window properties (1280x900, min 480x600, #18181b background, title, icon),
+  security permissions, dev server URL (http://localhost:5173), dist dir (../dist),
+  and NSIS installer bundle specifications.
+- src-tauri/build.rs
+  Tauri build script invoking tauri_build::build().
+- src-tauri/src/main.rs
+  Windows subsystem configuration (#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")])
+  and entrypoint calling manga_reader_lib::run().
+- src-tauri/src/lib.rs
+  Tauri runtime initialization, plugin registration, command dispatch, window event
+  handling (zoom lock, drag-drop navigation prevention, external URL forwarding),
+  and ready-to-show lifecycle.
+- src-tauri/src/commands/mod.rs
+  Module re-exports for all Rust IPC commands.
+- src-tauri/src/commands/fs.rs
+  Native Rust file system commands:
+  * select_folder: Native folder picker dialog via tauri-plugin-dialog.
+  * list_folder: Multi-threaded recursive folder scanner (depth <= 64, count <= 100k,
+    image extension filter, junk folder ignore, returns size + mtime + relative/absolute paths).
+  * read_file: Asynchronous file reader with 100 MiB ceiling, extension check, returning
+    binary byte buffer (Vec<u8>).
+- src-tauri/src/commands/window.rs
+  Native window commands:
+  * set_progress_bar: Windows taskbar progress state control (-1 clear, 0..1 fraction, 2 indeterminate).
+- src-tauri/src/commands/image.rs (Optional Native Optimization)
+  Fast image dimension & header parser in Rust (PNG, JPEG, WEBP, AVIF, GIF) for
+  instant thumbnail/header extraction during folder discovery.
+- src-tauri/icons/
+  Native app icons: icon.ico (Windows multi-res), 32x32.png, 128x128.png, icon.png.
+
+[NEW / MODIFIED FRONTEND FILES]
+- NEW src/tauriBridge.ts
+  Unified desktop API implementation over @tauri-apps/api/core invoke.
+  Exposes selectFolder, listFolder, readFile, setProgressBar, isDesktop, isTauri.
+- src/vite-env.d.ts
+  TypeScript definitions for __TAURI_INTERNALS__, desktopAPI, and legacy electronAPI fallback.
+- src/main.tsx
+  Broadened desktop detection (window.__TAURI_INTERNALS__ || window.electronAPI).
+  Retains HashRouter on desktop and BrowserRouter on web.
+- src/data.ts
+  Refactor ElectronHandle into DesktopHandle using desktopAPI.
+  Refactor fromElectronFolder to fromDesktopFolder.
+  Preserve localPath storage and fallback behavior.
+- src/App.tsx
+  Replace window.electronAPI calls with desktopAPI for folder selection,
+  taskbar progress reporting, and desktop environment flags.
+- src/PageImage.tsx
+  Update image buffer retrieval to use desktopAPI.readFile, preserving concurrency
+  pool (desktopPageConcurrency = 4) and blob URL creation.
+- src/MangaDetails.tsx
+  Ensure desktop localPath checks and resume navigation remain compatible.
+- vite.config.ts
+  Tauri development server configuration: clearScreen: false, strictPort: true,
+  envPrefix: ['VITE_', 'TAURI_'].
+- package.json
+  Add @tauri-apps/api and @tauri-apps/cli to devDependencies.
+  Add scripts: "tauri:dev": "tauri dev", "tauri:build": "tauri build".
+  Remove electron, electron-builder, wait-on, concurrently, and electron: scripts.
+
+[DECOMMISSIONED / DELETED FILES]
+- electron/main.ts (superseded by src-tauri/src/*.rs)
+- electron/preload.ts (superseded by src/tauriBridge.ts)
+- electron/preload.cjs (superseded by src/tauriBridge.ts)
+- electron/tsconfig.json
+- electron-dist/ (build output directory removed)
+
+================================================================================
+NUMBERED MIGRATION STEPS
+================================================================================
+
+01. Setup Rust Toolchain & Tauri v2 Workspace Skeleton
+Path: NEW src-tauri/Cargo.toml; NEW src-tauri/build.rs; NEW src-tauri/src/main.rs;
+      NEW src-tauri/src/lib.rs; NEW src-tauri/tauri.conf.json; vite.config.ts;
+      package.json.
+Function: Cargo workspace setup, Tauri runtime builder, npm tauri scripts.
+Change: Initialize the src-tauri crate with Tauri v2. Add dependencies:
+        tauri (with custom-protocol, tray, window features), tauri-build,
+        serde, serde_json, tokio, walkdir, rayon. Add @tauri-apps/api and
+        @tauri-apps/cli to package.json. Update vite.config.ts with strictPort: true
+        and clearScreen: false. Add tauri:dev and tauri:build scripts.
+Use: Clean separation of native Rust code in src-tauri/ while keeping root frontend.
+Check: `cargo check --manifest-path src-tauri/Cargo.toml` passes with exit code 0;
+       `npm run build` succeeds; Vite server runs on port 5173 without port hopping.
+
+02. Implement Window Setup, State Persistence, and Zoom Lockdown in Rust
+Path: src-tauri/tauri.conf.json; NEW src-tauri/src/commands/window.rs;
+      src-tauri/src/lib.rs.
+Function: Window builder, state persistence, zoom & navigation event interceptor.
+Change: In tauri.conf.json, configure default window: title "Manga Reader",
+        width 1280, height 900, minWidth 480, minHeight 600, backgroundColor "#18181b",
+        hidden until ready. Integrate tauri-plugin-window-state (or custom state store
+        in app_data_dir) saving x, y, width, height, is_maximized. Verify bounds against
+        active monitors before restoring. In window setup, lock zoom factor to 1.0,
+        intercept Ctrl + '+', '-', '0' and wheel zoom events, intercept drag-and-drop
+        navigation away from index.html, and route external http/https to system browser.
+Use: Eliminate white flash on launch; prevent visual layout distortion during reading;
+     protect against accidental file drop navigation.
+Check: App launches with dark background; window size/position restored on relaunch;
+       Ctrl+scroll does not zoom the UI; external link clicks open in default browser.
+
+03. Implement Single-Instance Process Locking in Rust
+Path: src-tauri/Cargo.toml; src-tauri/src/lib.rs.
+Function: tauri-plugin-single-instance initialization, focus event.
+Change: Add tauri-plugin-single-instance to Cargo.toml. In lib.rs, register the plugin.
+        On second-instance event, find the existing window, unminimize if minimized,
+        bring it to the foreground, and exit the secondary process immediately.
+Use: Protect IndexedDB / LevelDB storage backing from concurrent file access locks.
+Check: Launching the app executable a second time focuses the existing window and
+       exits without creating a second window or conflicting processes.
+
+04. Implement High-Performance Directory Scanning and Folder Picker in Rust
+Path: NEW src-tauri/src/commands/fs.rs; NEW src-tauri/src/commands/mod.rs;
+      src-tauri/src/lib.rs.
+Function: select_folder, list_folder Tauri commands.
+Change: Implement `select_folder` utilizing tauri-plugin-dialog's folder picker.
+        Implement `list_folder(folder_path: String)` using walkdir and rayon:
+        - Max depth bounded to 64.
+        - Item count ceiling bounded to 100,000 files.
+        - Ignored folder names: .git, .svn, .hg, node_modules, $recycle.bin,
+          system volume information, and hidden folders starting with '.'.
+        - Allowed image extensions: .jpg, .jpeg, .png, .webp, .avif, .gif, .bmp,
+          .svg, .ico, .heic, .heif, .tif, .tiff, .jxl.
+        - Collect file size and mtimeMs (milliseconds timestamp).
+        - Format relativePath using forward slashes ('/') for cross-platform consistency.
+        - Return Vec<FolderEntry> serialized directly to frontend.
+Use: Fast parallel scanning leveraging Rust's multi-threaded directory traversal;
+     much faster than Node.js fs.readdirSync.
+Check: Scanning large folders (10,000+ files) completes rapidly without blocking UI;
+       relative paths use forward slashes; ignored directories are skipped.
+
+05. Implement Secure Binary File Streaming in Rust
+Path: src-tauri/src/commands/fs.rs; src-tauri/src/lib.rs.
+Function: read_file Tauri command.
+Change: Implement `read_file(absolute_path: String) -> Result<tauri::ipc::Response, String>`
+        or binary Vec<u8> response. Resolve and canonicalize path. Enforce image extension
+        allowlist. Verify target is a regular file. Enforce MAX_FILE_READ_BYTES = 100 MiB.
+        Read asynchronously via tokio::fs::read. Return binary data directly to the webview
+        without base64 overhead.
+Use: High-throughput, zero-copy binary streaming for chapter page images.
+Check: File reads of valid images succeed; files > 100 MiB or non-image files return an error;
+       reading missing or locked files returns a clean handled error without crashing.
+
+06. Implement Windows Taskbar Progress Bar in Rust
+Path: src-tauri/src/commands/window.rs; src-tauri/src/lib.rs.
+Function: set_progress_bar Tauri command.
+Change: Implement `set_progress_bar(window: tauri::Window, progress: f64)`.
+        If progress < 0.0: clear taskbar progress (ProgressBarState::None).
+        If progress is between 0.0 and 1.0: set fractional progress (ProgressBarState::Normal { progress: round(progress * 100) }).
+        If progress > 1.0: set indeterminate progress (ProgressBarState::Indeterminate).
+Use: Provides native Windows OS feedback during large folder scans and chapter indexing.
+Check: Taskbar icon displays indeterminate animation on scan start, fractional fill
+       during chapter indexing, and returns to normal state on completion.
+
+07. (Optional Native Optimization) Native Image Header Parsing in Rust
+Path: NEW src-tauri/src/commands/image.rs; src-tauri/Cargo.toml.
+Function: get_image_dimensions Tauri command.
+Change: Add lightweight header parser in Rust (e.g., imagesize crate or minimal byte
+        reader for PNG, JPEG, GIF, WEBP, AVIF). Reads the first 64 KB of the file,
+        extracts width and height in Rust threads during folder discovery, and caches
+        it in discovery records.
+Use: Offloads image dimension discovery from browser canvas decode to Rust worker threads,
+     speeding up initial folder import and layout reservation.
+Check: Dimension parsing produces identical width/height to frontend imageDimensions.ts;
+       malformed headers fail gracefully without blocking discovery.
+
+08. Create Frontend Desktop Bridge (tauriBridge.ts) & Update Types
+Path: NEW src/tauriBridge.ts; src/vite-env.d.ts.
+Function: DesktopAPI interface, tauriBridge implementation, type definitions.
+Change: Create unified `desktopAPI` conforming to the existing desktop contract:
+        interface DesktopAPI {
+          isDesktop: boolean;
+          isTauri: boolean;
+          selectFolder(): Promise<string | null>;
+          listFolder(folderPath: string): Promise<FolderEntry[]>;
+          readFile(absolutePath: string): Promise<ArrayBuffer | null>;
+          setProgressBar(progress: number): void;
+        }
+        Implement using `@tauri-apps/api/core` `invoke`. Handle binary response conversion
+        (Uint8Array / ArrayBuffer). In vite-env.d.ts, add desktopAPI and __TAURI_INTERNALS__.
+Use: Clean abstraction barrier decoupling frontend React components from backend runtime.
+Check: TypeScript typecheck passes with `npm run typecheck`; all calls map to Tauri commands.
+
+09. Refactor Frontend Consumers to Use Desktop Bridge
+Path: src/main.tsx; src/App.tsx; src/data.ts; src/PageImage.tsx; src/MangaDetails.tsx.
+Function: isDesktop detection, folder picking, taskbar updates, image loading, routing.
+Change: In main.tsx, detect desktop environment via `desktopAPI.isDesktop`.
+        In data.ts, rename ElectronHandle to DesktopHandle (retaining legacy alias).
+        Update `fromElectronFolder` to `fromDesktopFolder` using `desktopAPI.listFolder`.
+        In App.tsx, update `pick()` to invoke `desktopAPI.selectFolder()` and `desktopAPI.setProgressBar()`.
+        In PageImage.tsx, load image buffers via `desktopAPI.readFile(page.path)`.
+        Ensure HashRouter remains active for desktop builds.
+Use: Frontend seamlessly communicates with Rust backend with zero change to reader logic,
+     autoplay, bookmarks, or IndexedDB storage.
+Check: Folder import works; reader renders pages; continuous scroll is smooth; bookmarks
+       and progress persist; no missing API errors in console.
+
+10. Generate App Icons and Configure Tauri Bundler
+Path: src-tauri/icons/*; src-tauri/tauri.conf.json; logo/logo.png.
+Function: Multi-resolution icon generation, NSIS installer configuration.
+Change: Run `npx @tauri-apps/cli icon logo/logo.png` to generate Windows icon.ico,
+        PNG sizes (32x32, 128x128, 512x512). In tauri.conf.json, configure:
+        - bundle: { active: true, targets: ["nsis"], icon: [...] }
+        - nsis: { oneClick: true, perMachine: false }
+        - optimize release profile: lto = true, codegen-units = 1, panic = "abort", strip = true.
+Use: Professional native Windows installer and executable branding matching v1.1.0 release.
+Check: Generated icon files exist; release build produces Manga Reader Setup.exe in
+       src-tauri/target/release/bundle/nsis/.
+
+11. Decommission Electron Runtime and Clean Up Project
+Path: package.json; README.md; DELETE electron/; DELETE electron-dist/.
+Function: Remove obsolete dependencies, delete old main/preload scripts, update build scripts.
+Change: Delete electron/main.ts, electron/preload.ts, electron/preload.cjs, electron/tsconfig.json,
+        and electron-dist/. In package.json, remove electron, electron-builder, wait-on,
+        concurrently from devDependencies. Remove electron:* scripts. Remove "build" section
+        (electron-builder config). Update README.md with Tauri commands (npm run tauri:dev,
+        npm run tauri:build).
+Use: Eliminate 300+ MB of obsolete node_modules and dead Electron code; clean project tree.
+Check: No remaining references to Electron in package.json; `npm run build` succeeds;
+       `npm run tauri:build` builds complete installer without errors.
+
+12. End-to-End Verification, Performance Benchmarking, and Regression Testing
+Path: docs/verification.md; tests/*.
+Function: Full verification suite and benchmark evidence capture.
+Change: Run unit validation tests: `npm run test:validation`.
+        Perform acceptance test against baseline manga libraries:
+        - Import library (small, large, nested folders).
+        - Continuous scroll 60 FPS page reading.
+        - Single-page mode with RTL navigation and two-page spreads.
+        - Autoplay timing (seconds per screen) and resume position.
+        - Bookmarks shelf persistence and removal.
+        - Settings panel: clear library, backup export and atomic restore.
+        - Window state persistence across relaunch and multi-monitor setup.
+        - Measure binary installer size (target: <= 15 MB vs 107 MB Electron).
+        - Measure idle RAM usage (target: <= 80 MB vs 350 MB Electron).
+        Record results in docs/verification.md.
+Use: Certify complete functional parity, improved performance, and zero regressions.
+Check: All verification checks PASS; title marked [COMPLETED].
+

@@ -1,0 +1,200 @@
+{
+  "date": "2026-09-28T14:56:26.026Z",
+  "node": "v22.23.3",
+  "tests": {
+    "startTime": "2026-09-28T14:55:56.573Z",
+    "duration": 8030.884999999999,
+    "expected": 6,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  },
+  "metrics": {
+    "small-metrics": {
+      "importMs": 287,
+      "files": 6,
+      "bytes": 720
+    },
+    "large-metrics": {
+      "importMs": 1752,
+      "pages": 1000,
+      "bytes": 120000,
+      "renderMs": 557,
+      "heap": {
+        "usedSize": 21155268,
+        "totalSize": 43679744,
+        "embedderHeapUsedSize": 111658400,
+        "backingStorageSize": 4146929
+      },
+      "dom": 2133,
+      "metrics": [
+        {
+          "name": "Timestamp",
+          "value": 2893.434225
+        },
+        {
+          "name": "AudioHandlers",
+          "value": 0
+        },
+        {
+          "name": "AudioWorkletProcessors",
+          "value": 0
+        },
+        {
+          "name": "Documents",
+          "value": 1441
+        },
+        {
+          "name": "Frames",
+          "value": 1004
+        },
+        {
+          "name": "JSEventListeners",
+          "value": 3175
+        },
+        {
+          "name": "LayoutObjects",
+          "value": 7702
+        },
+        {
+          "name": "MediaKeySessions",
+          "value": 0
+        },
+        {
+          "name": "MediaKeys",
+          "value": 0
+        },
+        {
+          "name": "Nodes",
+          "value": 13290
+        },
+        {
+          "name": "Resources",
+          "value": 454
+        },
+        {
+          "name": "ContextLifecycleStateObservers",
+          "value": 1450
+        },
+        {
+          "name": "V8PerContextDatas",
+          "value": 2
+        },
+        {
+          "name": "WorkerGlobalScopes",
+          "value": 0
+        },
+        {
+          "name": "UACSSResources",
+          "value": 0
+        },
+        {
+          "name": "RTCPeerConnections",
+          "value": 0
+        },
+        {
+          "name": "ResourceFetchers",
+          "value": 1441
+        },
+        {
+          "name": "AdSubframes",
+          "value": 0
+        },
+        {
+          "name": "DetachedScriptStates",
+          "value": 2
+        },
+        {
+          "name": "ArrayBufferContents",
+          "value": 433
+        },
+        {
+          "name": "LayoutCount",
+          "value": 1007
+        },
+        {
+          "name": "RecalcStyleCount",
+          "value": 1008
+        },
+        {
+          "name": "LayoutDuration",
+          "value": 0.232174
+        },
+        {
+          "name": "RecalcStyleDuration",
+          "value": 0.023546
+        },
+        {
+          "name": "DevToolsCommandDuration",
+          "value": 0.044271
+        },
+        {
+          "name": "ScriptDuration",
+          "value": 0.236943
+        },
+        {
+          "name": "V8CompileDuration",
+          "value": 0
+        },
+        {
+          "name": "TaskDuration",
+          "value": 2.212122
+        },
+        {
+          "name": "TaskOtherDuration",
+          "value": 1.675188
+        },
+        {
+          "name": "ThreadTime",
+          "value": 2.288023
+        },
+        {
+          "name": "ProcessTime",
+          "value": 2.865584
+        },
+        {
+          "name": "JSHeapUsedSize",
+          "value": 21155820
+        },
+        {
+          "name": "JSHeapTotalSize",
+          "value": 43679744
+        },
+        {
+          "name": "FirstMeaningfulPaint",
+          "value": 0
+        },
+        {
+          "name": "DomContentLoaded",
+          "value": 2890.977534
+        },
+        {
+          "name": "NavigationStart",
+          "value": 2890.886566
+        }
+      ],
+      "browser": "153.0.8010.12",
+      "device": {
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "Intel(R) Core(TM) i7-14700K",
+        "memory": 68427071488
+      },
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "fixture": "synthetic SVG; excludes real comic decode cost"
+    }
+  },
+  "assets": {
+    "index-8p7SM53o.js": {
+      "bytes": 491392,
+      "sha256": "0443298343257a92a1bd9965f133a58a693083c875f33684f23b09a18fb6ac9b"
+    },
+    "index-oIOY4Shz.css": {
+      "bytes": 58364,
+      "sha256": "39a94be1e539f6ec4a1a0a49d2e48367673ec0303825ae98382b560a358266ef"
+    }
+  }
+}

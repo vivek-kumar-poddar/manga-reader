@@ -1,0 +1,6 @@
+# Reader routes must load the app without changing the browser URL.
+# Keep rules narrow so assets, the manifest and sw.js are served unchanged.
+/manga-reader/bookmarks /manga-reader/index.html 200
+/manga-reader/read/:id /manga-reader/index.html 200
+/manga-reader/:slug/ch* /manga-reader/index.html 200
+/manga-reader/:slug/ /manga-reader/index.html 200

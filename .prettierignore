@@ -1,0 +1,8 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+tests/fixtures/generated/
+docs/baseline/
+package-lock.json
+*.tsbuildinfo

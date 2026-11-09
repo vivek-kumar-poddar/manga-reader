@@ -1,0 +1,68 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build Outputs & Bundles
+dist/
+build/
+electron-dist/
+release/
+src-tauri/target/
+target/
+*.exe
+*.msi
+*.dmg
+*.deb
+*.app
+*.rpm
+
+# Testing & Coverage
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+tests/fixtures/generated/
+tests/fixtures/corrupt/
+coverage/
+
+# Tooling & Compiler Caches
+*.tsbuildinfo
+.vite/
+.eslintcache
+.cache/
+.parcel-cache/
+.turbo/
+
+# Logs & Temporary Files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+err.txt
+out.txt
+stderr.txt
+stdout.txt
+tmp/
+temp/
+.sites-runtime
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Operating System & IDE
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json

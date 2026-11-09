@@ -1,0 +1,642 @@
+RE-CODE PLAN - MANGA READER
+
+Basis: programming-guidelines.txt, sections 1-18. Section 19 ends at
+"Automate inexpensive"; automated checks below are proposed project policy.
+Apply the supplied space-agency-inspired principles: predictable execution,
+bounded resources, explicit ownership, failure recovery, measured performance,
+and traceable verification. This plan does not claim agency certification.
+
+HOW TO USE
+Agent entry: AGENTS.md requires reading migrate-to-rust.txt first, then this file.
+Status: [COMPLETED] = checks passed; [IN PROGRESS] = partial; unmarked = pending.
+Next: 06. Steps 01-05 complete; 06-22 pending.
+Execute in order; land small, reviewable changes. Paths are repository-relative.
+Existing function names identify edit points; NEW marks proposed files/functions.
+G# references the corresponding guideline section. Each Check is acceptance
+evidence to record against the step ID. Do not rewrite working features at once.
+
+CRITICAL ARCHITECTURAL INVARIANT [DO NOT ATTEMPT]:
+DO NOT implement custom protocol schemes (e.g., manga:// or protocol.registerSchemesAsPrivileged).
+This breaks the Electron/Chromium/Windows setup: it destroys Chromium's file:// storage security
+context and prevents LevelDB/IndexedDB backing store initialization. Reverted on 2026-11-06.
+All desktop file access MUST use the verified IPC pipeline (read-file via fs.promises.readFile).
+
+01. [COMPLETED] Establish behavior and performance baselines [G7, G8, G18]
+Changes: AGENTS.md first-read rule; Playwright; 6 browser tests; fixture generator;
+         docs/baseline/before-format/{backup,measurements}.json; README commands.
+Verified: Original build + 6/6 tests PASS; migration/re-link/restore/offline checked.
+Keep: Isolated profiles; SVG timings != real decode benchmarks; docs/verification.md.
+Path: package.json; README.md; NEW tests/fixtures/; NEW docs/verification.md.
+Function: existing build script; NEW import/reader/backup scenarios.
+Change: Record import, re-link, resume, bookmark, restore, and offline behavior.
+Use: Small, large, corrupt, deeply nested, and duplicate-name fixture libraries;
+     record fixture size, browser, device, build, latency, heap, and DOM count.
+Check: Reproduce baseline; retain a backup and migration fixtures before changes.
+
+02. [COMPLETED] Make code inspectable before restructuring [G1, G2, G14]
+Changes: Formatted src/config/tests/docs; Prettier 3.9.9; format/format:check scripts;
+         docs/baseline/after-format/{backup,measurements}.json retained.
+Verified: format:check + production build + 6/6 browser tests PASS.
+Keep: No logic/schema changes. npm run test:baseline; npm run format:check.
+Path: src/*.ts; src/*.tsx; package.json; NEW formatter configuration.
+Function: App, ReaderView, data.ts exports, SettingsPanel, PageImage.
+Change: Expand compressed statements; use consistent formatting and explicit
+        branches. Keep this change mechanical; preserve public signatures.
+Use: One formatter; readable source; production minification stays in the build.
+Check: Build passes; critical baseline workflows behave identically.
+
+03. [COMPLETED] Define shared contracts and operational limits [G3, G4, G5, G17]
+Changes: model.ts types/defaults; data.ts compatibility exports. limits.ts caps,
+         guards/withinTime; data.ts import/backup/write limits, scan backpressure,
+         bounded task Set/background queue. PageImage queue64 + resize cleanup;
+         imageDimensions header/pixel caps; SettingsPanel pre-read backup cap;
+         Reader bookmark cap; paths bounded slug loop; updates named deadlines.
+         Fixed legacy depth off-by-one/root-cover chapter count. docs/limits.md;
+         tests/limits.spec.ts + test:limits; README/docs/formatter scope updated.
+Verified: format:check + build PASS; 20 browser tests PASS (14 limits +6 baseline);
+          stricter unique-key boundary fixtures rechecked PASS.
+Keep: Schema=2; depth=64; index workers=3; reader=1/2; queue=64. Full parsing=04.
+      Guards != schema validation; timeouts != cancellation. Preserve cap guards
+      during 10-13 refactors; rationale/loop audit: docs/limits.md.
+Path: src/data.ts; NEW src/model.ts; NEW src/limits.ts.
+Function: Page, Position, Chapter, Manga, Summary, Settings; defaults.
+Change: Move domain types/defaults to model.ts. Define named limits for backup
+        bytes, titles, pages, bookmarks, path length, depth, pixels, queued jobs,
+        decode concurrency, and timeout durations; document units and rationale.
+Use: Preserve existing depth=64 and decode concurrency=3 initially; choose other
+     ceilings from step 01 measurements. Reject excess input with a clear reason.
+Check: Every limit has boundary cases; every processing loop has an exit bound.
+
+04. [COMPLETED] Validate every imported record before dereferencing [G5, G7, G15]
+Changes: NEW src/validation.ts; ValidationError; validateBackup, parsePosition,
+         parseSettings, parseManga, parseChapter, parsePage, validateRelativePath;
+         data.ts re-exports compatibility; SettingsPanel.tsx checks size <= backupBytes;
+         NEW tests/validation.spec.ts (13 unit tests) + npm run test:validation;
+         playwright.unit.config.ts; docs/verification.md updated.
+Verified: npm run test:validation PASS (13/13 in 432ms); npm run build PASS;
+          npm run electron:compile PASS.
+Keep: Allowlisted record construction without object spreading. Traversal, duplicate ID,
+      fractional page index, and NaN checks enforced at ingestion boundary.
+Path: src/data.ts -> NEW src/validation.ts; src/SettingsPanel.tsx.
+Function: validateBackup, matchingPosition, importData; NEW parsePosition,
+          parseSettings, parseManga, validateRelativePath.
+Change: Accept unknown; check objects/null, arrays, scalar types, finite numbers,
+        integer indexes, enum values, timestamps, lengths, and duplicate keys.
+        Reject unsafe paths, duplicate IDs/chapter keys/page paths, and oversized
+        collections. Construct allowlisted records instead of spreading input.
+Use: Check file.size before file.text(); validate fractions in [0,1], valid page
+     references, positive bounded dimensions, and booleans without coercion.
+Check: Null entries, malformed bookmarks, fractional indexes, NaN in persisted
+       objects, traversal paths, and duplicate IDs fail without any writes.
+
+05. [COMPLETED] Validate stored settings and metadata on read [G5, G7, G12]
+Changes: In App.tsx, parseSettings on IndexedDB load & setSettings write;
+         In data.ts, listLibrary parses and filters stored summaries via parseSummary;
+         In data.ts, getManga validates stored records via parseManga, parses progress
+         positions and bookmarks, and returns undefined on corrupt records without crashing;
+         In validation.ts, added parseSummary, extended parseManga to preserve localPath/handle/cover.
+Verified: npm run test:validation PASS (16/16 tests in 528ms); npm run build PASS;
+          npm run electron:compile PASS; docs/verification.md updated.
+Keep: Safe defaults for invalid preferences; corrupt records caught cleanly without library wipe.
+Path: src/App.tsx; src/data.ts; src/validation.ts (from step 04).
+Function: App initialization, setSettings, getManga, listLibrary.
+Change: Reuse validators for IndexedDB reads and settings writes. Migrate known
+        legacy values explicitly; reject unsupported versions. Preserve shelfSort
+        during backup round trips. Show a recoverable error for invalid metadata.
+Use: Safe defaults for invalid optional preferences; never erase the library as
+     a repair shortcut. Separate malformed data from unavailable storage.
+Check: Old settings load deterministically; damaged records do not crash Reader.
+
+-- [MAINTENANCE] Custom Fonts & Electron Startup Routing Fix (v1.1.0)
+Changes: Embedded local fonts (Inter & Instrument Serif); set Inter font size to 16px in style/controls.css;
+         Fixed Electron start-page bug: created electron/preload.cjs (CommonJS require),
+         updated electron:compile, broadened isElectron detection in src/main.tsx,
+         added /index.html route in App.tsx and slug guard in MangaDetails.tsx.
+Verified: 16/16 unit tests PASS; format:check PASS; Manga Reader Setup 1.1.0.exe built.
+Keep: Preload script must stay CommonJS (.cjs) when root package.json is type:module;
+      Preserve /index.html defensive route in App.tsx for file:// and HashRouter loads.
+
+06. Separate persistence from scanning [G2, G6, G12]
+Path: src/data.ts -> NEW src/storage.ts; src/App.tsx; src/Bookmarks.tsx;
+      src/SettingsPanel.tsx.
+Function: db, summary, listLibrary, getManga, saveManga, saveProgress,
+          deleteManga, clearLibrary; BookmarkShelf.remove.
+Change: Move database ownership into storage.ts; define a typed idb DBSchema.
+        Replace direct component database writes with narrow repository functions.
+        Prepare new records without mutating caller objects before tx.done.
+Use: Preserve existing atomic per-title transactions and separate progress store;
+     return committed metadata so callers receive the actual revision and slug.
+Check: Aborted writes leave both persisted data and caller state unchanged.
+
+07. Make upgrade failure explicit and recoverable [G6, G7, G12]
+Path: src/storage.ts (step 06); src/App.tsx.
+Function: openDB upgrade/blocking/blocked callbacks; NEW migrateV1ToV2.
+Change: Give migration work an explicit rejection handler; abort the upgrade on
+        failure and surface database-open failure. Keep migration awaits limited
+        to IndexedDB requests; keep blocked/versionchange handling observable.
+Use: Versioned migration fixtures; transactions for schema/data changes.
+Check: Failed migration rolls back; two-tab upgrade prompts recovery; reopening
+       preserves covers, progress, bookmarks, and summaries exactly once.
+
+08. Make backup restore atomic [G6, G7, G10, G12]
+Path: src/SettingsPanel.tsx; src/storage.ts.
+Function: importData, clear; NEW restoreBackup, resetProgress.
+Change: Replace per-title restore commits with one bounded restore transaction
+        across manga, summaries, covers, progress, and settings. Validate and
+        prepare all records first; preserve existing local handles/covers.
+        Update UI/settings only after commit; block overlapping restore actions.
+Use: Explicit transaction helper; coordinate background jobs and active reader
+     writes. Reset progress directly without rebuilding every cover/title record.
+Check: Inject failure on a later title; no earlier title or setting changes.
+       Repeat restore safely; retry after failure; verify bookmark reset policy.
+
+09. Make progress durability observable [G6, G7, G10]
+Path: src/Reader.tsx; src/storage.ts; src/updates.ts.
+Function: ReaderView.flush, capture, goChapter, toggleBookmark; saveProgress;
+          applyUpdate.
+Change: Track an in-flight save and snapshot revision. Mark a snapshot saved only
+        after commit; retain newer dirty state during older writes. Return the
+        pending promise to every flush caller. Propagate save failure to update
+        callers; currently flush catches failure and can let reload continue.
+Use: saveProgress returns saved/stale/missing explicitly; coalesce pending
+     snapshots per chapter. Catch fire-and-forget failures at UI event boundaries.
+Check: Delayed/failed writes cannot trigger reload; rapid edits retain the newest
+       snapshot; rejected stale writes are not reported as successful saves.
+
+10. Define concurrency ownership across tabs/jobs [G7, G10]
+Path: src/storage.ts; src/data.ts background functions; src/Bookmarks.tsx.
+Function: saveManga, saveProgress, prepareChapter, scheduleBackground,
+          stopBackground, drainBackground, remove.
+Change: Replace timestamp-only index identity with a persisted revision updated
+        transactionally. Check revision before committing prepared dimensions.
+        Apply bookmark add/remove as transaction operations instead of replacing
+        a stale bookmark array. Specify conflict policy for reading positions.
+Use: Database transactions for correctness; optional BroadcastChannel only for
+     UI invalidation. Store lightweight background job IDs/revisions, not all Manga.
+Check: Re-index/delete during preparation cannot resurrect data; concurrent
+       bookmark changes survive; same-millisecond re-index detects stale work.
+
+11. Bound discovery work and cancellation [G3, G4, G10]
+Path: src/data.ts -> NEW src/importScan.ts.
+Function: fromHandle, droppedSources, fromFiles, warmSources, pooled,
+          discardScan; nested walk/pump functions.
+Change: Replace recursive traversal with an explicit bounded stack. Bound entry
+        counts, pending decode jobs, and retained task promises; apply backpressure
+        while discovering. Check cancellation before/after each asynchronous read.
+Use: One scan-owned AbortController; fixed worker count; progressive reporting;
+     deadlines for legacy callbacks. Stop scheduling immediately on cancellation.
+Check: Huge/deep folders terminate predictably; cancellation settles the scan;
+       no unhandled rejection or committed unfinished title; queue stays capped.
+
+12. Give page-image tasks a removable lifecycle [G4, G6, G10]
+Path: src/PageImage.tsx; NEW src/imageQueue.ts.
+Function: queue, pump, PageImage loading effect; NEW enqueueImage.
+Change: Return a cancellation handle; remove queued tasks when pages leave range
+        or unmount. Deduplicate by title revision/path/quality; bound pending work.
+        Catch worker rejection and always release the active slot.
+Use: Visible-page priority; existing mobile/desktop concurrency as a starting
+     point; ignore late results from operations the browser cannot cancel.
+Check: Fast scrolling and route changes do not retain obsolete tasks or URLs;
+       one failed image cannot stall the queue; a visible page remains retryable.
+
+13. Centralize safe image decoding and cleanup [G4, G5, G6, G15]
+Path: src/data.ts; src/imageDimensions.ts; src/PageImage.tsx;
+      NEW src/images.ts.
+Function: dimensions, thumbnail, scanImage, headerDimensions; bitmap resize path.
+Change: Share dimension limits and decode cleanup. Validate pixels before costly
+        work where headers allow it; validate again after fallback decoding.
+        Guard null canvas contexts; close ImageBitmap in finally, revoke URLs,
+        clear image handlers/src, and release canvas memory on every exit.
+Use: One-settlement callback wrapper with timeout/abort cleanup; preserve the
+     small-header fast path. A timeout alone does not cancel browser decoding.
+Check: Truncated headers, extreme dimensions, decoder failure, cancellation, and
+       missing canvas context release resources and return actionable errors.
+
+14. Make import state and failure outcomes explicit [G2, G6, G7]
+Path: src/App.tsx; src/ImportDialogs.tsx; src/ImportComplete.tsx;
+      NEW src/useImport.ts.
+Function: discover, runImport, pick, drop, start, finish.
+Change: Move orchestration into one owner; model idle/discovering/preview/indexing/
+        complete/cancelled/failed states with a discriminated union. Dispose staged
+        scans on every exit. Preserve the existing per-title commit boundary.
+Use: Stable operation ID and AbortController; ignore callbacks from old operations.
+     Report completed titles separately from failed/uncommitted titles.
+Check: Cancel, retry, drop, re-link, and unmount cannot leave busy state stuck or
+       display stale results; completed-title count matches committed records.
+
+15. Replace silent meaningful failures with bounded diagnostics [G6, G16]
+Path: src/App.tsx; src/data.ts; src/updates.ts; NEW src/diagnostics.ts.
+Function: Cover, resumeBackground, drainBackground, errorMessage;
+          service-worker registration/update checks.
+Change: Distinguish expected abort/unsupported-feature cases from storage and
+        processing failures. Report operation, code, safe identifier, retryability,
+        and duration. Surface persistent failures with a recovery action.
+Use: Bounded local diagnostic buffer; deduplicate repetitive failures; omit file
+     contents, full local paths, and private titles from routine diagnostics.
+Check: Storage denial and background preparation failure can be diagnosed;
+       expected cancellation stays quiet; diagnostic memory stays bounded.
+
+16. Remove measured repeated work [G8, G9, G11, G12]
+Path: src/data.ts; src/storage.ts; src/Bookmarks.tsx.
+Function: prepareChapter, naturalOrder, warmSources, allManga, listLibrary,
+          saveManga, BookmarkShelf loading effect.
+Change: Build a page-path Map once instead of find() per page in prepareChapter.
+        Cache sort tokens within one scan; prepare only newly discovered entries.
+        Export metadata without loading covers; iterate records with bounded memory.
+Use: Profile before adding indexes; if scans dominate, migrate a unique slug index
+     and query bookmark-bearing records directly. Keep normal listing read-only
+     once legacy slug backfill is complete.
+Check: Identical order/progress mapping; lower allocation and query count on the
+       baseline large fixture; backup export enforces an explicit size bound.
+
+17. Keep long chapters responsive [G8, G9, G13]
+Path: src/Reader.tsx; src/PageImage.tsx; src/style.css;
+      NEW src/readerGeometry.ts; NEW src/useReadingProgress.ts.
+Function: ReaderView, measure, capture, restore, animate, flush.
+Change: Extract pure geometry and persistence ownership first. If baseline DOM
+        cost warrants it, window continuous pages with top/bottom spacers and
+        prefix offsets computed from dimensions; retain the binary-search lookup.
+Use: Stable page-path anchors through resize/zoom/dimension updates; one scheduled
+     measurement per frame; bound traversal within each animation frame.
+Check: Large chapters remain responsive; restore, autoplay, RTL spreads, keyboard
+       navigation, and accessibility remain correct at viewport boundaries.
+
+18. Make application lifetime explicit [G2, G4, G6]
+Path: src/updates.ts; src/main.tsx; src/Reader.tsx; src/useInterfaceMotion.ts.
+Function: service-worker module initialization, withTimeout, applyUpdate;
+          reader effects and animation-frame callbacks.
+Change: Introduce NEW initializeUpdates() returning dispose(); own every timer,
+        event listener, observer, and animation frame. Register once; clean up on
+        disposal. Track currently untracked scheduled frame callbacks in Reader.
+Use: Explicit initialization at application startup; one-settlement update waits;
+     preserve save-before-reload and offline operation.
+Check: Mount/dispose/remount does not duplicate checks or listeners; late callbacks
+       cannot modify disposed state; update failure leaves the current app usable.
+
+19. Automate meaningful verification [G14, G18; proposed checks for partial G19]
+Path: package.json; tsconfig.json; NEW eslint.config.js; NEW tests/;
+      NEW .github/workflows/verify.yml (if GitHub hosts the project).
+Function: NEW format:check, lint, typecheck, test, test:e2e scripts.
+Change: Preserve strict TypeScript; stage noUncheckedIndexedAccess fixes. Enforce
+        hook dependencies and handled promises. Add a small justified test stack
+        for pure logic, real-browser IndexedDB, and critical user workflows.
+Use: Unit tests for validators/sorting/position mapping; integration tests for
+     rollback/migrations/save races; browser tests for import/read/resume/restore.
+     Use the committed package-manager lockfile and reproducible installation.
+Check: Formatting, lint, types, targeted tests, and production build pass; test
+       offline, denied permission, quota failure, cancellation, and multi-tab races.
+
+20. Close each change with traceable evidence [G1, G7, G8, G18]
+Path: docs/verification.md (step 01); README.md; reviewed source files.
+Function: All changed public operations and lifecycle owners.
+Change: Record step ID -> guideline -> implementation -> test/measurement -> result.
+        Document limits, schema compatibility, recovery behavior, and unresolved
+        defects. Review invariants and failure paths before release.
+Use: Small commits; migration fixtures as rollback evidence; compare performance
+     on the same device/browser/fixtures. Set numeric budgets from measured data.
+Check: No unhandled failures, stale commits, unbounded queues, or unexplained
+       regressions in tested workflows; older stored data upgrades successfully.
+
+21. Simplify the library screen without removing useful actions [G1, G2, G13]
+Path: src/App.tsx (Library, sortedLibrary); src/style.css; src/DailyWelcome.tsx.
+Change: Keep the full import/drop panel for an empty library; use a compact Add
+        folder action and drop target once titles exist. Expand import progress
+        only while importing. Reduce repeated headings, slogans, and helper text;
+        keep one brief local-file explanation and move format help to import help.
+        Keep card title, progress, and Start/Continue visible; retain secondary
+        actions in the existing menu. Keep bookmarks reachable from the header;
+        reduce the shelf preview if it pushes titles below the first screen.
+Use: Existing buttons, menus, styles, and conditional rendering; no layout engine
+     or extra display preference. Extract a named shelf comparator with a typed
+     lookup for recent/title/added/progress; retain title and ID tie-breakers.
+Check: Empty/populated/busy libraries work at desktop and narrow mobile widths;
+       folder selection, dropping, cancel, bookmarks, sorting, re-link, and remove
+       remain reachable by keyboard/touch. Preserve menu dismissal/focus behavior,
+       permission warnings, reduced motion, and destructive-action confirmation.
+
+22. Simplify reader controls and share setting changes [G1, G2, G6, G13]
+Path: src/Reader.tsx (ReaderView); src/SettingsPanel.tsx; src/App.tsx (setSettings);
+      src/style.css; src/controls.css.
+Change: Keep chapter/page navigation, play/pause, bookmark, and Settings easy to
+        reach. Group less-used reading options in the existing settings surface;
+        show spread/cover options for single-page mode and width options when
+        relevant. Share repeated labels and setting handlers between both menus.
+        Leave each control visible where it is needed during reading; decide any
+        removal by checking its replacement remains equally reachable.
+Use: Small named task functions; direct calls for navigation, playback, and
+     setting changes. Use a typed action lookup only for independent commands
+     with the same calling contract; keep input-focus/modifier/boundary guards.
+     Keep reader state/effects with their existing lifecycle owners; extract a
+     shared control only when it removes actual duplication, not for every row.
+Check: Both settings surfaces use the same values/defaults and persist changes;
+       keyboard, RTL, spread, autoplay timing, resume, end actions, zoom anchors,
+       auto-hide, offline reading, and Save & reload retain existing behavior.
+       Check focus, labels, touch targets, and narrow-width control overflow.
+
+IMPLEMENTATION RULES
+Simplicity and uncluttered UI (2026-10-01; user-requested planning update):
+Changes: Added pending steps 21-22; clarified function/control-flow guidance in
+         programming-guidelines.txt sections 2-3. No app source changed.
+Verified: Documentation checks recorded in docs/verification.md; UI acceptance
+          checks remain pending. Steps 04-20 retain their existing order/status.
+Keep: Readable task functions, minimal abstractions, existing data/safeguards;
+      fewer statements is a preference, not a reason to obscure control flow.
+
+Viewport auto-scroll (2026-09-30; user-requested maintenance) [IN PROGRESS]:
+Changes: Reader.tsx animate uses visible viewport height / seconds with fractional
+         carry; both settings menus explain seconds per screen. model.ts/README;
+         desktop/mobile-size, resize, slow-speed and production regressions.
+Verified: build PASS; new viewport/slow-speed checks PASS; full rerun pending.
+Keep: Single-page timer, saved seconds, pause/resume, chapter-end actions and schema;
+      numbered steps 04-20 pending. Final evidence goes in docs/verification.md.
+
+Autoplay position/timing fix (2026-09-30; user-requested maintenance) [COMPLETED]:
+Changes: src/Reader.tsx resets playback clock on input/restore/start/speed changes;
+         viewport-based page lookup; readiness gate; automatic next starts at page 1.
+         tests/autoplay.spec.ts; playwright.config.ts; generated dist rebuilt.
+Verified: build + targeted formatting PASS; baseline+offline 13/13 PASS, including
+          6 autoplay checks. Old code reproduced saved-end skip + stale countdown.
+Keep: Manual chapter navigation retains resume; autoplay honors seconds/resumeDelay;
+      storage/schema unchanged; steps 04-20 pending. docs/verification.md evidence.
+
+Reconnect/reload routing fix (2026-09-30; user-requested maintenance):
+Changes: public/_redirects chapter/bookmarks/legacy routes; parent build-all.sh
+         copies rules to deployment root. vite.config.ts precached navigation
+         fallback prevents parent-site HTML replacing Reader after reconnect fails.
+Verified: both builds PASS; baseline+offline 7/7 PASS including cancelled reconnect,
+          online/offline reload and retained title. Hosted-path harness PASS with
+          no worker and with worker + deliberately wrong network 200 response.
+Keep: Denial/cancel never deletes metadata; numbered steps unchanged. Deploy parent
+      build output as well as rebuilt app. Live deployment not performed here.
+
+Local/hosted routing follow-up (2026-09-30; user-requested maintenance):
+Changes: index.html sets root or /manga-reader/ base before app startup;
+         main.tsx derives router base and preserves it in legacy hash redirects;
+         updates.ts resolves sw.js from document.baseURI. Vite base stays './'.
+Verified: both copies build; actual localhost:5173 menu/icon/hover checks PASS;
+          Documents baseline+offline 6/6 PASS; root preview and hosted deep-link
+          reload, legacy hash redirect, worker scope and offline shell checked.
+Keep: Running port 5173 serves C:/Users/VKPs/Desktop/manga-reader, NOT Documents.
+      Both copies contain source fixes; preserve distinct layout/router setup.
+      No hand edits to dist. Numbered steps 04-20 remain pending.
+
+User-requested UI fix (2026-09-30; separate from numbered refactor):
+Changes: App.tsx card-menu dismissal/icons and focus/visibility access refresh;
+         style.css upload hover; Reader.tsx/SettingsPanel.tsx permission guidance.
+         Follow-up: capture-phase pointer/click dismissal; 0.3s ease-in-out icons
+         and upload colors; dark-white-dark button states; rebuilt tracked dist/.
+Verified: build PASS; Chromium checks on generated dist at /manga-reader/ PASS
+          (menus, keyboard, icon opacity, both themes, timing, reduced motion).
+Keep: Steps 04-20 pending; read-only permissions and data unchanged. Baseline run
+      blocked by existing / vs /manga-reader route mismatch; native prompt manual.
+      Deployment copies dist/ without building: NEVER restore stale dist/ after
+      source fixes. Keep generated assets/index/sw together for deployment.
+      Full evidence and remaining permission check: docs/verification.md.
+
+- Keep React, TypeScript, Vite, and IndexedDB unless evidence warrants a change.
+- Preserve existing header reads, lazy images, transactions, and stale-write guards
+  while strengthening them; do not remove working safeguards during extraction.
+- Never treat TypeScript casts as runtime validation or a timeout as cancellation.
+- Do not add retries for malformed input or permission denial; bound transient
+  retries by attempt count and elapsed time, and expose exhausted retries.
+- Browser shutdown cannot guarantee a final asynchronous save; save continuously
+  and require confirmed persistence before controlled reload/navigation actions.
+- Add dependencies, workers, caches, and virtualization only for demonstrated need.
+- Favor a short sequence of named task calls over long inline event handlers.
+  Use map/filter/find/some/every for simple collection operations and typed
+  lookups for fixed independent choices; avoid nested ternaries and dense reduce.
+- Retain early-return guards and bounded loops for ordered async work, streaming,
+  cancellation, backpressure, and early exits. Do not replace sequential writes
+  with async forEach or unbounded Promise.all to reduce statement counts.
+- NEW paths above are candidate extraction points, not a requirement to create
+  every file. Split only for real reuse, a distinct lifecycle/owner, or clarity;
+  avoid generic dispatchers, wrappers for trivial expressions, and new frameworks.
+- UI cleanup reduces competing controls and repeated text. Preserve actionable
+  errors, permission guidance, accessibility, and confirmations for data removal.
+- Completion notes record implemented changes; unmarked steps remain plans.
+
+Continue Reading overlay (2026-10-03; user-requested maintenance) [COMPLETED]:
+Changes: src/Reader.tsx snapshots lastChapter/page/fraction before entry-link overrides;
+         continueReading restores instantly via existing layout lifecycle. style.css
+         bottom-center dismissible overlay; tests/continue-reading.spec.ts + config;
+         rebuilt dist. Legacy chapter query now selects its page override correctly.
+Verified: build PASS; 8/8 new browser checks PASS; 19/19 existing baseline/autoplay/
+          offline checks PASS. Targeted formatting + git diff --check PASS.
+Keep: IndexedDB progress/schema unchanged; snapshot fixed during visit, dismiss/use
+      clears prompt; active autoplay stops on Continue, never starts. Numbered steps
+      04-22 remain pending. Evidence/viewport limits: docs/verification.md.
+
+Manga detail page and direct resume (2026-10-03; user correction) [COMPLETED]:
+Changes: Removed Continue Reading overlay/state/styles and its superseded tests.
+         App.tsx homepage cards read latest saved chapter before opening Reader;
+         View chapters links + MangaDetails.tsx at /:slug/; reader title links back.
+         paths.ts details URL; public/_redirects hosted detail route; rebuilt dist.
+Verified: build PASS; baseline+offline 24/24 PASS including five detail/resume/grid
+          checks. Desktop/mobile screenshots reviewed; targeted format/diff PASS.
+Keep: Prior overlay record is historical and superseded. Resume uses existing
+      IndexedDB page/fraction; autoplay independent. Chapter sorting is view-only;
+      canonical chapter indexes never reordered. Numbered steps remain pending.
+
+Chapter-number search (2026-10-03; user-requested UI change) [COMPLETED]:
+Changes: MangaDetails.tsx replaces Chapters heading with accessible search form;
+         exact one-based chapter-number filtering; style.css responsive search field.
+Verified: build + 5/5 manga-details browser checks PASS; search 03, no match 99,
+          clear restores sorted list, Enter stays on page; formatting/diff PASS.
+Keep: Sorting and canonical chapter links retained; empty query shows all chapters;
+      no progress writes or autoplay changes. Rebuilt dist. Numbered steps unchanged.
+
+Inline chapter link (2026-10-03; screenshot UI fix) [COMPLETED]:
+Changes: App.tsx card actions share one row; requested label Chpaters to right of
+         Continue/Start reading. style.css stretched resume button keeps card click;
+         independent chapter link, no nested controls. Generated dist rebuilt.
+Verified: build + baseline/detail 10/10 PASS; 3 viewport alignment checks PASS;
+          supplied screenshot and updated 390px card inspected; format/diff PASS.
+Keep: Resume and chapter destinations unchanged; accessible independent controls.
+      Numbered steps remain pending. Evidence: docs/verification.md.
+
+Long-panel preparation fix (2026-10-06; user-requested maintenance) [COMPLETED]:
+Changes: limits.ts validates safe positive dimensions without source area/axis caps;
+         PageImage.tsx skips oversized optional resize; data.ts skips large known-header
+         covers, releases fallback images and evicts failed scan promises. Reader.tsx
+         reports file/reason, retries pending preparation and updates geometry.
+Verified: build PASS; page-preparation browser suite 5/5 PASS (real tall/high-area
+          PNGs, mobile resize bypass, failed reads and reader recovery); format/diff PASS.
+Keep: Schema/progress/bookmarks unchanged; queues/deadlines retained. Browser/device
+      decoder limits still apply; physical mobile/Safari not checked. Existing test
+      deletions preserved; numbered steps 04-22 remain pending. docs/verification.md.
+
+Offline entry URL fix (2026-10-15; user-requested maintenance) [COMPLETED]:
+Changes: updates.ts registers /manga-reader scope and retires old /manga-reader/
+         registration after activation; main.tsx accepts both entry URLs. _headers
+         allows scope; vite.config.ts excludes sibling prefixes; rebuilt dist.
+Verified: build + targeted format/diff PASS; live bare-URL offline failure reproduced;
+          Chromium migration, 8 offline/stalled route checks and root offline PASS.
+Keep: Cached shell remains cache-first; no forced reload or storage changes. Deploy
+      headers with dist; one online installation required. Numbered steps unchanged.
+      Temporary browser harness only; evidence/limits in docs/verification.md.
+
+Electron native file access fix (2026-10-28; user-reported bug) [COMPLETED]:
+Changes: electron/main.ts IPC handlers: select-folder, list-folder, read-file.
+         electron/preload.ts exposes them via contextBridge.
+         src/model.ts: localPath?:string on Manga (persisted to IndexedDB).
+         src/data.ts: ElectronHandle class; fromElectronFolder(); access() returns
+         true for Electron+localPath; fileFor() reads via IPC; indexSource() stores
+         source.localPath; validateBackup strips localPath.
+         src/App.tsx: pick() uses api.selectFolder()+fromElectronFolder() in Electron.
+Verified: npm run electron:build exit 0; release/Manga Reader Setup 1.0.0.exe built.
+Keep: Browser handle/sessionFiles paths unchanged. localPath stripped from backups.
+      Steps 04-22 remain pending.
+
+Electron routing + icon fix (2026-11-03; user-reported bugs) [COMPLETED]:
+Changes: src/main.tsx uses HashRouter in Electron (file:// breaks BrowserRouter path
+         matching — every load matched /:slug showing "not in library"). BrowserRouter
+         kept for web. electron/main.ts loads logo/logo.png as window icon via
+         nativeImage. package.json build.win.icon set to logo/logo.png; logo/logo.png
+         added to build.files for bundling.
+Verified: npm run electron:build exit 0; no "default Electron icon" warning;
+          icons-bundle.tar.gz downloaded confirming custom icon applied.
+Keep: Browser routing/basename unchanged. Steps 04-22 remain pending.
+
+Electron IndexedDB backing store fix (2026-11-06; user-reported bug) [COMPLETED]:
+Changes: Removed experimental protocol.registerSchemesAsPrivileged and manga:// scheme
+         which broke Chromium's file:// storage security context and LevelDB backing
+         store initialization. Added app.requestSingleInstanceLock() to electron/main.ts
+         to prevent multiple concurrent Electron processes from locking LevelDB.
+         Reverted src/data.ts and src/PageImage.tsx back to reliable IPC-based file reads.
+Verified: npm run build PASS, npm run electron:compile PASS, npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: Single-instance lock, HashRouter in Electron, custom window icon. Steps 04-22 pending.
+
+Move frontend dependencies to devDependencies (2026-11-06; optimization) [COMPLETED]:
+Changes: Moved @fontsource-variable/newsreader, @radix-ui/react-dialog, @radix-ui/react-select,
+         idb, lucide-react, react, react-dom, and react-router-dom from dependencies to
+         devDependencies in package.json. Frontend deps are bundled into dist/ by Vite.
+         Eliminated all redundant node_modules from app.asar.
+Verified: npm run build PASS; npm run electron:compile PASS; npx electron-builder exit 0;
+          app.asar reduced to 723 KB (clean asset bundle); release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: No external dependencies in ASAR. Steps 04-22 remain pending.
+
+Electron locale pruning, max compression, and web artifact exclusion (2026-11-06; optimization) [COMPLETED]:
+Changes: Added electronLanguages: ["en-US", "en"], compression: "maximum", and excluded
+         dist/_headers / dist/_redirects in package.json build config. Added ELECTRON_BUILD=1
+         to electron:build script to skip PWA service worker and manifest generation.
+Verified: Locales dropped from 55 files (51.2 MB) to 2 files (1.1 MB). Installer reduced from
+          125.0 MB to 107.6 MB (-17.4 MB total from start). app.asar down to 705 KB.
+          npm run electron:build exit 0.
+Keep: Retain English locale packs and max compression. Steps 04-22 remain pending.
+
+Async file I/O in Electron main process (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/main.ts, replaced synchronous fs.readFileSync with asynchronous
+         fs.promises.readFile in ipcMain.handle('read-file'). Offloads file reading to
+         the libuv thread pool, preventing main UI thread blocking during image reads.
+Verified: npm run electron:compile exit 0; npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: Asynchronous IPC handlers. Steps 04-22 remain pending.
+
+Eliminate cold-start white flash with ready-to-show (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/main.ts, configured BrowserWindow with show: false and backgroundColor: '#18181b',
+         displaying via win.once('ready-to-show', () => win.show()). Prevents white flash before initial render.
+Verified: npm run electron:compile exit 0; npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: ready-to-show window lifecycle. Steps 04-22 remain pending.
+
+GPU hardware rasterization with safe fallback (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/main.ts, added enable-gpu-rasterization and enable-zero-copy switches
+         when --disable-gpu is not present. Added child-process-gone listener to handle GPU
+         process crashes gracefully and allow Chromium's automatic fallback to software rendering.
+Verified: npm run electron:compile exit 0; npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: GPU acceleration with software fallback. Steps 04-22 remain pending.
+
+Route-level code splitting with React.lazy (2026-11-06; optimization) [COMPLETED]:
+Changes: In src/App.tsx, converted Reader, MangaDetails, SettingsPanel, and ImportComplete
+         to React.lazy() dynamic imports with Suspense boundaries.
+Verified: Heavy view modules split into separate chunks (Reader-*.js 30.5 KB, SettingsPanel-*.js 19.5 KB,
+          MangaDetails-*.js 3.9 KB). Monolithic chunk warning resolved.
+          npm run build PASS, npm run electron:compile PASS, npm run electron:build exit 0.
+Keep: Dynamic route loading. Steps 04-22 remain pending.
+
+Window state and position persistence (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/main.ts, added loadWindowState() and saveWindowState() storing
+         x, y, width, height, and isMaximized to window-state.json in userData.
+         Validates coordinates against active screen displays on launch to prevent
+         off-screen window placement when monitors disconnect.
+Verified: npm run electron:compile exit 0; npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: Window state persistence. Steps 04-22 remain pending.
+
+Disable background throttling in webPreferences (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/main.ts, added backgroundThrottling: false to webPreferences.
+         Prevents timer and IPC execution throttling when the window is unfocused,
+         maintaining full processing speed for folder indexing and image preparation.
+Verified: npm run electron:compile exit 0; npm run electron:build exit 0;
+          release/Manga Reader Setup 1.0.0.exe rebuilt.
+Keep: backgroundThrottling: false. Steps 04-22 remain pending.
+
+Native Windows taskbar progress bar during indexing and discovery (2026-11-06; optimization) [COMPLETED]:
+Changes: In electron/preload.ts, added setProgressBar(progress: number) to ElectronAPI.
+         In electron/main.ts, registered ipcMain 'set-progress-bar' listener delegating to
+         win.setProgressBar (0..1 fractional, 2 indeterminate, -1 remove).
+         In src/App.tsx, integrated taskbar progress into scan start (indeterminate),
+         progress updates (fractional 0..1), and finish/cleanup (-1).
+Verified: npm run electron:compile exit 0; npm run build exit 0;
+          release/Manga Reader Setup 1.0.0.exe built.
+Keep: Native taskbar feedback during long-running background imports. Steps 04-22 remain pending.
+
+Custom typography: Inter for UI & Instrument Serif for titles (2026-11-06; enhancement) [COMPLETED]:
+Changes: Added InstrumentSerif-Regular, InstrumentSerif-Italic, and Inter_24pt-Regular from fonts/
+         into src/fonts/. Configured @font-face rules in src/style.css. Applied Instrument Serif
+         regular to main hero titles, brand logo, manga cards, reader top bar, and details page.
+         Applied Inter across body copy, UI controls, settings panels, inputs, and dialogs.
+         Removed unused @fontsource-variable/newsreader dependency.
+Verified: npm run build exit 0 (bundled 3 local TTFs cleanly into dist/assets);
+          npm run electron:compile exit 0.
+Keep: Local font assets bundled without external network dependencies. Steps 04-22 remain pending.
+
+Tune desktop reader page decode concurrency (2026-11-06; performance) [COMPLETED]:
+Changes: In src/limits.ts, increased desktopPageConcurrency from 2 to 4.
+         Allows modern desktop processors and SSDs to decode up to 4 chapter pages in parallel,
+         preventing blank placeholder stuttering during fast continuous-scroll reading.
+         Updated docs/limits.md specification table.
+Verified: npm run build exit 0; npm run electron:compile exit 0.
+Keep: desktopPageConcurrency = 4; mobilePageConcurrency = 1. Steps 04-22 remain pending.
+
+IPC path traversal protection and image extension sanitization (2026-11-06; security & reliability) [COMPLETED]:
+Changes: In electron/main.ts, added ALLOWED_IMAGE_EXTENSIONS allowlist (.jpg, .jpeg, .png, .webp,
+         .avif, .gif, .bmp, .svg, .ico, .heic, .heif, .tif, .tiff, .jxl) and IGNORED_FOLDER_NAMES.
+         Sanitized list-folder to resolve paths and ignore junk/hidden folders (.git, node_modules).
+         Sanitized read-file to enforce path resolution, image extension checking, regular file
+         verification, and a 100 MiB safety ceiling.
+Verified: npm run electron:compile exit 0; npm run build exit 0.
+Keep: Safe IPC file access strictly bounded to image candidates. Steps 04-22 remain pending.
+
+Desktop navigation lockdown and visual zoom freeze (2026-11-06; UX & stability) [COMPLETED]:
+Changes: In electron/main.ts, locked visual zoom to 1:1 via win.webContents.setVisualZoomLevelLimits(1, 1)
+         and intercepted Ctrl + [+/-/0] keybindings to prevent accidental zoom deformation.
+         Added will-navigate handler to block unwanted page navigation on external file drops.
+         Added setWindowOpenHandler delegating external http/https links to the user's default browser.
+Verified: npm run electron:compile exit 0; npm run build exit 0.
+Keep: Native desktop window containment. Steps 04-22 remain pending.
+
+
+Release Build 1.1.0 (2026-11-06; release package) [COMPLETED]:
+Changes: Bumped package.json version to 1.1.0. Bundled all accumulated optimizations:
+         - HashRouter for file:// protocol support without routing errors.
+         - Native window and installer icon from logo/logo.png.
+         - Single instance process locking to protect IndexedDB LevelDB store.
+         - ASAR dead dependency elimination (all runtime node_modules stripped from app.asar, size 723 KB).
+         - Locale pruning (-50 MB disk space savings, keeping en/en-US) and 7z maximum compression.
+         - Asynchronous IPC file streaming via fs.promises.readFile.
+         - Cold-start white flash removal via ready-to-show and #18181b background.
+         - GPU hardware rasterization with automatic software rendering fallback.
+         - Dynamic route code-splitting with React.lazy() and Suspense.
+         - Window bounds, position, and maximized state persistence with multi-display disconnect fallback.
+         - Background execution throttling disabled (backgroundThrottling: false).
+         - Native Windows taskbar progress bar during manga folder indexing.
+         - Custom typography: Inter for UI controls and Instrument Serif for titles/headings.
+         - Desktop page decode concurrency increased to 4 for fast continuous scrolling.
+         - IPC file path & extension allowlist sanitization with 100 MiB safety ceiling.
+         - Visual zoom freeze (1:1) and external drag-and-drop navigation lockdown.
+         - Step 04 & Step 05 untrusted backup, position, and settings input validators.
+Verified: release/Manga Reader Setup 1.1.0.exe generated cleanly; npm run test:validation PASS (16/16 tests).
+Keep: v1.1.0 production baseline installer. Numbered steps 06-22 remain pending.

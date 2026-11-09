@@ -1,0 +1,421 @@
+# Universal High-Performance Software Engineering Guidelines
+
+These rules combine the strongest principles commonly associated with NASA/JPL-style predictability, ISRO-style verification and traceability, and SpaceX-style ownership, iteration, and performance engineering. Apply them to any software project unless the project has stronger domain-specific requirements.
+
+## 1. Core Engineering Principles
+
+- Prefer **simple, explicit, predictable code** over clever code.
+- Optimize for:
+  - correctness
+  - maintainability
+  - performance
+  - reliability
+  - security
+  - debuggability
+- Every abstraction must justify its complexity.
+- Do not introduce frameworks, dependencies, services, layers, or patterns without a concrete benefit.
+- Remove unnecessary code instead of adding workarounds around it.
+- Treat performance and reliability as architectural concerns, not final-stage optimizations.
+
+## 2. Code Structure
+
+- Give each function, class, module, and component **one clear responsibility**.
+- Keep functions small enough to understand without excessive mental context.
+- Keep related logic together.
+- Avoid deep nesting.
+- Prefer early returns where they improve readability.
+- Minimize global/shared mutable state.
+- Make dependencies explicit.
+- Make data ownership clear.
+- Make state transitions explicit.
+- Avoid hidden side effects.
+- Avoid duplicated business logic.
+- Extract reusable logic only when genuine reuse exists.
+- Do not over-engineer speculative future requirements.
+- Make event handlers read as a short sequence of named tasks, such as
+  validateBackup -> restoreBackup -> refreshLibrary. Keep failure handling and
+  commit boundaries explicit; extracting a function must not hide side effects.
+- Use descriptive names a project maintainer can follow without studying a
+  generic framework. Do not create a new file or wrapper for every small task.
+
+## 3. Control Flow
+
+Prefer control flow that is easy to reason about.
+
+- Avoid `goto`-style flow.
+- Avoid unnecessarily complex branching.
+- Avoid recursion where iterative logic is safer or more predictable.
+- Critical loops should have identifiable termination conditions.
+- Prevent accidental infinite loops.
+- Avoid uncontrolled retry loops.
+- Retry operations only when failure is transient and retries are bounded.
+- Use timeouts for operations that can block indefinitely.
+- Prefer task functions over long inline `for`, `if/else`, or `switch` blocks
+  when the functions express clear responsibilities and make the caller simpler.
+- Use `map`, `filter`, `find`, `some`, and `every` for straightforward collection
+  operations. Use a small typed function lookup for fixed independent choices
+  sharing a calling contract, such as sort comparators; validate external keys.
+- Reduce nesting, not merely statement counts. Keep simple early-return guards
+  and a clear branch when alternatives have different rules or side effects.
+  Avoid nested ternaries, dense `reduce` callbacks, and generic dispatch systems.
+- Keep bounded loops for sequential asynchronous work, streaming, cancellation,
+  backpressure, and early exits. Do not replace them with async `forEach` or
+  unbounded `Promise.all`; preserve ordering, resource limits, and error handling.
+
+## 4. Data and Memory
+
+- Minimize unnecessary allocations.
+- Reuse resources where appropriate.
+- Avoid repeatedly allocating large temporary structures.
+- Avoid unnecessary copying of large data.
+- Prefer streaming/chunking for large datasets and files.
+- Release resources deterministically.
+- Close:
+  - files
+  - database handles
+  - sockets
+  - streams
+  - workers
+  - subscriptions
+  - observers
+- Prevent memory leaks.
+- Bound caches and queues.
+- Avoid uncontrolled in-memory accumulation.
+- Use lazy loading when loading everything immediately provides no benefit.
+- Do NOT impose resource limits that reject legitimate user data. For reader/viewer applications (manga, comics, books, photo albums), large item counts (e.g. 25,000+ pages in a single title) are a normal property of the domain, not user error. Lazy-loading and bounded concurrency handle memory; hard caps on total item counts are the wrong mechanism and break the application for valid inputs.
+
+For resource-constrained or latency-critical code:
+
+- preallocate where practical;
+- avoid runtime allocation in critical execution paths;
+- avoid unpredictable garbage-collection pressure;
+- reuse buffers and objects carefully.
+
+## 5. Input Validation
+
+Treat everything outside the current trusted component as untrusted.
+
+Validate:
+
+- user input
+- API responses
+- database results
+- files
+- configuration
+- environment variables
+- network messages
+- IPC messages
+- external libraries
+- persisted state
+
+Validate as close to the boundary as possible.
+
+Check:
+
+- type
+- length
+- range
+- format
+- allowed values
+- nullability
+- encoding
+- size
+- structural integrity
+
+Reject invalid data early.
+
+## 6. Error Handling
+
+Never silently ignore meaningful failures.
+
+- Check return values.
+- Handle rejected promises/futures.
+- Handle I/O failures.
+- Handle unavailable resources.
+- Handle malformed data.
+- Handle partial operations.
+- Handle timeouts.
+- Handle cancellation.
+
+Errors should provide enough context to identify:
+
+- what failed;
+- where it failed;
+- relevant identifiers;
+- whether the operation can safely be retried.
+
+Do not expose secrets or sensitive information through errors.
+
+Never use exceptions as normal control flow when a simpler mechanism exists.
+
+## 7. Failure-Safe Design
+
+Design for failure from the beginning.
+
+Ask:
+
+- What if the network disappears?
+- What if storage is full?
+- What if a file is corrupt?
+- What if data is partially written?
+- What if the process crashes halfway through?
+- What if an operation executes twice?
+- What if initialization fails?
+- What if an API becomes slow?
+- What if state from an older version is loaded?
+- What if a Web API requires a secure context (HTTPS/localhost) but the app is accessed over plain HTTP/LAN (e.g., crypto.randomUUID is undefined)?
+
+Where appropriate:
+
+- make operations idempotent;
+- use atomic writes;
+- use transactions;
+- validate persisted state;
+- maintain rollback/recovery paths;
+- avoid corrupting valid state after a failed operation;
+- provide resilient fallbacks for context-restricted APIs (e.g., RFC 4122 UUID v4 via crypto.getRandomValues when crypto.randomUUID is unavailable).
+
+## 8. Performance
+
+Do not optimize based on assumptions.
+
+Measure:
+
+- latency
+- throughput
+- CPU
+- memory
+- I/O
+- network usage
+- allocations
+- startup time
+- response time
+- rendering time
+- database/query cost
+
+Optimize actual bottlenecks.
+
+Prefer architectural improvements over micro-optimizations.
+
+Typical optimization priority:
+
+1. eliminate unnecessary work;
+2. improve algorithms/data structures;
+3. reduce I/O;
+4. reduce network calls;
+5. batch operations;
+6. cache expensive repeatable work;
+7. reduce allocations/copies;
+8. parallelize only when beneficial;
+9. apply low-level optimization last.
+
+## 9. Algorithmic Efficiency
+
+Understand the complexity of operations used in frequently executed paths.
+
+Avoid:
+
+- repeated full scans;
+- nested loops over large collections when unnecessary;
+- repeated parsing;
+- repeated sorting;
+- repeated database queries;
+- repeated DOM/layout operations;
+- redundant serialization/deserialization.
+
+Prefer appropriate:
+
+- maps
+- sets
+- indexes
+- queues
+- trees
+- batching
+- memoization
+- incremental processing
+
+Do not sacrifice correctness or maintainability for insignificant theoretical gains.
+
+## 10. Concurrency
+
+Introduce concurrency only when it provides measurable benefit.
+
+- Avoid uncontrolled thread/task creation.
+- Bound worker pools.
+- Bound queues.
+- Prevent race conditions.
+- Avoid shared mutable state where possible.
+- Clearly define synchronization ownership.
+- Prevent deadlocks.
+- Prevent duplicate processing.
+- Support cancellation.
+- Apply backpressure when producers can outrun consumers.
+
+Do not parallelize workloads that are already I/O- or resource-saturated.
+
+## 11. I/O and Networking
+
+I/O is often more expensive than computation.
+
+- Minimize unnecessary reads/writes.
+- Batch operations.
+- Avoid unnecessary round trips.
+- Cache immutable or expensive remote data where appropriate.
+- Compress large network payloads when beneficial.
+- Stream large payloads.
+- Use pagination for large datasets.
+- Use connection pooling.
+- Use explicit timeouts.
+- Handle disconnections gracefully.
+
+Do not repeatedly fetch data that is already valid locally.
+
+## 12. Database and Storage
+
+- Use indexes based on actual query patterns.
+- Avoid N+1 query patterns.
+- Request only required fields.
+- Batch writes where appropriate.
+- Use transactions for logically atomic changes.
+- Avoid loading huge result sets into memory.
+- Paginate/stream large results.
+- Measure slow queries.
+- Keep schema/data migrations deterministic and recoverable.
+
+Persistent formats should support versioning where future changes are likely.
+
+## 13. Frontend Performance
+
+For browser/mobile UI projects:
+
+- minimize initial JavaScript;
+- lazy-load nonessential code;
+- defer noncritical work;
+- avoid unnecessary rerenders;
+- avoid repeated layout/reflow;
+- batch DOM changes;
+- virtualize very large lists;
+- optimize images and media;
+- cache reusable resources;
+- avoid blocking the main thread;
+- move expensive computation to workers where appropriate;
+- preserve responsiveness on lower-powered hardware.
+
+A feature is not complete if it performs well only on a high-end development machine.
+
+## 14. Dependency Discipline
+
+Every dependency creates:
+
+- maintenance cost;
+- security exposure;
+- bundle/deployment cost;
+- compatibility risk;
+- upgrade requirements.
+
+Before adding a dependency, determine whether:
+
+- the platform already provides the functionality;
+- a small implementation would be simpler;
+- the dependency is actively maintained;
+- its size/cost is justified;
+- it introduces transitive dependencies.
+
+Remove unused dependencies.
+
+Pin or constrain versions appropriately.
+
+## 15. Security
+
+Security is part of correctness.
+
+- Follow least privilege.
+- Never trust client-side enforcement for server-side authorization.
+- Never hard-code credentials.
+- Keep secrets outside source code.
+- Sanitize unsafe output where appropriate.
+- Use parameterized database queries.
+- Validate uploads.
+- Enforce size/rate limits.
+- Use secure cryptographic libraries rather than custom cryptography.
+- Keep dependencies patched.
+- Minimize sensitive logging.
+- Secure authentication/session handling.
+- Fail securely.
+- Account for Secure Context restrictions: Web Crypto features like crypto.randomUUID() require HTTPS or localhost and are unavailable over LAN IP/HTTP; provide cryptographically sound fallbacks (e.g., RFC 4122 UUID v4 using crypto.getRandomValues()).
+
+## 16. Observability
+
+Important systems should explain what they are doing.
+
+Use appropriate:
+
+- structured logs;
+- metrics;
+- traces;
+- error reports;
+- health checks.
+
+Log meaningful events, not noise.
+
+Logs should make it possible to reconstruct important failure sequences without exposing secrets.
+
+Measure important indicators such as:
+
+- latency
+- error rate
+- throughput
+- resource utilization
+- queue depth
+- retry count
+- cache behavior
+
+## 17. Configuration
+
+Configuration should be:
+
+- explicit;
+- validated;
+- documented;
+- environment-aware;
+- safely defaulted.
+
+Fail early when required configuration is invalid.
+
+Avoid mysterious magic values throughout the codebase.
+
+Centralize meaningful constants/configuration where appropriate.
+
+When setting resource limits, calibrate to domain reality:
+
+- Distinguish between limits that prevent unbounded resource consumption (correct) and limits that cap legitimate content the application is designed to handle (incorrect).
+- For reader/viewer apps: page-count limits must be set to accommodate the largest plausible real collection, not a "reasonable sounding" round number. A manga reader must handle 25,000+ pages per title. Use concurrency caps, lazy loading, and bounded queues to control memory — not a hard ceiling on total page count.
+- Revisit limits when real-world usage reveals they block valid user workflows.
+
+## 18. Testing
+
+Tests exist to find meaningful failures, not inflate test counts.
+
+Prioritize:
+
+- critical business logic;
+- edge cases;
+- failure paths;
+- integration boundaries;
+- previously discovered bugs;
+- high-risk behavior.
+
+Use:
+
+- unit tests for isolated logic;
+- integration tests for component interactions;
+- end-to-end tests for critical workflows;
+- hardware/environment testing where simulation cannot accurately reproduce behavior.
+
+Do not create useless tests that only confirm trivial implementation details.
+
+Avoid excessive mocking that makes tests unrelated to actual system behavior.
+
+## 19. Static Analysis and Automated Checks
+
+Automate inexpensive
