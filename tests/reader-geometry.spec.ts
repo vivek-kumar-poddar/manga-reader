@@ -100,15 +100,25 @@ test.describe('Step 17 — Reader Geometry and DOM Virtualization', () => {
     expect(offsets[2].bottom).toBe(3000);
   });
 
-  test('getWindowRange does not window small chapters (<= 15 pages)', () => {
-    const pages = makePages(12, 800, 1000);
+  test('getWindowRange does not window small chapters (<= 8 pages)', () => {
+    const pages = makePages(7, 800, 1000);
     const offsets = computeOffsets(pages, defaultOptions);
 
     const range = getWindowRange(offsets, 5000, 900, 3);
     expect(range.startIndex).toBe(0);
-    expect(range.endIndex).toBe(11);
+    expect(range.endIndex).toBe(6);
     expect(range.topSpacer).toBe(0);
     expect(range.bottomSpacer).toBe(0);
+  });
+
+  test('getWindowRange windows chapters larger than threshold (> 8 pages)', () => {
+    const pages = makePages(12, 800, 1000);
+    const offsets = computeOffsets(pages, defaultOptions);
+
+    // Scroll down to 10,000px with small buffer
+    const range = getWindowRange(offsets, 10000, 900, 1);
+    expect(range.startIndex).toBeGreaterThan(0);
+    expect(range.topSpacer).toBeGreaterThan(0);
   });
 
   test('getWindowRange windows long chapters with correct buffers and spacers', () => {

@@ -1352,3 +1352,28 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (built in 2.73s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Reader Rendering & Virtualization Performance Improvements — 2026-11-10
+
+- **Lower continuous-mode virtualization threshold**:
+  - In `src/readerGeometry.ts`: Defined and exported `VIRTUALIZATION_THRESHOLD = 8;`. Updated `getWindowRange(offsets, scrollY, viewportHeight, bufferScreenCount, threshold = VIRTUALIZATION_THRESHOLD)` to default to 8 pages (down from 15).
+  - In `src/Reader.tsx`: Imported `VIRTUALIZATION_THRESHOLD` and updated `updateWindow` to window chapters with `> 8` pages.
+  - In `tests/reader-geometry.spec.ts`: Updated small chapter test for `<= 8` pages and added test verifying that chapters with `> 8` pages are correctly windowed with spacers.
+- **Stabilize `PageImage` props & memoization**:
+  - In `src/PageImage.tsx`: Added custom `arePropsEqual` comparator to `memo(PageImage, arePropsEqual)`, verifying primitive values (`index`, `lowQuality`, `m.id`, `m.updatedAt`, `m.handle`, `m.localPath`, `page.path`, `page.width`, `page.height`, `page.name`, `Boolean(page.dimensionsPending)`). Pure parent re-renders (bars toggles, layout adjustments, dropdown menus, progress updates) now completely skip re-rendering `PageImage`.
+  - Extracted primitive page and manga properties within `PageImage` and replaced the whole `page` object in `useEffect` dependency array with primitive dependencies (`mangaId`, `mangaUpdatedAt`, `mangaHandle`, `mangaLocalPath`, `pagePath`, `pageWidth`, `pageHeight`, `Boolean(dimensionsPending)`, `lowQuality`, `retry`), preventing unnecessary effect teardowns and image re-fetches.
+- **Throttle & coalesce scroll-driven work**:
+  - In `src/Reader.tsx`: Moved `setBars` into `requestAnimationFrame` inside `scroll()`. Raw wheel and touch events no longer schedule React state updates synchronously; `setBars`, `capture()`, and `updateWindow()` are coalesced into a single rAF frame per display refresh. The 1.5s background progress flush throttle is preserved.
+- **Avoid full `measure()` on layout changes**:
+  - In `src/Reader.tsx`: Added `recomputeOnly?: boolean` to `measure(recomputeOnly)`. When `recomputeOnly` is true, expensive DOM queries (`content.current?.querySelectorAll('[data-page]')`) are bypassed.
+  - In `useLayoutEffect`: Tracked previous layout options via `prevLayoutProps`. When only `zoom` or `maxWidth` changes, existing measured heights in `measuredHeights.current` are scaled proportionally and `measure(true)` is called without clearing the cache or querying the DOM. Page turns in single-page mode skip height cache invalidation and measurement entirely. Full DOM query and cache invalidation are reserved for structural changes (modes, spreads, window resize, chapter change).
+- **Single-page mode spreads optimization**:
+  - In `src/Reader.tsx`: Pre-computed both `groups` and an $O(1)$ `pageToGroup` mapping (`Int32Array`) inside `useMemo([chapter, s.spread, s.singleCover, wide])`.
+  - Stored `pageToGroupRef.current = pageToGroup`.
+  - Replaced $O(N)$ linear scans (`groups.findIndex((g) => g.includes(page))`, `groupsRef.current.find(...)`) with $O(1)$ index lookups across render (`groupIndex`), `capture()`, `goPage()`, `step()`, and the continuous autoplay animation frame loop.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **58/58 unit tests PASS** (788ms).
+  - `npm run build`: **PASS** (built in 2.71s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).

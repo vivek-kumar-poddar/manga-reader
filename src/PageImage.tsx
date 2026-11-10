@@ -26,21 +26,16 @@ function observe(element: Element, callback: (visible: boolean) => void) {
   };
 }
 
-export default memo(function PageImage({
-  m,
-  page,
-  index,
-  lowQuality,
-  report,
-  retryPreparation,
-}: {
+interface PageImageProps {
   m: Manga;
   page: Page;
   index: number;
   lowQuality: boolean;
   report: (message: string) => void;
   retryPreparation: () => void;
-}) {
+}
+
+function PageImage({ m, page, index, lowQuality, report, retryPreparation }: PageImageProps) {
   const host = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
@@ -48,8 +43,16 @@ export default memo(function PageImage({
   const reportRef = useRef(report);
   reportRef.current = report;
 
+  const { path: pagePath, width: pageWidth, height: pageHeight, dimensionsPending } = page;
+  const {
+    id: mangaId,
+    updatedAt: mangaUpdatedAt,
+    handle: mangaHandle,
+    localPath: mangaLocalPath,
+  } = m;
+
   useEffect(() => {
-    if (page.dimensionsPending) return;
+    if (dimensionsPending) return;
     let live = true,
       wanted = false,
       cancelTask: CancelHandle | null = null,
@@ -67,14 +70,14 @@ export default memo(function PageImage({
 
     const load = () => {
       if (objectUrl || !wanted) return;
-      const taskKey = `${m.id}:${m.updatedAt}:${page.path}:${lowQuality ? 'low' : 'full'}`;
+      const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
       const cancel = enqueueImage({
         key: taskKey,
         priority: 10,
         run: async (signal) => {
           try {
             if (!live || !wanted || signal.aborted) return;
-            assertImageDimensions(page.width, page.height);
+            assertImageDimensions(pageWidth, pageHeight);
             let blob: Blob = await fileFor(m, page);
             if (!live || !wanted || signal.aborted) return;
 
@@ -82,15 +85,15 @@ export default memo(function PageImage({
               lowQuality &&
               typeof matchMedia === 'function' &&
               matchMedia('(max-width:700px)').matches &&
-              page.width > 1000 &&
-              page.width * page.height <= limits.imagePixels &&
-              Math.max(page.width, page.height) <= limits.imageSide
+              pageWidth > 1000 &&
+              pageWidth * pageHeight <= limits.imagePixels &&
+              Math.max(pageWidth, pageHeight) <= limits.imageSide
             ) {
               try {
                 blob = await downscaleImage(
                   blob,
                   1000,
-                  Math.max(1, Math.round((page.height * 1000) / page.width)),
+                  Math.max(1, Math.round((pageHeight * 1000) / pageWidth)),
                   signal,
                 );
               } catch {
@@ -135,7 +138,18 @@ export default memo(function PageImage({
       stop();
       release();
     };
-  }, [m.id, m.updatedAt, m.handle, m.localPath, page, lowQuality, retry]);
+  }, [
+    mangaId,
+    mangaUpdatedAt,
+    mangaHandle,
+    mangaLocalPath,
+    pagePath,
+    pageWidth,
+    pageHeight,
+    Boolean(dimensionsPending),
+    lowQuality,
+    retry,
+  ]);
 
   return (
     <div
@@ -181,4 +195,22 @@ export default memo(function PageImage({
       )}
     </div>
   );
-});
+}
+
+function arePropsEqual(prev: PageImageProps, next: PageImageProps): boolean {
+  return (
+    prev.index === next.index &&
+    prev.lowQuality === next.lowQuality &&
+    prev.m.id === next.m.id &&
+    prev.m.updatedAt === next.m.updatedAt &&
+    prev.m.handle === next.m.handle &&
+    prev.m.localPath === next.m.localPath &&
+    prev.page.path === next.page.path &&
+    prev.page.width === next.page.width &&
+    prev.page.height === next.page.height &&
+    prev.page.name === next.page.name &&
+    Boolean(prev.page.dimensionsPending) === Boolean(next.page.dimensionsPending)
+  );
+}
+
+export default memo(PageImage, arePropsEqual);

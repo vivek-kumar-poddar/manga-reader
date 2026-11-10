@@ -91,6 +91,8 @@ export function computeOffsets(
   return offsets;
 }
 
+export const VIRTUALIZATION_THRESHOLD = 8;
+
 /**
  * Determines the range of page indexes [startIndex, endIndex] to render
  * in continuous scroll mode, given a scroll position and buffer size.
@@ -100,9 +102,10 @@ export function getWindowRange(
   scrollY: number,
   viewportHeight: number,
   bufferScreenCount: number = 3,
+  threshold: number = VIRTUALIZATION_THRESHOLD,
 ): WindowRange {
   const count = offsets.length;
-  if (count <= 15) {
+  if (count <= threshold) {
     return {
       startIndex: 0,
       endIndex: Math.max(0, count - 1),

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import {
   computeOffsets,
   getWindowRange,
+  VIRTUALIZATION_THRESHOLD,
   type PageOffset,
   type WindowRange,
 } from './readerGeometry';
@@ -235,9 +236,11 @@ function ReaderView({ manga }: { manga: Manga }) {
   const metadata = useRef(manga);
   const latest = useRef({ s, ci, ready, allowed, page, zoom });
   latest.current = { s, ci, ready: ready && prepared === ci, allowed, page, zoom };
-  const groups = useMemo(() => {
+  const { groups, pageToGroup } = useMemo(() => {
     const result: number[][] = [];
+    const p2g = new Int32Array(chapter.pages.length);
     for (let i = 0; i < chapter.pages.length;) {
+      const groupIdx = result.length;
       if (
         !s.spread ||
         !wide ||
@@ -245,20 +248,23 @@ function ReaderView({ manga }: { manga: Manga }) {
         chapter.pages[i].width > chapter.pages[i].height ||
         i === chapter.pages.length - 1 ||
         chapter.pages[i + 1].width > chapter.pages[i + 1].height
-      )
+      ) {
+        p2g[i] = groupIdx;
         result.push([i++]);
-      else {
+      } else {
+        p2g[i] = groupIdx;
+        p2g[i + 1] = groupIdx;
         result.push([i, i + 1]);
         i += 2;
       }
     }
-    return result;
+    return { groups: result, pageToGroup: p2g };
   }, [chapter, s.spread, s.singleCover, wide]);
-  const groupIndex = Math.max(
-    0,
-    groups.findIndex((g) => g.includes(page)),
-  );
-  const visible = s.mode === 'single' ? groups[groupIndex] : [];
+  const pageToGroupRef = useRef(pageToGroup);
+  pageToGroupRef.current = pageToGroup;
+  const groupIndex =
+    s.mode === 'single' ? Math.max(0, Math.min(groups.length - 1, pageToGroup[page] ?? 0)) : 0;
+  const visible = s.mode === 'single' ? groups[groupIndex] || [] : [];
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
   useEffect(() => {
@@ -346,10 +352,7 @@ function ReaderView({ manga }: { manga: Manga }) {
       }
       index = lo;
     } else {
-      index = Math.max(
-        0,
-        list.findIndex((x) => x.page === latest.current.page),
-      );
+      index = Math.max(0, Math.min(list.length - 1, latest.current.page));
     }
     const o = list[index];
     position.current = {
@@ -359,21 +362,17 @@ function ReaderView({ manga }: { manga: Manga }) {
     };
     if (latest.current.s.mode === 'continuous') setPage((old) => (old === o.page ? old : o.page));
     const c = metadata.current.chapters[chapterRef.current];
-    const final = list.find((x) => x.page === c.pages.length - 1);
+    const final = list[c.pages.length - 1] || list.at(-1);
     if (final && y + innerHeight >= final.bottom - 2 && !c.read) {
       c.read = true;
       setReadRevision((v) => v + 1);
     }
     if (edgeProgress.current) {
+      const gIndex = pageToGroupRef.current[latest.current.page] ?? 0;
+      const currentGroup = groupsRef.current[gIndex] || [latest.current.page];
       const progress =
         latest.current.s.mode === 'single'
-          ? (Math.max(
-              ...(groupsRef.current.find((g) => g.includes(latest.current.page)) || [
-                latest.current.page,
-              ]),
-            ) +
-              1) /
-            c.pages.length
+          ? (Math.max(...currentGroup) + 1) / c.pages.length
           : final && y + innerHeight >= final.bottom - 2
             ? 1
             : (position.current.page + position.current.fraction) / c.pages.length;
@@ -386,7 +385,10 @@ function ReaderView({ manga }: { manga: Manga }) {
       void flush().catch((e) => notify(errorMessage(e)));
   }
   function updateWindow(force = false, targetPage?: number) {
-    if (latest.current.s.mode !== 'continuous' || chapter.pages.length <= 15) {
+    if (
+      latest.current.s.mode !== 'continuous' ||
+      chapter.pages.length <= VIRTUALIZATION_THRESHOLD
+    ) {
       setWindowRange((prev) => {
         if (prev.startIndex === 0 && prev.endIndex === Math.max(0, chapter.pages.length - 1)) {
           return prev;
@@ -422,14 +424,16 @@ function ReaderView({ manga }: { manga: Manga }) {
       return next;
     });
   }
-  function measure() {
-    const nodes = content.current?.querySelectorAll<HTMLElement>('[data-page]');
-    if (nodes) {
-      for (const el of nodes) {
-        const p = Number(el.dataset.page);
-        const rect = el.getBoundingClientRect();
-        if (rect.height > 0) {
-          measuredHeights.current.set(p, rect.height);
+  function measure(recomputeOnly = false) {
+    if (!recomputeOnly) {
+      const nodes = content.current?.querySelectorAll<HTMLElement>('[data-page]');
+      if (nodes) {
+        for (const el of nodes) {
+          const p = Number(el.dataset.page);
+          const rect = el.getBoundingClientRect();
+          if (rect.height > 0) {
+            measuredHeights.current.set(p, rect.height);
+          }
         }
       }
     }
@@ -503,7 +507,8 @@ function ReaderView({ manga }: { manga: Manga }) {
     if (s.mode === 'single') {
       capture();
       void flush().catch((e) => notify(errorMessage(e)));
-      const group = groupsRef.current.find((g) => g.includes(n)) || [n];
+      const gIndex = pageToGroupRef.current[n] ?? 0;
+      const group = groupsRef.current[gIndex] || [n];
       n = group[0];
       position.current = { page: n, path: chapter.pages[n].path, fraction: 0 };
       metadata.current.chapters[ci].position = { ...position.current };
@@ -527,7 +532,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     const list = groupsRef.current;
     const index = Math.max(
       0,
-      list.findIndex((g) => g.includes(latest.current.page)),
+      Math.min(list.length - 1, pageToGroupRef.current[latest.current.page] ?? 0),
     );
     const next = list[index + direction];
     if (next) goPage(next[0]);
@@ -563,8 +568,69 @@ function ReaderView({ manga }: { manga: Manga }) {
     });
     return () => cancelAnimationFrame(frame);
   }, [ci, allowed, prepared]);
+  const prevLayoutProps = useRef({
+    mode: s.mode,
+    layout: s.layout,
+    maxWidth: s.maxWidth,
+    spread: s.spread,
+    singleCover: s.singleCover,
+    direction: s.direction,
+    zoom,
+    wide,
+  });
   useLayoutEffect(() => {
     if (!allowed || !ready) return;
+    const prev = prevLayoutProps.current;
+    const layoutUnchanged =
+      prev.mode === s.mode &&
+      prev.layout === s.layout &&
+      prev.spread === s.spread &&
+      prev.singleCover === s.singleCover &&
+      prev.direction === s.direction &&
+      prev.wide === wide;
+
+    if (layoutUnchanged) {
+      if (prev.zoom !== zoom || prev.maxWidth !== s.maxWidth) {
+        if (prev.zoom !== zoom && prev.zoom > 0) {
+          const scale = zoom / prev.zoom;
+          for (const [k, v] of measuredHeights.current) {
+            measuredHeights.current.set(k, Math.max(1, Math.round(v * scale)));
+          }
+        }
+        // When only zoom or max-width changes, recompute offsets from existing measured heights
+        measure(true);
+        const anchor = pendingRestore.current || position.current;
+        updateWindow(true, anchor.page);
+        if (latest.current.s.mode === 'continuous') {
+          restore(anchor);
+        }
+        pendingRestore.current = undefined;
+        capture();
+      }
+      prevLayoutProps.current = {
+        mode: s.mode,
+        layout: s.layout,
+        maxWidth: s.maxWidth,
+        spread: s.spread,
+        singleCover: s.singleCover,
+        direction: s.direction,
+        zoom,
+        wide,
+      };
+      return;
+    }
+
+    prevLayoutProps.current = {
+      mode: s.mode,
+      layout: s.layout,
+      maxWidth: s.maxWidth,
+      spread: s.spread,
+      singleCover: s.singleCover,
+      direction: s.direction,
+      zoom,
+      wide,
+    };
+
     restoring.current = true;
     measuredHeights.current.clear();
     const frame = requestAnimationFrame(() => {
@@ -622,16 +688,17 @@ function ReaderView({ manga }: { manga: Manga }) {
     let frame = 0;
     const scroll = () => {
       if (restoring.current) return;
-      const y = pointer.current;
-      if (latest.current.s.autoHideBars)
-        setBars((old) => {
-          const top = y >= 0 && y < 60,
-            bottom = y > innerHeight - 60;
-          return old.top === top && old.bottom === bottom ? old : { top, bottom };
-        });
       if (!frame)
         frame = requestAnimationFrame(() => {
           frame = 0;
+          if (latest.current.s.autoHideBars) {
+            const y = pointer.current;
+            setBars((old) => {
+              const top = y >= 0 && y < 60,
+                bottom = y > innerHeight - 60;
+              return old.top === top && old.bottom === bottom ? old : { top, bottom };
+            });
+          }
           actions.current.capture();
           actions.current.updateWindow();
         });
@@ -795,7 +862,7 @@ function ReaderView({ manga }: { manga: Manga }) {
           if (elapsed >= state.s.seconds) {
             elapsed = 0;
             const list = groupsRef.current;
-            const i = list.findIndex((g) => g.includes(state.page));
+            const i = pageToGroupRef.current[state.page] ?? 0;
             if (i < list.length - 1) actions.current.goPage(list[i + 1][0], false);
             else end();
           }
