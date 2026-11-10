@@ -1616,3 +1616,36 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (Vite production bundle built in 2.65s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Adaptive Object URL Pool Size — 2026-11-11
+
+- **Adaptive Object URL Pool Sizing (`src/objectUrlPool.ts`)**:
+  - Implemented `getAdaptivePoolSize()` dynamically adapting LRU Object URL cache capacity according to client hardware capabilities:
+    - Highly constrained environments (`deviceMemory <= 2` or `hardwareConcurrency <= 2`): 12 entries to minimize RAM usage on lower-end devices.
+    - Moderately constrained environments (`deviceMemory <= 4` or `hardwareConcurrency <= 4`): 24 entries.
+    - High-spec systems (`deviceMemory >= 8` and `hardwareConcurrency >= 8`): 64 entries to eliminate redundant re-reads and re-decodes during fast continuous scrolling.
+    - Intermediate configurations: 40 entries.
+    - Non-browser/undefined navigator environments: 32 entries fallback.
+  - Initialized `defaultObjectUrlPool` with `getAdaptivePoolSize()`.
+  - Preserved all call sites (`getObjectUrl`, `storeObjectUrl`, `clearObjectUrlPool`) and LRU eviction invariants intact.
+- **Verification**:
+  - Added unit test in `tests/image-pipeline.spec.ts` asserting pool sizing across low (12), medium (24), high (64), and intermediate (40) tiers.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **78/78 unit tests PASS** (1.5s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.77s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Image Queue Insertion Sort Optimization — 2026-11-11
+
+- **Stable Insertion Sort in Image Queue (`src/imageQueue.ts`)**:
+  - Replaced `this.queue.sort((a, b) => b.priority - a.priority)` in `ensureSorted()` with an in-place insertion sort.
+  - Insertion sort operates in linear $O(N)$ time on nearly-sorted bounded queues ($\le 64$ entries) with zero closure allocation and zero V8 comparator call overhead during rapid scroll reprioritizations.
+  - Preserves strict FIFO stability for tasks with equal priority.
+- **Verification**:
+  - Added unit test in `tests/image-pipeline.spec.ts` asserting deterministic priority scheduling and strict FIFO preservation for duplicate priorities across multiple queued tasks.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **79/79 unit tests PASS** (1.4s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.64s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).

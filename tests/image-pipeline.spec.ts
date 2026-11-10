@@ -2,7 +2,7 @@ import { expect, test } from '@playwright/test';
 import { headerDimensions, clearDimensionCache } from '../src/imageDimensions';
 import { thumbnail } from '../src/images';
 import { ImageQueue, resetConcurrencyCacheForTesting } from '../src/imageQueue';
-import { ObjectUrlPool } from '../src/objectUrlPool';
+import { ObjectUrlPool, getAdaptivePoolSize, defaultObjectUrlPool } from '../src/objectUrlPool';
 
 test.describe('Image Loading Pipeline Improvements', () => {
   test.beforeEach(() => {
@@ -229,6 +229,74 @@ test.describe('Image Loading Pipeline Improvements', () => {
     }
   });
 
+  test('getAdaptivePoolSize scales pool size based on device memory and concurrency', () => {
+    const origNavigator = globalThis.navigator;
+
+    try {
+      // 1. Constrained device (low memory or low cores -> 12)
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 2, hardwareConcurrency: 8 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(12);
+
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 8, hardwareConcurrency: 1 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(12);
+
+      // 2. Moderate device (<= 4GB RAM or <= 4 cores -> 24)
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 4, hardwareConcurrency: 8 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(24);
+
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 8, hardwareConcurrency: 4 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(24);
+
+      // 3. High-spec device (>= 8GB RAM and >= 8 cores -> 64)
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 8, hardwareConcurrency: 8 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(64);
+
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 16, hardwareConcurrency: 16 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(64);
+
+      // 4. Intermediate device (e.g. 6GB RAM, 6 cores -> 40)
+      Object.defineProperty(globalThis, 'navigator', {
+        value: { deviceMemory: 6, hardwareConcurrency: 6 },
+        configurable: true,
+        writable: true,
+      });
+      expect(getAdaptivePoolSize()).toBe(40);
+
+      // 5. Default object url pool is an instantiated ObjectUrlPool
+      expect(defaultObjectUrlPool).toBeInstanceOf(ObjectUrlPool);
+    } finally {
+      Object.defineProperty(globalThis, 'navigator', {
+        value: origNavigator,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
   test('thumbnail accepts custom quality parameter without error', async () => {
     // 1x1 GIF
     const gif1x1 = new Uint8Array([
@@ -284,5 +352,58 @@ test.describe('Image Loading Pipeline Improvements', () => {
     expect(order[0]).toBe('item-0');
     expect(order[1]).toBe('item-1');
     expect(order[2]).toBe('item-2');
+  });
+
+  test('ImageQueue insertion sort stably orders tasks and preserves FIFO for equal priorities', async () => {
+    resetConcurrencyCacheForTesting();
+    const queue = new ImageQueue();
+    const executed: string[] = [];
+    const blockers: Array<() => void> = [];
+
+    // Hold all 4 concurrency slots
+    for (let i = 0; i < 4; i++) {
+      queue.enqueue({
+        key: `hold-${i}`,
+        run: () =>
+          new Promise<void>((resolve) => {
+            blockers.push(resolve);
+          }),
+      });
+    }
+
+    // Enqueue items in arbitrary order with some equal priorities
+    const items = [
+      { key: 'low-1', priority: 10 },
+      { key: 'high-1', priority: 50 },
+      { key: 'mid-1', priority: 30 },
+      { key: 'high-2', priority: 50 },
+      { key: 'low-2', priority: 10 },
+      { key: 'mid-2', priority: 30 },
+      { key: 'top-1', priority: 80 },
+    ];
+
+    for (const item of items) {
+      queue.enqueue({
+        key: item.key,
+        priority: item.priority,
+        run: async () => {
+          executed.push(item.key);
+        },
+      });
+    }
+
+    // Release blockers
+    for (const b of blockers) b();
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(executed).toEqual([
+      'top-1', // priority 80
+      'high-1', // priority 50 (first inserted)
+      'high-2', // priority 50 (second inserted)
+      'mid-1', // priority 30 (first inserted)
+      'mid-2', // priority 30 (second inserted)
+      'low-1', // priority 10 (first inserted)
+      'low-2', // priority 10 (second inserted)
+    ]);
   });
 });

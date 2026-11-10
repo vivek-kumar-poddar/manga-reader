@@ -199,10 +199,18 @@ export class ImageQueue {
   }
 
   private ensureSorted(): void {
-    if (this.queueDirty) {
-      this.queue.sort((a, b) => b.priority - a.priority);
-      this.queueDirty = false;
+    if (!this.queueDirty) return;
+    // Insertion sort is faster than Array.sort for nearly-sorted priority queues of size ≤ 64
+    for (let i = 1; i < this.queue.length; i++) {
+      const item = this.queue[i];
+      let j = i - 1;
+      while (j >= 0 && this.queue[j].priority < item.priority) {
+        this.queue[j + 1] = this.queue[j];
+        j--;
+      }
+      this.queue[j + 1] = item;
     }
+    this.queueDirty = false;
   }
 
   private pump(): void {

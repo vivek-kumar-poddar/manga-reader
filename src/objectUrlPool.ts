@@ -89,7 +89,18 @@ export class ObjectUrlPool {
   }
 }
 
-export const defaultObjectUrlPool = new ObjectUrlPool(32);
+export function getAdaptivePoolSize(): number {
+  if (typeof navigator === 'undefined') return 32;
+  const nav = navigator as Navigator & { deviceMemory?: number; hardwareConcurrency?: number };
+  const mem = nav.deviceMemory ?? 4;
+  const cores = nav.hardwareConcurrency ?? 4;
+  if (mem <= 2 || cores <= 2) return 12;
+  if (mem <= 4 || cores <= 4) return 24;
+  if (mem >= 8 && cores >= 8) return 64;
+  return 40;
+}
+
+export const defaultObjectUrlPool = new ObjectUrlPool(getAdaptivePoolSize());
 
 export function getObjectUrl(key: string): string | undefined {
   return defaultObjectUrlPool.get(key);
