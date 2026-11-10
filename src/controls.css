@@ -2,42 +2,121 @@
 :root {
   --control-size: 38px;
   --control-radius: 7px;
-  --line: rgb(0 0 0 / 8%);
-  --line-hover: rgb(0 0 0 / 15%);
-  --line-focus: rgb(0 0 0 / 30%);
+  --line: #dfd0b8;
+  --line-hover: #c4b49c;
+  --line-focus: #393e46;
   --success: var(--text);
   --font-size-button: 15px;
+
+  /* Button and Dropdown Theme Palette */
+  --btn-bg: #dfd0b8;
+  --btn-text: #393e46;
+  --btn-border: #dfd0b8;
+  --btn-hover-bg: #d2c1a5;
+  --btn-hover-text: #222831;
+  --btn-hover-border: #c4b49c;
+
+  --dropdown-bg: #dfd0b8;
+  --dropdown-text: #393e46;
+  --dropdown-border: #dfd0b8;
+  --dropdown-hover-bg: #d2c1a5;
+  --dropdown-hover-text: #222831;
 }
 
-:root.dark {
-  --line: rgb(255 255 255 / 8%);
-  --line-hover: rgb(255 255 255 / 15%);
-  --line-focus: rgb(255 255 255 / 30%);
+:root.dark,
+.dark {
+  --line: #393e46;
+  --line-hover: #484e57;
+  --line-focus: #dfd0b8;
   --success: var(--text);
+
+  /* Button and Dropdown Theme Palette */
+  --btn-bg: #393e46;
+  --btn-text: #dfd0b8;
+  --btn-border: #393e46;
+  --btn-hover-bg: #484e57;
+  --btn-hover-text: #ffffff;
+  --btn-hover-border: #484e57;
+
+  --dropdown-bg: #393e46;
+  --dropdown-text: #dfd0b8;
+  --dropdown-border: #393e46;
+  --dropdown-hover-bg: #484e57;
+  --dropdown-hover-text: #ffffff;
 }
 
-button,
+button:not(.manga-open):not(.text-button):not(.bookmark-tab-button):not(.toast .close-btn):not(
+    .update-banner button
+  ),
 .dropdown-trigger,
 summary.icon-button,
 a.icon-button,
 a.primary,
-a.secondary {
-  border: 1px solid var(--line) !important;
+a.secondary,
+.primary,
+.secondary,
+.browse-button,
+.zoom-trigger {
+  border: 1px solid var(--btn-border) !important;
   border-radius: var(--control-radius);
+  background-color: var(--btn-bg) !important;
+  color: var(--btn-text) !important;
   box-shadow: none;
   transition:
     background-color 160ms ease,
     border-color 160ms ease,
-    color 160ms ease;
+    color 160ms ease,
+    box-shadow 160ms ease;
 }
 
-button:not(:disabled):hover,
+button:not(.manga-open):not(.text-button):not(.bookmark-tab-button):not(.toast .close-btn):not(
+    .update-banner button
+  )
+  svg,
+.dropdown-trigger svg,
+summary.icon-button svg,
+a.icon-button svg,
+a.primary svg,
+a.secondary svg,
+.primary svg,
+.secondary svg,
+.browse-button svg,
+.zoom-trigger svg {
+  color: inherit;
+  stroke: currentColor;
+  transition:
+    color 160ms ease,
+    stroke 160ms ease;
+}
+
+button:not(:disabled):not(.manga-open):not(.text-button):not(.bookmark-tab-button):not(
+    .bookmark-remove
+  ):not(.close-btn):not(.danger-text):not(.toast .close-btn):not(.update-banner button):hover,
 .dropdown-trigger:hover,
-summary.icon-button:hover,
+summary.icon-button:not(.close-btn):hover,
 a.icon-button:hover,
-a.secondary:hover {
-  background: var(--soft);
-  color: var(--text);
+a.secondary:hover,
+.secondary:hover,
+.browse-button:hover,
+.zoom-trigger:hover {
+  background-color: var(--btn-hover-bg) !important;
+  border-color: var(--btn-hover-border) !important;
+  color: var(--btn-hover-text) !important;
+}
+
+button:not(:disabled):not(.manga-open):not(.text-button):not(.bookmark-tab-button):not(
+    .bookmark-remove
+  ):not(.close-btn):not(.danger-text):not(.toast .close-btn):not(.update-banner button):hover
+  svg,
+.dropdown-trigger:hover svg,
+summary.icon-button:not(.close-btn):hover svg,
+a.icon-button:hover svg,
+a.secondary:hover svg,
+.secondary:hover svg,
+.browse-button:hover svg,
+.zoom-trigger:hover svg {
+  color: var(--btn-hover-text) !important;
+  stroke: var(--btn-hover-text) !important;
 }
 
 a.secondary.no-bookmark-browse-btn {
@@ -72,8 +151,17 @@ a.icon-button:focus-visible {
   aspect-ratio: 1;
   padding: 0 !important;
   border-radius: var(--control-radius);
-  background: transparent;
+  background-color: var(--btn-bg) !important;
+  color: var(--btn-text) !important;
+  border: 1px solid var(--btn-border) !important;
   vertical-align: middle;
+}
+
+.icon-button:hover,
+.organized-bar .icon-button:hover {
+  background-color: var(--btn-hover-bg) !important;
+  color: var(--btn-hover-text) !important;
+  border-color: var(--btn-hover-border) !important;
 }
 
 .close-btn {
@@ -89,10 +177,10 @@ a.icon-button:focus-visible {
   flex: 0 0 32px !important;
   aspect-ratio: 1;
   padding: 0 !important;
-  border: 1px solid var(--line) !important;
+  border: 1px solid var(--btn-border) !important;
   border-radius: var(--control-radius);
-  background: var(--surface);
-  color: var(--muted);
+  background: var(--btn-bg);
+  color: var(--btn-text);
   cursor: pointer;
   vertical-align: middle;
   transition:
@@ -106,8 +194,8 @@ a.icon-button:focus-visible {
 .close-btn svg.lucide.lucide-x {
   width: 16px !important;
   height: 16px !important;
-  color: var(--muted);
-  stroke: var(--muted);
+  color: var(--btn-text);
+  stroke: var(--btn-text);
   transition:
     color 160ms ease,
     stroke 160ms ease;
@@ -127,9 +215,10 @@ a.icon-button:focus-visible {
 .primary:hover,
 .browse-button:hover,
 a.primary:hover {
-  background: var(--text) !important;
-  color: var(--surface) !important;
-  filter: brightness(0.93);
+  background: var(--btn-hover-bg) !important;
+  color: var(--btn-hover-text) !important;
+  border-color: var(--btn-hover-border) !important;
+  filter: none;
 }
 
 .completion-button.completed,
@@ -362,23 +451,25 @@ a.primary:hover {
 }
 
 .upload-zone .browse-button {
-  background: #e1e1eb;
-  color: #171719;
+  background: var(--btn-bg) !important;
+  color: var(--btn-text) !important;
+  border: 1px solid var(--btn-border) !important;
   transition:
-    background-color 0.3s ease-in-out,
-    color 0.3s ease-in-out,
-    border-color 0.3s ease-in-out,
-    filter 0.3s ease-in-out;
+    background-color 0.2s ease-in-out,
+    color 0.2s ease-in-out,
+    border-color 0.2s ease-in-out;
 }
 
 .upload-zone:hover .browse-button:not(:hover) {
-  background: #fff;
-  color: #18181b;
+  background: var(--btn-bg) !important;
+  color: var(--btn-text) !important;
+  border-color: var(--btn-border) !important;
 }
 
 .upload-zone .browse-button:hover {
-  background: #e2e2ed !important;
-  color: #171719 !important;
+  background: var(--btn-hover-bg) !important;
+  color: var(--btn-hover-text) !important;
+  border-color: var(--btn-hover-border) !important;
 }
 
 .upload-zone .upload-buttons {
@@ -742,15 +833,16 @@ button.danger-text:focus-visible svg,
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  background: #f1f2f5;
-  border: 1px solid rgba(0, 0, 0, 0.07);
+  background: #f4eee3;
+  border: 1px solid #dfd0b8;
   padding: 4px;
   border-radius: 10px;
 }
 
-:root.dark .bookmark-tabs {
-  background: #1c1d21;
-  border-color: rgba(255, 255, 255, 0.07);
+:root.dark .bookmark-tabs,
+.dark .bookmark-tabs {
+  background: #222831;
+  border-color: #393e46;
 }
 
 .bookmark-tab-button {
@@ -761,7 +853,7 @@ button.danger-text:focus-visible svg,
   border: 1px solid transparent !important;
   border-radius: 7px;
   background: transparent !important;
-  color: #6b7280;
+  color: #686d76;
   font-family: var(--font-ui);
   font-size: var(--font-size-ui, 14px);
   font-weight: 500;
@@ -775,31 +867,34 @@ button.danger-text:focus-visible svg,
     box-shadow 160ms ease;
 }
 
-:root.dark .bookmark-tab-button {
-  color: #8f96a3;
+:root.dark .bookmark-tab-button,
+.dark .bookmark-tab-button {
+  color: #dfd0b8;
 }
 
 .bookmark-tab-button:hover {
-  color: var(--text);
-  background: rgba(0, 0, 0, 0.04) !important;
+  color: #222831;
+  background: rgba(0, 0, 0, 0.05) !important;
 }
 
-:root.dark .bookmark-tab-button:hover {
+:root.dark .bookmark-tab-button:hover,
+.dark .bookmark-tab-button:hover {
   color: #ffffff;
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
 }
 
 .bookmark-tab-button[aria-selected='true'] {
-  background: #ffffff !important;
-  border-color: rgba(0, 0, 0, 0.06) !important;
-  color: #111827 !important;
+  background: #dfd0b8 !important;
+  border-color: #c4b49c !important;
+  color: #222831 !important;
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
 }
 
-:root.dark .bookmark-tab-button[aria-selected='true'] {
-  background: #2b2c31 !important;
-  border-color: rgba(255, 255, 255, 0.09) !important;
+:root.dark .bookmark-tab-button[aria-selected='true'],
+.dark .bookmark-tab-button[aria-selected='true'] {
+  background: #393e46 !important;
+  border-color: #484e57 !important;
   color: #ffffff !important;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25) !important;
 }
@@ -814,26 +909,28 @@ button.danger-text:focus-visible svg,
   font-variant-numeric: tabular-nums;
   padding: 2px 6px;
   border-radius: 5px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(0, 0, 0, 0.03);
-  color: #6b7280;
+  border: 1px solid #dfd0b8;
+  background: #ffffff;
+  color: #393e46;
 }
 
-:root.dark .bookmark-tab-count {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
-  color: #8f96a3;
+:root.dark .bookmark-tab-count,
+.dark .bookmark-tab-count {
+  border-color: #393e46;
+  background: #222831;
+  color: #dfd0b8;
 }
 
 .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
-  border-color: rgba(0, 0, 0, 0.14);
-  background: rgba(0, 0, 0, 0.05);
-  color: #111827 !important;
+  border-color: #393e46;
+  background: #ffffff;
+  color: #222831 !important;
 }
 
-:root.dark .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.3);
+:root.dark .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count,
+.dark .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
+  border-color: #484e57;
+  background: #222831;
   color: #ffffff !important;
 }
 
