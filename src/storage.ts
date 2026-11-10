@@ -92,6 +92,24 @@ export function broadcastSync(msg: StorageSyncMessage): void {
   }
 }
 
+let cachedSummaries: Summary[] | null = null;
+let cachedBookmarkedMangaIds: Set<string> | null = null;
+let cachedMangaBookmarkedIds: Set<string> | null = null;
+
+export function invalidateSummaryCache(): void {
+  cachedSummaries = null;
+}
+
+export function invalidateBookmarkCache(): void {
+  cachedBookmarkedMangaIds = null;
+  cachedMangaBookmarkedIds = null;
+}
+
+syncChannel?.addEventListener('message', () => {
+  cachedSummaries = null;
+  invalidateBookmarkCache();
+});
+
 export const summary = (m: Manga): Summary => {
   const { chapters, cover: _cover, ...rest } = m;
 
@@ -167,28 +185,44 @@ export const db: Promise<IDBPDatabase<MangaDB>> =
     : (new Promise(() => {}) as unknown as Promise<IDBPDatabase<MangaDB>>);
 
 export const listLibrary = async (): Promise<Summary[]> => {
+  if (cachedSummaries !== null) {
+    return cachedSummaries.slice();
+  }
+  if (typeof indexedDB === 'undefined') {
+    return [];
+  }
   const database = await db;
-  const tx = database.transaction(['manga', 'summaries'], 'readwrite');
-  const rawEntries = (await tx.objectStore('summaries').getAll()) as unknown[];
+  const rawEntries = (await database.getAll('summaries')) as unknown[];
   const entries: Summary[] = [];
+  let needsSlugs = false;
   for (const raw of rawEntries) {
     const s = parseSummary(raw, { preserveHardwarePointers: true });
-    if (s) entries.push(s);
-  }
-  const used = new Set(entries.map((m) => m.slug).filter((s): s is string => Boolean(s)));
-  for (const m of entries.sort((a, b) => a.addedAt - b.addedAt || a.id.localeCompare(b.id))) {
-    if (!m.slug) {
-      m.slug = uniqueSlug(m.title, used);
-      used.add(m.slug);
-      await tx.objectStore('summaries').put(m);
-      const stored = await tx.objectStore('manga').get(m.id);
-      if (stored && isRecord(stored)) {
-        await tx.objectStore('manga').put({ ...stored, slug: m.slug });
-      }
+    if (s) {
+      if (!s.slug) needsSlugs = true;
+      entries.push(s);
     }
   }
-  await tx.done;
-  return entries.sort((a, b) => b.updatedAt - a.updatedAt);
+  if (needsSlugs) {
+    const tx = database.transaction(['manga', 'summaries'], 'readwrite');
+    const used = new Set(entries.map((m) => m.slug).filter((s): s is string => Boolean(s)));
+    for (const m of entries.sort((a, b) => a.addedAt - b.addedAt || a.id.localeCompare(b.id))) {
+      if (!m.slug) {
+        m.slug = uniqueSlug(m.title, used);
+        used.add(m.slug);
+        await tx.objectStore('summaries').put(m);
+        const stored = await tx.objectStore('manga').get(m.id);
+        if (stored && isRecord(stored)) {
+          await tx.objectStore('manga').put({ ...stored, slug: m.slug });
+        }
+      }
+    }
+    await tx.done;
+    cachedSummaries = null;
+    invalidateBookmarkCache();
+  }
+  entries.sort((a, b) => b.updatedAt - a.updatedAt);
+  cachedSummaries = entries;
+  return entries.slice();
 };
 
 export async function getCover(id: string): Promise<Blob | undefined> {
@@ -315,6 +349,8 @@ export async function saveManga(m: Manga): Promise<void> {
   m.updatedAt = updatedAt;
   m.revision = revision;
   m.slug = slug;
+  cachedSummaries = null;
+  invalidateBookmarkCache();
 
   if (cover && desktopAPI.isDesktop && desktopAPI.saveThumbnail) {
     try {
@@ -375,22 +411,62 @@ export async function saveProgress(
     chaptersRead: s.chaptersRead + (!old?.read && isRead ? 1 : 0),
   });
   await tx.done;
+  if (cachedSummaries) {
+    const idx = cachedSummaries.findIndex((x) => x.id === m.id);
+    if (idx >= 0) {
+      const cur = cachedSummaries[idx];
+      cachedSummaries[idx] = {
+        ...cur,
+        ...(updateLast
+          ? {
+              lastChapter: index,
+              lastChapterName: chapter.name,
+              hasProgress: true,
+              updatedAt: Date.now(),
+            }
+          : {}),
+        chaptersRead: cur.chaptersRead + (!old?.read && isRead ? 1 : 0),
+      };
+      cachedSummaries.sort((a, b) => b.updatedAt - a.updatedAt);
+    } else {
+      cachedSummaries = null;
+    }
+  }
+  if (bookmarks) {
+    invalidateBookmarkCache();
+  }
   broadcastSync({ type: 'progress', id: m.id });
   return 'saved';
 }
 
 export async function getBookmarkedMangaIds(): Promise<Set<string>> {
+  if (cachedBookmarkedMangaIds) {
+    return new Set(cachedBookmarkedMangaIds);
+  }
+  if (typeof indexedDB === 'undefined') {
+    return new Set();
+  }
   const d = await db;
   const progress = await d.getAll('progress');
-  return new Set(progress.filter((p) => p.bookmarks?.length).map((p) => p.mangaId));
+  const ids = new Set(progress.filter((p) => p.bookmarks?.length).map((p) => p.mangaId));
+  cachedBookmarkedMangaIds = ids;
+  return new Set(ids);
 }
 
 export async function getMangaBookmarkedIds(): Promise<Set<string>> {
+  if (cachedMangaBookmarkedIds) {
+    return new Set(cachedMangaBookmarkedIds);
+  }
+  if (typeof indexedDB === 'undefined') {
+    return new Set();
+  }
   const d = await db;
   const progress = await d.getAll('progress');
-  return new Set(
+  const ids = new Set(
     progress.filter((p) => p.bookmarks?.some((b) => b.mangaBookmark)).map((p) => p.mangaId),
   );
+  cachedMangaBookmarkedIds = ids;
+  return new Set(ids);
 }
 
 export async function addBookmark(
@@ -424,6 +500,7 @@ export async function addBookmark(
   }
 
   await tx.done;
+  invalidateBookmarkCache();
   broadcastSync({ type: 'progress', id: mangaId });
   return marks;
 }
@@ -455,6 +532,7 @@ export async function removeBookmark(
   }
 
   await tx.done;
+  invalidateBookmarkCache();
   broadcastSync({ type: 'progress', id: mangaId });
   return marks;
 }
@@ -468,6 +546,8 @@ export async function deleteManga(id: string): Promise<void> {
   for (const key of await tx.objectStore('progress').index('mangaId').getAllKeys(id))
     await tx.objectStore('progress').delete(key);
   await tx.done;
+  cachedSummaries = null;
+  invalidateBookmarkCache();
   sessionFiles.delete(id);
   if (desktopAPI.isDesktop && desktopAPI.deleteThumbnail) {
     desktopAPI.deleteThumbnail(id).catch((err) => {
@@ -483,6 +563,8 @@ export async function clearLibrary(): Promise<void> {
   for (const name of ['manga', 'summaries', 'covers', 'progress'] as const)
     await tx.objectStore(name).clear();
   await tx.done;
+  cachedSummaries = [];
+  invalidateBookmarkCache();
   sessionFiles.clear();
   if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
     desktopAPI.clearThumbnails().catch((err) => {
@@ -606,6 +688,8 @@ export async function restoreBackup(backup: {
 
       await tx.objectStore('settings').put(validatedSettings, 'global');
       await tx.done;
+      cachedSummaries = null;
+      invalidateBookmarkCache();
 
       if (desktopAPI.isDesktop && desktopAPI.saveThumbnail) {
         for (const item of preparedList) {
@@ -665,6 +749,8 @@ export async function resetProgress(): Promise<void> {
     }
 
     await tx.done;
+    cachedSummaries = null;
+    invalidateBookmarkCache();
   } catch (err) {
     try {
       tx.abort();

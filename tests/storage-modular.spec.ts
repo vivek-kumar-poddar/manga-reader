@@ -8,8 +8,12 @@ import {
   migrateV1ToV2,
   restoreBackup,
   getCover,
+  listLibrary,
+  invalidateSummaryCache,
+  invalidateBookmarkCache,
   type SaveProgressResult,
 } from '../src/storage';
+import { clearCoverUrlPool } from '../src/App';
 import { desktopAPI } from '../src/tauriBridge';
 import { imageFile } from '../src/images';
 import { fromFiles, DesktopHandle, chapterGroups, splitSource } from '../src/importScan';
@@ -435,5 +439,87 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       });
       (desktopAPI as any).getThumbnail = originalGetThumbnail;
     }
+  });
+
+  test('queuedFlush deduplication coalesces follow-up writes during in-flight operations', async () => {
+    let inFlight: Promise<SaveProgressResult> | null = null;
+    let queuedFlush: Promise<SaveProgressResult> | null = null;
+    let dirty = false;
+    let snapshotRevision = 0;
+    let committedRevision = 0;
+    let saveCount = 0;
+
+    const mockSave = async (rev: number): Promise<SaveProgressResult> => {
+      saveCount++;
+      await new Promise((r) => setTimeout(r, 20));
+      committedRevision = rev;
+      return 'saved';
+    };
+
+    const flush = (): Promise<SaveProgressResult> => {
+      if (inFlight) {
+        if (!queuedFlush) {
+          queuedFlush = inFlight.then(() => {
+            queuedFlush = null;
+            if (dirty) return flush();
+            return 'saved';
+          });
+        }
+        return queuedFlush;
+      }
+      if (!dirty) return Promise.resolve('saved');
+
+      const targetRevision = snapshotRevision;
+      dirty = false;
+
+      const savePromise = (async (): Promise<SaveProgressResult> => {
+        try {
+          return await mockSave(targetRevision);
+        } finally {
+          if (inFlight === savePromise) inFlight = null;
+        }
+      })();
+
+      inFlight = savePromise;
+      return savePromise;
+    };
+
+    // First write starts
+    snapshotRevision = 1;
+    dirty = true;
+    const p1 = flush();
+
+    // Rapid page flips while write 1 is in-flight
+    snapshotRevision = 2;
+    dirty = true;
+    const p2 = flush();
+
+    snapshotRevision = 3;
+    dirty = true;
+    const p3 = flush();
+
+    snapshotRevision = 4;
+    dirty = true;
+    const p4 = flush();
+
+    // p2, p3, p4 should have returned the EXACT same queuedFlush promise
+    expect(p2).toBe(p3);
+    expect(p3).toBe(p4);
+
+    const results = await Promise.all([p1, p2, p3, p4]);
+    expect(results.every((r) => r === 'saved')).toBe(true);
+    expect(committedRevision).toBe(4);
+    expect(dirty).toBe(false);
+    expect(saveCount).toBe(2); // Only 2 total writes executed!
+  });
+
+  test('invalidateSummaryCache() and invalidateBookmarkCache() reset in-memory caches', () => {
+    expect(() => invalidateSummaryCache()).not.toThrow();
+    expect(() => invalidateBookmarkCache()).not.toThrow();
+  });
+
+  test('clearCoverUrlPool() purges entries safely', () => {
+    expect(() => clearCoverUrlPool('manga-unknown')).not.toThrow();
+    expect(() => clearCoverUrlPool()).not.toThrow();
   });
 });

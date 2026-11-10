@@ -31,11 +31,42 @@ export class ImageQueue {
 
   private getMaxConcurrency(): number {
     if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
-      return window.matchMedia('(max-width:700px)').matches
-        ? limits.mobilePageConcurrency
-        : limits.desktopPageConcurrency;
+      const isMobile = window.matchMedia('(max-width:700px)').matches;
+      if (isMobile) {
+        return limits.mobilePageConcurrency;
+      }
     }
+
+    if (typeof navigator !== 'undefined') {
+      const nav = navigator as unknown as {
+        hardwareConcurrency?: number;
+        deviceMemory?: number;
+      };
+      const cores = nav.hardwareConcurrency;
+      const mem = nav.deviceMemory;
+
+      // Constrained devices (<= 2 cores or <= 2 GB RAM) -> concurrency 1
+      if ((cores && cores <= 2) || (mem && mem <= 2)) {
+        return 1;
+      }
+      // Modest devices (<= 4 cores or <= 4 GB RAM) -> concurrency 2
+      if ((cores && cores <= 4) || (mem && mem <= 4)) {
+        return Math.min(2, limits.desktopPageConcurrency);
+      }
+    }
+
     return limits.desktopPageConcurrency;
+  }
+
+  /**
+   * Updates priority of an existing waiting task and re-sorts the queue.
+   */
+  reprioritize(key: string, priority: number): void {
+    const item = this.queue.find((q) => q.key === key);
+    if (item && item.priority !== priority) {
+      item.priority = priority;
+      this.sortQueue();
+    }
   }
 
   /**
@@ -164,4 +195,8 @@ export function enqueueImage(options: ImageTaskOptions): CancelHandle | null {
 
 export function clearImageQueue(): void {
   defaultImageQueue.clear();
+}
+
+export function reprioritizeImage(key: string, priority: number): void {
+  defaultImageQueue.reprioritize(key, priority);
 }

@@ -26,6 +26,8 @@ export {
   db,
   summary,
   listLibrary,
+  invalidateSummaryCache,
+  invalidateBookmarkCache,
   getManga,
   getCover,
   allManga,
@@ -38,6 +40,7 @@ export {
   syncChannel,
   broadcastSync,
   deleteManga,
+  onMangaDelete,
   clearLibrary,
   migrateV1ToV2,
   restoreBackup,
@@ -54,7 +57,20 @@ export {
 } from './storage';
 
 export { dimensions, thumbnail, imageFile, downscaleImage } from './images';
-export { enqueueImage, clearImageQueue, ImageQueue, defaultImageQueue } from './imageQueue';
+export {
+  enqueueImage,
+  clearImageQueue,
+  reprioritizeImage,
+  ImageQueue,
+  defaultImageQueue,
+} from './imageQueue';
+export {
+  getObjectUrl,
+  storeObjectUrl,
+  clearObjectUrlPool,
+  ObjectUrlPool,
+  defaultObjectUrlPool,
+} from './objectUrlPool';
 
 export {
   DesktopHandle,

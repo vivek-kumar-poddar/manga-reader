@@ -55,7 +55,11 @@ export async function dimensions(
   }
 }
 
-export async function thumbnail(file: File, signal?: AbortSignal): Promise<Blob | undefined> {
+export async function thumbnail(
+  file: File,
+  signal?: AbortSignal,
+  quality = 0.65,
+): Promise<Blob | undefined> {
   signal?.throwIfAborted();
   const size = await headerDimensions(file);
   signal?.throwIfAborted();
@@ -108,7 +112,7 @@ export async function thumbnail(file: File, signal?: AbortSignal): Promise<Blob 
         ctx.drawImage(im, 0, 0, c.width, c.height);
         return await withinTime(
           new Promise<Blob | undefined>((r) =>
-            c.toBlob((b) => r(b ?? undefined), 'image/webp', 0.8),
+            c.toBlob((b) => r(b ?? undefined), 'image/webp', quality),
           ),
           limits.coverTimeoutMs,
           'Encoding cover',
@@ -141,10 +145,19 @@ export async function downscaleImage(
   }
 
   let expired = false;
+  const isConstrained =
+    typeof navigator !== 'undefined' &&
+    (Boolean(navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 4) ||
+      Boolean(
+        (navigator as unknown as { deviceMemory?: number }).deviceMemory &&
+        (navigator as unknown as { deviceMemory?: number }).deviceMemory! <= 4,
+      ));
+  const resizeQuality: ResizeQuality = isConstrained ? 'low' : 'medium';
+
   const task = createImageBitmap(blob, {
     resizeWidth: targetWidth,
     resizeHeight: targetHeight,
-    resizeQuality: 'medium',
+    resizeQuality,
   });
 
   // A timed-out or aborted decoder may still resolve; release its late bitmap.

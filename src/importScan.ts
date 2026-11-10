@@ -78,7 +78,36 @@ export const ignored = (path: string): boolean =>
         p.toLowerCase() === 'desktop.ini',
     );
 
-const tick = () => new Promise<void>((r) => setTimeout(r, 0));
+const tick = () => {
+  const sched = (
+    typeof globalThis !== 'undefined'
+      ? (globalThis as Record<string, unknown>).scheduler
+      : undefined
+  ) as { yield?: () => Promise<void> } | undefined;
+  return typeof sched?.yield === 'function'
+    ? sched.yield()
+    : new Promise<void>((r) => setTimeout(r, 0));
+};
+
+function getDecodeConcurrency(): number {
+  if (desktopAPI.isDesktop && typeof navigator !== 'undefined') {
+    const cores = navigator.hardwareConcurrency || 4;
+    const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
+    if (cores >= 8 && (!mem || mem >= 8)) {
+      return 6;
+    }
+    if (cores >= 4 && (!mem || mem >= 4)) {
+      return 4;
+    }
+  }
+  return limits.decodeConcurrency;
+}
+
+const sessionDimensions = new Map<string, { width: number; height: number }>();
+
+export function clearSessionDimensions(): void {
+  sessionDimensions.clear();
+}
 
 export interface Issue {
   path: string;
@@ -257,7 +286,7 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
   let discovered = 0;
   let active = 0;
   const pump = () => {
-    while (active < limits.decodeConcurrency && queue.length && !options.signal?.aborted) {
+    while (active < getDecodeConcurrency() && queue.length && !options.signal?.aborted) {
       const entry = queue.shift()!;
       active++;
       const task = scanImage(entry, options.signal)
@@ -303,6 +332,7 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
     depth: number;
   }
   const stack: StackFrame[] = [{ dir: handle, prefix: '', depth: 0 }];
+  let lastYield = performance.now();
 
   try {
     while (stack.length > 0) {
@@ -356,7 +386,9 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
             source.issues.push({ path, reason: errorMessage(e) });
           }
           count++;
-          if (count % 32 === 0) {
+          const now = performance.now();
+          if (count % 16 === 0 || now - lastYield >= 10) {
+            lastYield = now;
             options.update?.({ phase: 'discover', done: count, total: 0, title: handle.name });
             await tick();
           }
@@ -641,7 +673,7 @@ export async function pooled<T>(
 ) {
   let next = 0;
   const results = await Promise.allSettled(
-    Array.from({ length: Math.min(limits.decodeConcurrency, items.length) }, async () => {
+    Array.from({ length: Math.min(getDecodeConcurrency(), items.length) }, async () => {
       while (next < items.length) {
         alive(signal);
         await work(items[next++]);
@@ -705,6 +737,7 @@ export async function indexSource(
   const first = [...grouped.keys()].sort(compare).slice(0, limits.warmChapters);
   const initial = first.flatMap((name) => grouped.get(name)!);
   let done = 0;
+  let lastYield = performance.now();
   options.update?.({
     phase: 'index',
     done,
@@ -754,7 +787,9 @@ export async function indexSource(
         failed.add(page.path);
       }
       done++;
-      if (done % 8 === 0 || done === initial.length) {
+      const now = performance.now();
+      if (done % 8 === 0 || done === initial.length || now - lastYield >= 10) {
+        lastYield = now;
         options.update?.({
           phase: 'index',
           done,
@@ -850,10 +885,22 @@ export async function prepareChapter(
   const database = await db;
   const cached = (await database.get('manga', m.id)) as Manga | undefined;
   alive(options.signal);
-  const saved = cached?.updatedAt === m.updatedAt ? cached.chapters[index] : undefined;
+  const savedChapter =
+    cached?.updatedAt === m.updatedAt || cached?.chapters[index]?.name === chapter.name
+      ? cached.chapters[index]
+      : undefined;
+  const savedMap = new Map(savedChapter?.pages.map((p) => [p.path, p]));
   const pages = chapter.pages.map((p) => {
-    const hit = saved?.pages.find((q) => q.path === p.path);
-    return hit && !hit.dimensionsPending ? { ...hit } : { ...p };
+    const hit = savedMap.get(p.path);
+    if (hit && !hit.dimensionsPending) {
+      sessionDimensions.set(`${m.id}:${p.path}`, { width: hit.width, height: hit.height });
+      return { ...hit };
+    }
+    const sessionHit = sessionDimensions.get(`${m.id}:${p.path}`);
+    if (sessionHit) {
+      return { ...p, ...sessionHit, dimensionsPending: false };
+    }
+    return { ...p };
   });
   const pending = pages.filter((p) => p.dimensionsPending);
   if (!pending.length) {
@@ -862,6 +909,7 @@ export async function prepareChapter(
   }
   const issues: Issue[] = [];
   let done = 0;
+  let lastYield = performance.now();
   await pooled(
     pending,
     async (page) => {
@@ -873,8 +921,14 @@ export async function prepareChapter(
           if (dim && dim.width > 0 && dim.height > 0) {
             assertImageDimensions(dim.width, dim.height);
             Object.assign(page, dim, { dimensionsPending: false });
+            sessionDimensions.set(`${m.id}:${page.path}`, {
+              width: dim.width,
+              height: dim.height,
+            });
             done++;
-            if (done % 8 === 0 || done === pending.length) {
+            const now = performance.now();
+            if (done % 8 === 0 || done === pending.length || now - lastYield >= 10) {
+              lastYield = now;
               options.update?.({
                 phase: 'index',
                 done,
@@ -895,12 +949,15 @@ export async function prepareChapter(
           modified: file.lastModified,
           dimensionsPending: false,
         });
+        sessionDimensions.set(`${m.id}:${page.path}`, { width: size.width, height: size.height });
       } catch (e) {
         alive(options.signal);
         issues.push({ path: page.path, reason: errorMessage(e) });
       }
       done++;
-      if (done % 8 === 0 || done === pending.length) {
+      const now = performance.now();
+      if (done % 8 === 0 || done === pending.length || now - lastYield >= 10) {
+        lastYield = now;
         options.update?.({ phase: 'index', done, total: pending.length, title: chapter.name });
         await tick();
       }

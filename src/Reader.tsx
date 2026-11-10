@@ -45,6 +45,7 @@ import {
   matchingPosition,
   errorMessage,
   clearImageQueue,
+  clearObjectUrlPool,
   type Manga,
   type Position,
   type SaveProgressResult,
@@ -227,6 +228,7 @@ function ReaderView({ manga }: { manga: Manga }) {
   const dirty = useRef(false);
   const lastSave = useRef(0);
   const inFlight = useRef<Promise<SaveProgressResult> | null>(null);
+  const queuedFlush = useRef<Promise<SaveProgressResult> | null>(null);
   const snapshotRevision = useRef(0);
   const committedRevision = useRef(0);
   const restoring = useRef(false);
@@ -283,12 +285,16 @@ function ReaderView({ manga }: { manga: Manga }) {
       return Promise.resolve('missing');
     }
     if (inFlight.current) {
-      return inFlight.current.then(() => {
-        if (dirty.current) {
-          return flush();
-        }
-        return 'saved';
-      });
+      if (!queuedFlush.current) {
+        queuedFlush.current = inFlight.current.then(() => {
+          queuedFlush.current = null;
+          if (dirty.current) {
+            return flush();
+          }
+          return 'saved';
+        });
+      }
+      return queuedFlush.current;
     }
     if (!dirty.current) {
       return Promise.resolve('saved');
@@ -332,9 +338,6 @@ function ReaderView({ manga }: { manga: Manga }) {
         inFlight.current = null;
       }
     });
-    return savePromise;
-
-    inFlight.current = savePromise;
     return savePromise;
   }
   function capture() {
@@ -480,6 +483,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         fraction: 0,
       };
     clearImageQueue();
+    clearObjectUrlPool();
     if (index === ci) {
       pendingRestore.current = metadata.current.chapters[index].position || {
         page: 0,
@@ -505,8 +509,6 @@ function ReaderView({ manga }: { manga: Manga }) {
     setEnded(false);
     endHandled.current = false;
     if (s.mode === 'single') {
-      capture();
-      void flush().catch((e) => notify(errorMessage(e)));
       const gIndex = pageToGroupRef.current[n] ?? 0;
       const group = groupsRef.current[gIndex] || [n];
       n = group[0];
@@ -517,6 +519,13 @@ function ReaderView({ manga }: { manga: Manga }) {
       setZoom(1);
       dirty.current = true;
       snapshotRevision.current++;
+      if (edgeProgress.current) {
+        const progress = (Math.max(...group) + 1) / chapter.pages.length;
+        edgeProgress.current.style.transform = `scaleX(${Math.min(1, Math.max(0, progress))})`;
+      }
+      if (performance.now() - lastSave.current >= 1500) {
+        void flush().catch((e) => notify(errorMessage(e)));
+      }
     } else {
       // A chapter's saved-position restore may still be queued when the user jumps.
       // Replace that anchor as well, so it cannot later undo the user's selection.
@@ -806,6 +815,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     () => () => {
       void actions.current.flush().then(refresh);
       clearImageQueue();
+      clearObjectUrlPool();
     },
     [],
   );
@@ -1176,6 +1186,7 @@ function ReaderView({ manga }: { manga: Manga }) {
                   m={manga}
                   page={p}
                   index={actualIndex}
+                  activePage={page}
                   lowQuality={s.lowQuality}
                   report={setFailure}
                   retryPreparation={retryPreparation}
@@ -1197,6 +1208,7 @@ function ReaderView({ manga }: { manga: Manga }) {
               m={manga}
               page={chapter.pages[i]}
               index={i}
+              activePage={page}
               lowQuality={s.lowQuality}
               report={setFailure}
               retryPreparation={retryPreparation}

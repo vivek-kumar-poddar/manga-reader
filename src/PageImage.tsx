@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fileFor, errorMessage, type Manga, type Page } from './data';
 import { limits, assertImageDimensions } from './limits';
-import { enqueueImage, type CancelHandle } from './imageQueue';
+import { enqueueImage, reprioritizeImage, type CancelHandle } from './imageQueue';
 import { downscaleImage } from './images';
+import { getObjectUrl, storeObjectUrl } from './objectUrlPool';
 
 const watched = new Map<Element, (visible: boolean) => void>();
 let observer: IntersectionObserver | undefined;
@@ -30,18 +31,32 @@ interface PageImageProps {
   m: Manga;
   page: Page;
   index: number;
+  activePage?: number;
   lowQuality: boolean;
   report: (message: string) => void;
   retryPreparation: () => void;
 }
 
-function PageImage({ m, page, index, lowQuality, report, retryPreparation }: PageImageProps) {
+function PageImage({
+  m,
+  page,
+  index,
+  activePage,
+  lowQuality,
+  report,
+  retryPreparation,
+}: PageImageProps) {
   const host = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const reportRef = useRef(report);
   reportRef.current = report;
+
+  const currentActive = activePage ?? index;
+  const distance = Math.abs(index - currentActive);
+  const priority = Math.max(1, 100 - distance * 10);
+  const isNear = distance <= 1;
 
   const { path: pagePath, width: pageWidth, height: pageHeight, dimensionsPending } = page;
   const {
@@ -50,6 +65,13 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
     handle: mangaHandle,
     localPath: mangaLocalPath,
   } = m;
+
+  // Dynamically update priority for waiting tasks as user scrolls near/far
+  useEffect(() => {
+    if (dimensionsPending) return;
+    const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
+    reprioritizeImage(taskKey, priority);
+  }, [mangaId, mangaUpdatedAt, pagePath, lowQuality, priority, dimensionsPending]);
 
   useEffect(() => {
     if (dimensionsPending) return;
@@ -63,7 +85,6 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
         cancelTask();
         cancelTask = null;
       }
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = '';
       if (live) setUrl('');
     };
@@ -71,9 +92,19 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
     const load = () => {
       if (objectUrl || !wanted) return;
       const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
+
+      // Check LRU Object URL Pool first for instant scroll-back
+      const cached = getObjectUrl(taskKey);
+      if (cached) {
+        objectUrl = cached;
+        setUrl(cached);
+        setError('');
+        return;
+      }
+
       const cancel = enqueueImage({
         key: taskKey,
-        priority: 10,
+        priority,
         run: async (signal) => {
           try {
             if (!live || !wanted || signal.aborted) return;
@@ -103,6 +134,7 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
 
             if (live && wanted && !signal.aborted) {
               objectUrl = URL.createObjectURL(blob);
+              storeObjectUrl(taskKey, objectUrl);
               setUrl(objectUrl);
               setError('');
             }
@@ -184,6 +216,7 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
           alt={`Page ${index + 1}: ${page.name}`}
           draggable={false}
           decoding="async"
+          fetchPriority={isNear ? 'high' : 'low'}
           onError={() => {
             const message = `Page ${index + 1} (${page.name}): This browser could not decode the image. It may be damaged, unsupported, or too large for this device. Try another browser or a smaller copy of this image.`;
             setError(message);
@@ -198,8 +231,12 @@ function PageImage({ m, page, index, lowQuality, report, retryPreparation }: Pag
 }
 
 function arePropsEqual(prev: PageImageProps, next: PageImageProps): boolean {
+  const prevNear = Math.abs(prev.index - (prev.activePage ?? prev.index)) <= 1;
+  const nextNear = Math.abs(next.index - (next.activePage ?? next.index)) <= 1;
+
   return (
     prev.index === next.index &&
+    prevNear === nextNear &&
     prev.lowQuality === next.lowQuality &&
     prev.m.id === next.m.id &&
     prev.m.updatedAt === next.m.updatedAt &&

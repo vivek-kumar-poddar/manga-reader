@@ -8,6 +8,7 @@ import {
   useEffect,
   useRef,
   useMemo,
+  memo,
   createContext,
   useContext,
   lazy,
@@ -39,6 +40,7 @@ import {
   listLibrary,
   getManga,
   deleteManga,
+  onMangaDelete,
   getStoredSettings,
   saveStoredSettings,
   syncChannel,
@@ -123,40 +125,116 @@ export function ThemeButton() {
     </IconButton>
   );
 }
-export function Cover({ m }: { m: Pick<Summary, 'id'> }) {
-  const [url, setUrl] = useState('');
-  const host = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    let live = true,
-      u = '';
-    const observer = new IntersectionObserver(
+const MAX_COVER_URLS = 64;
+const coverUrlPool = new Map<string, string>();
+
+export function clearCoverUrlPool(mangaId?: string): void {
+  if (mangaId) {
+    const existing = coverUrlPool.get(mangaId);
+    if (existing) {
+      try {
+        URL.revokeObjectURL(existing);
+      } catch {}
+      coverUrlPool.delete(mangaId);
+    }
+  } else {
+    for (const u of coverUrlPool.values()) {
+      try {
+        URL.revokeObjectURL(u);
+      } catch {}
+    }
+    coverUrlPool.clear();
+  }
+}
+
+onMangaDelete((id?: string) => {
+  clearCoverUrlPool(id);
+});
+
+type CoverVisibleCallback = () => void;
+const coverListeners = new Map<Element, CoverVisibleCallback>();
+let sharedCoverObserver: IntersectionObserver | null = null;
+
+function getSharedCoverObserver(): IntersectionObserver | null {
+  if (typeof IntersectionObserver === 'undefined') return null;
+  if (!sharedCoverObserver) {
+    sharedCoverObserver = new IntersectionObserver(
       (entries) => {
-        if (!entries[0].isIntersecting) return;
-        observer.disconnect();
-        void getCover(m.id)
-          .then((blob) => {
-            if (live && blob) {
-              u = URL.createObjectURL(blob);
-              setUrl(u);
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const cb = coverListeners.get(entry.target);
+            if (cb) {
+              coverListeners.delete(entry.target);
+              sharedCoverObserver?.unobserve(entry.target);
+              cb();
             }
-          })
-          .catch(() => {});
+          }
+        }
       },
-      { rootMargin: '200px' },
+      { rootMargin: '100px 0px' },
     );
-    if (host.current) observer.observe(host.current);
+  }
+  return sharedCoverObserver;
+}
+
+function observeCoverVisibility(el: HTMLElement, callback: CoverVisibleCallback): () => void {
+  const observer = getSharedCoverObserver();
+  if (!observer) {
+    callback();
+    return () => {};
+  }
+  coverListeners.set(el, callback);
+  observer.observe(el);
+  return () => {
+    coverListeners.delete(el);
+    observer.unobserve(el);
+  };
+}
+
+export const Cover = memo(function Cover({ m }: { m: Pick<Summary, 'id'> }) {
+  const [url, setUrl] = useState<string>(() => coverUrlPool.get(m.id) || '');
+  const host = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let live = true;
+    const cached = coverUrlPool.get(m.id);
+    if (cached) {
+      setUrl(cached);
+      return;
+    }
+
+    if (!host.current) return;
+
+    const unobserve = observeCoverVisibility(host.current, () => {
+      void getCover(m.id)
+        .then((blob) => {
+          if (!live || !blob) return;
+          let objectUrl = coverUrlPool.get(m.id);
+          if (!objectUrl) {
+            if (coverUrlPool.size >= MAX_COVER_URLS) {
+              const oldestKey = coverUrlPool.keys().next().value;
+              if (oldestKey) clearCoverUrlPool(oldestKey);
+            }
+            objectUrl = URL.createObjectURL(blob);
+            coverUrlPool.set(m.id, objectUrl);
+          }
+          setUrl(objectUrl);
+        })
+        .catch(() => {});
+    });
+
     return () => {
       live = false;
-      observer.disconnect();
-      if (u) URL.revokeObjectURL(u);
+      unobserve();
     };
   }, [m.id]);
+
   return (
     <div ref={host} className="cover">
       {url ? <img src={url} alt="" /> : <BookOpen size={24} />}
     </div>
   );
-}
+});
 function positionCardMenu(details: HTMLDetailsElement) {
   const rect = details.getBoundingClientRect();
   const popover = details.querySelector<HTMLElement>('.menu-popover');
