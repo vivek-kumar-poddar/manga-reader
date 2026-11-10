@@ -20,7 +20,6 @@ import {
   BookOpen,
   Bookmark,
   BookMarked,
-  FolderPlus,
   Settings as Gear,
   Sun,
   Moon,
@@ -30,7 +29,6 @@ import {
   Trash2,
   Check,
   LoaderCircle,
-  ArrowUpRight,
   Info,
   Download,
 } from 'lucide-react';
@@ -288,6 +286,37 @@ function CalendarIcon({ className }: { className?: string }) {
   );
 }
 
+function UploadIcon({
+  className,
+  size = 24,
+  strokeWidth = 2,
+}: {
+  className?: string;
+  size?: number;
+  strokeWidth?: number;
+}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={strokeWidth}
+      color="currentColor"
+      viewBox="0 0 24 24"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M14 21.5h-4c-3.288 0-4.931 0-6.038-.908a4 4 0 0 1-.554-.554C2.5 18.93 2.5 17.288 2.5 14c0-3.287 0-4.931.908-6.038a4 4 0 0 1 .554-.554C5.07 6.5 6.712 6.5 10 6.5h4c3.287 0 4.931 0 6.038.908q.304.25.554.554c.908 1.107.908 2.75.908 6.038s0 4.931-.908 6.038a4 4 0 0 1-.554.554c-1.107.908-2.75.908-6.038.908" />
+      <path d="M2.5 14.5v-4c0-3.771 0-5.657 1.172-6.828S6.729 2.5 10.5 2.5h3c3.771 0 5.657 0 6.828 1.172S21.5 6.729 21.5 10.5v4" />
+      <path d="M15 13.5s-2.21-3-3-3-3 3-3 3m3-2.5v6.5" />
+    </svg>
+  );
+}
+
 function DateTooltip({ timestamp, children }: { timestamp?: number; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
@@ -340,6 +369,29 @@ function DateTooltip({ timestamp, children }: { timestamp?: number; children: Re
   );
 }
 
+export const shelfCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+export function sortLibraryEntries(
+  library: readonly Summary[],
+  shelfSort: Settings['shelfSort'] = 'recent',
+): Summary[] {
+  return [...library].sort((a, b) => {
+    const byTitle = shelfCollator.compare(a.title, b.title);
+    return (
+      (shelfSort === 'title'
+        ? byTitle
+        : shelfSort === 'added'
+          ? b.addedAt - a.addedAt
+          : shelfSort === 'progress'
+            ? b.chaptersRead / Math.max(1, b.chapterCount) -
+              a.chaptersRead / Math.max(1, a.chapterCount)
+            : b.updatedAt - a.updatedAt) ||
+      byTitle ||
+      shelfCollator.compare(a.id, b.id)
+    );
+  });
+}
+
 function Library({
   busy,
   scan,
@@ -353,28 +405,7 @@ function Library({
 }) {
   const { library, pick, notify, refresh, openSettings, settings, setSettings } = useApp();
   const shelfSort = settings.shelfSort || 'recent';
-  const sortedLibrary = useMemo(
-    () =>
-      [...library].sort((a, b) => {
-        const byTitle = a.title.localeCompare(b.title, undefined, {
-          numeric: true,
-          sensitivity: 'base',
-        });
-        return (
-          (shelfSort === 'title'
-            ? byTitle
-            : shelfSort === 'added'
-              ? b.addedAt - a.addedAt
-              : shelfSort === 'progress'
-                ? b.chaptersRead / Math.max(1, b.chapterCount) -
-                  a.chaptersRead / Math.max(1, a.chapterCount)
-                : b.updatedAt - a.updatedAt) ||
-          byTitle ||
-          a.id.localeCompare(b.id)
-        );
-      }),
-    [library, shelfSort],
-  );
+  const sortedLibrary = useMemo(() => sortLibraryEntries(library, shelfSort), [library, shelfSort]);
   const [drag, setDrag] = useState(false);
   const [needs, setNeeds] = useState<Set<string>>(new Set());
   const [supported, setSupported] = useState(false);
@@ -576,13 +607,13 @@ function Library({
           ) : (
             <>
               <span className="upload-icon">
-                <FolderPlus size={29} strokeWidth={1.35} />
+                <UploadIcon size={29} strokeWidth={1.5} />
               </span>
               <h2>{drag ? 'Drop your stories here' : 'Make room for a good story'}</h2>
               <p>Drop manga folders here, or choose your files.</p>
               <div className="upload-buttons">
                 <button className="browse-button" onClick={() => void pick()}>
-                  Choose a folder <ArrowUpRight size={16} />
+                  Choose a folder <UploadIcon size={16} />
                 </button>
                 <button className="secondary support-button" onClick={() => setSupported(true)}>
                   <Info size={16} /> What’s supported

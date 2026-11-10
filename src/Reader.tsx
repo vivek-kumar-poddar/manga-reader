@@ -1,7 +1,16 @@
 import { mangaPath, mangaDetailsPath, chapterIndex } from './paths';
 import { limits } from './limits';
 import Dropdown from './Dropdown';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  memo,
+  type CSSProperties,
+} from 'react';
 import {
   computeOffsets,
   getWindowRange,
@@ -50,6 +59,82 @@ import {
   type Position,
   type SaveProgressResult,
 } from './data';
+
+export interface PageStore {
+  getPage: () => number;
+  setPage: (page: number) => void;
+  subscribe: (listener: () => void) => () => void;
+}
+
+export function createPageStore(initialPage = 0): PageStore {
+  let current = initialPage;
+  const listeners = new Set<() => void>();
+  return {
+    getPage: () => current,
+    setPage: (page: number) => {
+      if (current === page) return;
+      current = page;
+      for (const listener of listeners) {
+        listener();
+      }
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+
+export interface PageProgressControlProps {
+  totalPages: number;
+  store: PageStore;
+  onGoPage: (pageIndex: number) => void;
+}
+
+export const PageProgressControl = memo(function PageProgressControl({
+  totalPages,
+  store,
+  onGoPage,
+}: PageProgressControlProps) {
+  const currentPage = useSyncExternalStore(store.subscribe, store.getPage);
+
+  return (
+    <div className="bar-center page-progress-control" role="group" aria-label="Reading progress">
+      <input
+        className="current-page-input"
+        aria-label="Current page"
+        title="Jump to page"
+        type="number"
+        min={1}
+        max={totalPages}
+        value={currentPage + 1}
+        onChange={(e) => onGoPage(Number(e.target.value) - 1)}
+      />
+      <input
+        className="page-progress-slider"
+        type="range"
+        aria-label="Page progress"
+        aria-valuetext={`Page ${currentPage + 1} of ${totalPages}`}
+        min={1}
+        max={Math.max(1, totalPages)}
+        step={1}
+        value={currentPage + 1}
+        disabled={totalPages <= 1}
+        onChange={(e) => onGoPage(Number(e.target.value) - 1)}
+        style={
+          {
+            '--progress-fill':
+              (totalPages > 1 ? (currentPage / (totalPages - 1)) * 100 : 100) + '%',
+          } as CSSProperties
+        }
+      />
+      <span className="total-page-count" aria-label={`${totalPages} total pages`}>
+        {totalPages}
+      </span>
+    </div>
+  );
+});
+
 export default function Reader({
   indexing,
   indexingProgress,
@@ -153,7 +238,7 @@ function ReaderView({ manga }: { manga: Manga }) {
   const [allowed, setAllowed] = useState<boolean | null>(null),
     [playing, setPlaying] = useState(false),
     [bars, setBars] = useState({ top: true, bottom: true }),
-    [page, setPage] = useState(0),
+    [singlePage, setSinglePage] = useState(0),
     [ready, setReady] = useState(false),
     [zoom, setZoom] = useState(1),
     [wide, setWide] = useState(matchMedia('(min-width:700px)').matches),
@@ -162,6 +247,11 @@ function ReaderView({ manga }: { manga: Manga }) {
     [failure, setFailure] = useState(''),
     [ended, setEnded] = useState(false),
     [readRevision, setReadRevision] = useState(0);
+  const pageStoreRef = useRef<PageStore | null>(null);
+  if (!pageStoreRef.current) {
+    pageStoreRef.current = createPageStore(0);
+  }
+  const pageStore = pageStoreRef.current;
   const [prepared, setPrepared] = useState(
     chapter.pages.some((p) => p.dimensionsPending) ? -1 : ci,
   );
@@ -236,8 +326,15 @@ function ReaderView({ manga }: { manga: Manga }) {
   const touch = useRef<{ x: number; y: number; multi: boolean } | null>(null);
   const endHandled = useRef(false);
   const metadata = useRef(manga);
-  const latest = useRef({ s, ci, ready, allowed, page, zoom });
-  latest.current = { s, ci, ready: ready && prepared === ci, allowed, page, zoom };
+  const latest = useRef({ s, ci, ready, allowed, page: 0, zoom });
+  latest.current = {
+    s,
+    ci,
+    ready: ready && prepared === ci,
+    allowed,
+    page: s.mode === 'single' ? singlePage : pageStore.getPage(),
+    zoom,
+  };
   const { groups, pageToGroup } = useMemo(() => {
     const result: number[][] = [];
     const p2g = new Int32Array(chapter.pages.length);
@@ -265,7 +362,9 @@ function ReaderView({ manga }: { manga: Manga }) {
   const pageToGroupRef = useRef(pageToGroup);
   pageToGroupRef.current = pageToGroup;
   const groupIndex =
-    s.mode === 'single' ? Math.max(0, Math.min(groups.length - 1, pageToGroup[page] ?? 0)) : 0;
+    s.mode === 'single'
+      ? Math.max(0, Math.min(groups.length - 1, pageToGroup[singlePage] ?? 0))
+      : 0;
   const visible = s.mode === 'single' ? groups[groupIndex] || [] : [];
   const groupsRef = useRef(groups);
   groupsRef.current = groups;
@@ -363,7 +462,8 @@ function ReaderView({ manga }: { manga: Manga }) {
       path: metadata.current.chapters[chapterRef.current].pages[o.page]?.path,
       fraction: Math.min(1, Math.max(0, (y - o.top) / o.height)),
     };
-    if (latest.current.s.mode === 'continuous') setPage((old) => (old === o.page ? old : o.page));
+    latest.current.page = o.page;
+    if (latest.current.s.mode === 'continuous') pageStore.setPage(o.page);
     const c = metadata.current.chapters[chapterRef.current];
     const final = list[c.pages.length - 1] || list.at(-1);
     if (final && y + innerHeight >= final.bottom - 2 && !c.read) {
@@ -371,8 +471,9 @@ function ReaderView({ manga }: { manga: Manga }) {
       setReadRevision((v) => v + 1);
     }
     if (edgeProgress.current) {
-      const gIndex = pageToGroupRef.current[latest.current.page] ?? 0;
-      const currentGroup = groupsRef.current[gIndex] || [latest.current.page];
+      const currentPage = latest.current.s.mode === 'single' ? singlePage : pageStore.getPage();
+      const gIndex = pageToGroupRef.current[currentPage] ?? 0;
+      const currentGroup = groupsRef.current[gIndex] || [currentPage];
       const progress =
         latest.current.s.mode === 'single'
           ? (Math.max(...currentGroup) + 1) / c.pages.length
@@ -489,7 +590,8 @@ function ReaderView({ manga }: { manga: Manga }) {
         page: 0,
         fraction: 0,
       };
-      setPage(0);
+      setSinglePage(0);
+      pageStore.setPage(0);
       setZoom(1);
       measuredHeights.current.clear();
       requestAnimationFrame(() => {
@@ -515,7 +617,8 @@ function ReaderView({ manga }: { manga: Manga }) {
       position.current = { page: n, path: chapter.pages[n].path, fraction: 0 };
       metadata.current.chapters[ci].position = { ...position.current };
       pendingRestore.current = { ...position.current };
-      setPage(n);
+      setSinglePage(n);
+      pageStore.setPage(n);
       setZoom(1);
       dirty.current = true;
       snapshotRevision.current++;
@@ -531,6 +634,7 @@ function ReaderView({ manga }: { manga: Manga }) {
       // Replace that anchor as well, so it cannot later undo the user's selection.
       const anchor = { page: n, path: chapter.pages[n].path, fraction: 0 };
       pendingRestore.current = anchor;
+      pageStore.setPage(n);
       measure();
       updateWindow(true, n);
       restore(anchor);
@@ -564,7 +668,8 @@ function ReaderView({ manga }: { manga: Manga }) {
     };
     position.current = anchor;
     pendingRestore.current = anchor;
-    setPage(anchor.page);
+    setSinglePage(anchor.page);
+    pageStore.setPage(anchor.page);
     setZoom(1);
     setEnded(false);
     endHandled.current = false;
@@ -660,7 +765,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     s.direction,
     zoom,
     wide,
-    s.mode === 'single' ? page : 0,
+    s.mode === 'single' ? singlePage : 0,
     ready,
   ]);
   useEffect(() => {
@@ -1003,8 +1108,9 @@ function ReaderView({ manga }: { manga: Manga }) {
       </main>
     );
   const barActive = (v: boolean) => (v || !s.autoHideBars ? '' : ' bar-hidden');
+  const currentPage = s.mode === 'single' ? singlePage : pageStore.getPage();
   const bookmarked = metadata.current.chapters[ci].bookmarks?.some(
-    (b) => b.path === chapter.pages[page]?.path,
+    (b) => b.path === chapter.pages[currentPage]?.path,
   );
   void bookmarkRevision;
   void readRevision;
@@ -1186,7 +1292,7 @@ function ReaderView({ manga }: { manga: Manga }) {
                   m={manga}
                   page={p}
                   index={actualIndex}
-                  activePage={page}
+                  activePage={s.mode === 'single' ? singlePage : undefined}
                   lowQuality={s.lowQuality}
                   report={setFailure}
                   retryPreparation={retryPreparation}
@@ -1208,7 +1314,7 @@ function ReaderView({ manga }: { manga: Manga }) {
               m={manga}
               page={chapter.pages[i]}
               index={i}
-              activePage={page}
+              activePage={singlePage}
               lowQuality={s.lowQuality}
               report={setFailure}
               retryPreparation={retryPreparation}
@@ -1275,44 +1381,11 @@ function ReaderView({ manga }: { manga: Manga }) {
             <ChevronRight size={20} />
           </button>
         </div>
-        <div
-          className="bar-center page-progress-control"
-          role="group"
-          aria-label="Reading progress"
-        >
-          <input
-            className="current-page-input"
-            aria-label="Current page"
-            title="Jump to page"
-            type="number"
-            min={1}
-            max={chapter.pages.length}
-            value={page + 1}
-            onChange={(e) => goPage(Number(e.target.value) - 1)}
-          />
-          <input
-            className="page-progress-slider"
-            type="range"
-            aria-label="Page progress"
-            aria-valuetext={`Page ${page + 1} of ${chapter.pages.length}`}
-            min={1}
-            max={Math.max(1, chapter.pages.length)}
-            step={1}
-            value={page + 1}
-            disabled={chapter.pages.length === 1}
-            onChange={(e) => goPage(Number(e.target.value) - 1)}
-            style={
-              {
-                '--progress-fill':
-                  (chapter.pages.length > 1 ? (page / (chapter.pages.length - 1)) * 100 : 100) +
-                  '%',
-              } as CSSProperties
-            }
-          />
-          <span className="total-page-count" aria-label={`${chapter.pages.length} total pages`}>
-            {chapter.pages.length}
-          </span>
-        </div>
+        <PageProgressControl
+          totalPages={chapter.pages.length}
+          store={pageStore}
+          onGoPage={goPage}
+        />
         <div className="bar-right reading-actions" role="group" aria-label="Reading controls">
           <button
             className={'icon-button completion-button ' + (complete ? 'completed' : '')}

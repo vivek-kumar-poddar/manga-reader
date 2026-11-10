@@ -5,6 +5,7 @@ import {
   getWindowRange,
   type GeometryOptions,
 } from '../src/readerGeometry';
+import { createPageStore } from '../src/Reader';
 import type { Page } from '../src/model';
 
 function makePages(count: number, width = 800, height = 1200): Page[] {
@@ -176,5 +177,35 @@ test.describe('Step 17 — Reader Geometry and DOM Virtualization', () => {
     const overscroll = getWindowRange(offsets, -500, viewportHeight, 3);
     expect(overscroll.startIndex).toBe(0);
     expect(overscroll.topSpacer).toBe(0);
+  });
+
+  test('createPageStore isolates page changes and notifies subscribers without duplicate dispatches', () => {
+    const store = createPageStore(0);
+    expect(store.getPage()).toBe(0);
+
+    let notifyCount = 0;
+    const unsubscribe = store.subscribe(() => {
+      notifyCount++;
+    });
+
+    // Setting new page triggers listener
+    store.setPage(5);
+    expect(store.getPage()).toBe(5);
+    expect(notifyCount).toBe(1);
+
+    // Setting identical page is a no-op
+    store.setPage(5);
+    expect(notifyCount).toBe(1);
+
+    // Setting another page triggers listener
+    store.setPage(12);
+    expect(store.getPage()).toBe(12);
+    expect(notifyCount).toBe(2);
+
+    // Unsubscribe disconnects listener
+    unsubscribe();
+    store.setPage(15);
+    expect(store.getPage()).toBe(15);
+    expect(notifyCount).toBe(2);
   });
 });

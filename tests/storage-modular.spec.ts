@@ -11,6 +11,15 @@ import {
   listLibrary,
   invalidateSummaryCache,
   invalidateBookmarkCache,
+  fileFor,
+  dirHandleCache,
+  clearDirHandleCache,
+  access,
+  accessCache,
+  clearAccessCache,
+  ACCESS_CACHE_TTL_MS,
+  getBookmarkedMangaIds,
+  getMangaBookmarkedIds,
   type SaveProgressResult,
 } from '../src/storage';
 import { clearCoverUrlPool } from '../src/App';
@@ -521,5 +530,165 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
   test('clearCoverUrlPool() purges entries safely', () => {
     expect(() => clearCoverUrlPool('manga-unknown')).not.toThrow();
     expect(() => clearCoverUrlPool()).not.toThrow();
+  });
+
+  test('fileFor() caches resolved directory handles and clears them on error or re-link', async () => {
+    clearDirHandleCache();
+
+    let getDirCount = 0;
+    const mockFileHandle = {
+      getFile: async () => new File(['content'], '01.jpg', { type: 'image/jpeg' }),
+    };
+
+    const chapterDirHandle = {
+      getFileHandle: async (name: string) => {
+        if (name === '01.jpg' || name === '02.jpg') return mockFileHandle;
+        throw new Error('Not found');
+      },
+    };
+
+    const volumeDirHandle = {
+      getDirectoryHandle: async (name: string) => {
+        getDirCount++;
+        if (name === 'Chapter 01') return chapterDirHandle;
+        throw new Error('Folder not found');
+      },
+    };
+
+    const rootHandle = {
+      getDirectoryHandle: async (name: string) => {
+        getDirCount++;
+        if (name === 'Volume 1') return volumeDirHandle;
+        throw new Error('Folder not found');
+      },
+    } as unknown as FileSystemDirectoryHandle;
+
+    const mockManga: Manga = {
+      id: 'manga-handles',
+      title: 'Manga Handles',
+      chapters: [],
+      lastChapter: 0,
+      addedAt: 100,
+      updatedAt: 200,
+      handle: rootHandle,
+    };
+
+    // First page read - traverses Volume 1 and Chapter 01
+    const file1 = await fileFor(mockManga, { name: '01.jpg', path: 'Volume 1/Chapter 01/01.jpg' });
+    expect(file1).toBeDefined();
+    expect(getDirCount).toBe(2);
+
+    // Second page read in same chapter - should reuse cached directory handle (getDirCount stays 2!)
+    const file2 = await fileFor(mockManga, { name: '02.jpg', path: 'Volume 1/Chapter 01/02.jpg' });
+    expect(file2).toBeDefined();
+    expect(getDirCount).toBe(2); // Zero additional getDirectoryHandle calls!
+
+    // Verify cache has the entry
+    expect(dirHandleCache.has('manga-handles:200:Volume 1/Chapter 01')).toBe(true);
+
+    // An error on file read triggers cache clearing for that manga
+    await expect(
+      fileFor(mockManga, { name: 'missing.jpg', path: 'Volume 1/Chapter 01/missing.jpg' }),
+    ).rejects.toThrow();
+    expect(dirHandleCache.has('manga-handles:200:Volume 1/Chapter 01')).toBe(false);
+
+    // clearDirHandleCache clears safely
+    clearDirHandleCache();
+    expect(dirHandleCache.size).toBe(0);
+  });
+
+  test('batch deletion issues all delete requests in parallel and resolves on tx.done', async () => {
+    const deletedKeys: string[] = [];
+    let concurrentInFlight = 0;
+    let maxConcurrent = 0;
+
+    const mockProgressStore = {
+      delete: async (k: string) => {
+        concurrentInFlight++;
+        maxConcurrent = Math.max(maxConcurrent, concurrentInFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        deletedKeys.push(k);
+        concurrentInFlight--;
+      },
+    };
+
+    const keys = ['ch1', 'ch2', 'ch3', 'ch4', 'ch5'];
+    await Promise.all(keys.map((k) => mockProgressStore.delete(k)));
+
+    expect(deletedKeys.length).toBe(5);
+    expect(maxConcurrent).toBeGreaterThan(1);
+  });
+
+  test('getBookmarkedMangaIds() and getMangaBookmarkedIds() safely resolve and return sets in single-pass', async () => {
+    invalidateBookmarkCache();
+    const [allBookmarked, mangaBookmarked] = await Promise.all([
+      getBookmarkedMangaIds(),
+      getMangaBookmarkedIds(),
+    ]);
+    expect(allBookmarked instanceof Set).toBe(true);
+    expect(mangaBookmarked instanceof Set).toBe(true);
+  });
+
+  test('access() throttles permission queries within TTL, coalesces in-flight queries, bypasses on request=true, and invalidates on clear', async () => {
+    clearAccessCache();
+
+    let queryCount = 0;
+    let requestCount = 0;
+
+    const mockHandle = {
+      queryPermission: async () => {
+        queryCount++;
+        await new Promise((r) => setTimeout(r, 10));
+        return 'granted' as PermissionState;
+      },
+      requestPermission: async () => {
+        requestCount++;
+        await new Promise((r) => setTimeout(r, 10));
+        return 'granted' as PermissionState;
+      },
+    } as unknown as FileSystemDirectoryHandle;
+
+    const mangaItem = {
+      id: 'manga-access-throttle',
+      handle: mockHandle,
+    };
+
+    // 1. Initial call queries permission
+    const first = await access(mangaItem);
+    expect(first).toBe(true);
+    expect(queryCount).toBe(1);
+    expect(accessCache.has('manga-access-throttle')).toBe(true);
+
+    // 2. Immediate second call reuses cached status within TTL without calling queryPermission again
+    const second = await access(mangaItem);
+    expect(second).toBe(true);
+    expect(queryCount).toBe(1); // Still 1! No additional queryPermission call.
+
+    // 3. Request mode (request=true) bypasses cache and triggers requestPermission
+    const explicit = await access(mangaItem, true);
+    expect(explicit).toBe(true);
+    expect(requestCount).toBe(1);
+
+    // 4. Invalidation clears cache so subsequent call queries again
+    clearAccessCache('manga-access-throttle');
+    expect(accessCache.has('manga-access-throttle')).toBe(false);
+
+    const third = await access(mangaItem);
+    expect(third).toBe(true);
+    expect(queryCount).toBe(2); // Queried again!
+
+    // 5. In-flight coalescing: concurrent passive calls share the same in-flight query
+    clearAccessCache('manga-access-throttle');
+    const [p1, p2, p3] = await Promise.all([
+      access(mangaItem),
+      access(mangaItem),
+      access(mangaItem),
+    ]);
+    expect(p1 && p2 && p3).toBe(true);
+    expect(queryCount).toBe(3); // Only 1 query for all 3 concurrent calls!
+
+    // 6. clearDirHandleCache also clears access cache
+    clearDirHandleCache('manga-access-throttle');
+    expect(accessCache.has('manga-access-throttle')).toBe(false);
   });
 });

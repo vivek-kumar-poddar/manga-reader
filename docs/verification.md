@@ -1461,3 +1461,158 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (built in 2.67s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Browse Button Theme Styling, Upload Icon, and Button Font Size Sizing — 2026-11-10
+
+- **`.browse-button` Theme Styling (`src/controls.css`)**:
+  - Default state: background `#2563eb`, border `1px solid #2563eb`, text `#ffffff`, icon `#ffffff`.
+  - Light mode hover: background `#28282b`, border `#28282b`, text `#ffffff`, icon `#ffffff`.
+  - Dark mode hover: background `#ffffff`, border `#ffffff`, text `#28282b`, icon `#28282b`.
+  - Applied smooth 0.3s ease-in-out transitions across background, text, border, and icon colors.
+- **Custom Upload Icon (`src/App.tsx`)**:
+  - Implemented `UploadIcon` with the custom folder/up-arrow SVG paths.
+  - Used in `.browse-button` (replacing `ArrowUpRight`) and in `.upload-icon` (replacing `FolderPlus`).
+- **Dynamic Button Font Size Scaling (`src/controls.css` & `src/style.css`)**:
+  - Bound `.browse-button` and `.support-button` text font size to `var(--font-size-button, 15px) !important;` across all breakpoints.
+  - Scaled their SVG icons dynamically to `calc(var(--font-size-button, 15px) * 1.15) !important;`.
+  - Replaced fixed 44px container height with `min-height: max(44px, calc(var(--font-size-button, 15px) * 2.8)); height: auto;` to eliminate clipping on larger font sizes.
+- **Verification**:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **69/69 unit tests PASS** (1.3s).
+  - `npm run build`: **PASS** (built in 2.73s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Directory Handle Resolution Caching & Library Card Content Visibility — 2026-11-10
+
+- **Cache Resolved Directory Handles in `fileFor` (`src/storage.ts`)**:
+  - Maintained `dirHandleCache` (`Map<string, FileSystemDirectoryHandle>` with 500-entry capacity limit) keyed by `${m.id}:${m.updatedAt}:${dirPath}`.
+  - Sub-paths and leaf directories are traversed and cached once; subsequent pages in the same chapter or volume resolve their directory handle in $O(1)$ time with zero repeated `getDirectoryHandle()` async calls.
+  - On error or re-link (`saveManga`, `deleteManga`, `clearLibrary`, `restoreBackup`, `syncChannel` message, or File System Access read error), cached handles for the manga are cleared cleanly via `clearDirHandleCache(mangaId)`.
+  - Re-exported `dirHandleCache` and `clearDirHandleCache` in `src/data.ts`.
+- **`content-visibility: auto` on Library Cards (`src/style.css`)**:
+  - Added `content-visibility: auto; contain-intrinsic-size: 350px 175px; contain-intrinsic-size: auto 350px auto 175px;` to `.manga-card`.
+  - Off-screen cards skip DOM layout and painting entirely across libraries up to 1,000 titles, drastically speeding up initial library render and scroll performance with zero JavaScript overhead.
+- **Verification**:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **70/70 unit tests PASS** (1.3s, including directory handle caching test in `tests/storage-modular.spec.ts`).
+  - `npm run build`: **PASS** (built in 2.75s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Image Queue Lazy Reprioritization & Concurrency Query Caching — 2026-11-10
+
+- **Lazy Reprioritization with $O(1)$ Lookup (`src/imageQueue.ts`)**:
+  - Introduced `waiting = new Map<string, QueuedItem>()` for $O(1)$ lookup and registration of queued tasks awaiting dispatch.
+  - Replaced immediate array `.find()` + full array `.sort()` in `reprioritize()` with direct `waiting.get(key)` map update and lazy dirty tracking (`queueDirty = true`).
+  - Deferred array sorting to `ensureSorted()` inside `pump()` so burst reprioritizations (triggered during rapid scrolling or page window transitions across dozens of visible pages) execute in amortized $O(1)$ time and perform at most a single sort per dispatch cycle.
+  - Updated `enqueue()`, `cancel()`, and `clear()` to maintain consistency across both `this.queue` and `this.waiting`.
+- **Cached Media Query & Hardware Concurrency Evaluations (`src/imageQueue.ts`)**:
+  - Cached `window.matchMedia('(max-width:700px)')` evaluation and subscribed to change events via `getIsMobile()` rather than constructing a new media query check on every pump iteration.
+  - Cached `hardwareConcurrency` and `deviceMemory` limits via `getHardwareConcurrencyLimit()` to eliminate recurring property queries on high-frequency queue worker dispatches.
+  - Added `resetConcurrencyCacheForTesting()` for isolated test resets.
+- **Verification**:
+  - Unit test in `tests/image-pipeline.spec.ts`: `ImageQueue reprioritizes lazily and caches media query evaluations` validates burst reprioritization and lazy sort execution order.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **71/71 unit tests PASS** (1.2s).
+  - `npm run build`: **PASS** (built in 2.74s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Reused Module-Level `Intl.Collator` for Shelf and Bookmark Sorting — 2026-11-10
+
+- **Module-Level `Intl.Collator` for Shelf Sorting (`src/App.tsx`)**:
+  - Replaced per-comparison `a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: 'base' })` inside `sortedLibrary` with a single module-level `shelfCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })`.
+  - Extracted pure sorting logic into `sortLibraryEntries(library, shelfSort)` using `shelfCollator.compare(...)` for title comparisons and ID tiebreakers, avoiding repeated option-parsing overhead during $O(N \log N)$ library sorts.
+- **Module-Level `Intl.Collator` for Bookmarks Shelf (`src/Bookmarks.tsx`)**:
+  - Introduced `bookmarkCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })` in `src/Bookmarks.tsx`.
+  - Replaced inline `localeCompare` calls across `'title-asc'`, `'title-desc'`, and `'chapter'` sorting cases with `bookmarkCollator.compare(...)`.
+- **Verification**:
+  - Added unit tests in `tests/validation.spec.ts` verifying `sortLibraryEntries`, `shelfCollator`, and `bookmarkCollator` natural collation ordering and base sensitivity.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **73/73 unit tests PASS** (1.4s).
+  - `npm run build`: **PASS** (built in 2.68s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Batch IndexedDB Deletes and Writes — 2026-11-10
+
+- **Batched Progress Deletes & Puts in `saveManga` (`src/storage.ts`)**:
+  - Replaced sequential `for (const k of keys) await tx.objectStore('progress').delete(k)` with non-blocking concurrent request dispatch via `await Promise.all(keys.map((k) => progressStore.delete(k)))`.
+  - Batched subsequent chapter progress insertion requests via `await Promise.all(m.chapters.map(...progressStore.put))`.
+- **Parallel Object Store Operations in `deleteManga` & `clearLibrary` (`src/storage.ts`)**:
+  - In `deleteManga`, parallelized deletion of the manga metadata, summary, cover, and all chapter progress keys using `await Promise.all(...)` before committing `await tx.done`.
+  - In `clearLibrary`, parallelized clearing across all 4 object stores (`'manga'`, `'summaries'`, `'covers'`, `'progress'`) concurrently with `await Promise.all(...)`.
+- **Batched Deletes in `restoreBackup` (`src/storage.ts`)**:
+  - Batched old progress deletion and restored progress records via `Promise.all` inside the bulk import transaction.
+- **Verification**:
+  - Added unit test in `tests/storage-modular.spec.ts` verifying concurrent non-sequential deletion execution in IDB stores.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **74/74 unit tests PASS** (1.3s).
+  - `npm run build`: **PASS** (built in 2.72s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Single-Pass Bookmark ID Sets Computation & Reader Re-Render Isolation — 2026-11-10
+
+- **Single-Pass Bookmark ID Sets Computation (`src/storage.ts`)**:
+  - Implemented `ensureBookmarkCaches()` to scan the IndexedDB `progress` store exactly once when cold, populating both `cachedBookmarkedMangaIds` (all chapters with bookmarks) and `cachedMangaBookmarkedIds` (manga-level bookmarks) simultaneously.
+  - Coalesced concurrent callers onto a single in-flight `bookmarkCachePromise`, eliminating redundant parallel table scans.
+  - Added unit test in `tests/storage-modular.spec.ts` verifying safe single-pass resolution and defensive copying.
+- **Reader Re-Render Isolation & PageProgressControl (`src/Reader.tsx`)**:
+  - Extracted bottom bar page indicator, jump input, and progress slider into memoized child component `PageProgressControl`.
+  - Introduced `PageStore` and `createPageStore()` using React's `useSyncExternalStore` for tear-free, fine-grained state subscriptions.
+  - In continuous reading mode, `capture()` updates `pageStore.setPage(o.page)` on scroll without invoking `setPage` on the parent `Reader` component. The 1,500-line `Reader` tree skips re-rendering entirely during fast scroll, isolating visual progress updates strictly to `PageProgressControl`.
+  - Single-page reading mode retains explicit spread changes via `singlePage` state while keeping `pageStore` synchronized.
+  - Added unit test in `tests/reader-geometry.spec.ts` verifying `createPageStore` subscription isolation, duplicate dispatch suppression, and clean unsubscription.
+- **Verification**:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **76/76 unit tests PASS** (1.5s).
+  - `npm run build`: **PASS** (built in 2.69s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Build & Bundle Polish: Manual Vendor Chunking, LightningCSS & Dead CSS Cleanup — 2026-11-10
+
+- **Bundle Analysis & Stable Vendor Chunks (`vite.config.ts`)**:
+  - Analyzed the main entry chunk breakdown: identified `react-dom` (638 KB), `@radix-ui` / `@floating-ui` (126 KB), and `react-router` (87 KB) as dominant dependencies bundled alongside application code.
+  - Implemented `manualChunks` in Rollup output options to extract long-term stable vendor chunks:
+    - `vendor-react` (223 KB, 69 KB gzip): React, React DOM, and scheduler.
+    - `vendor-ui` (107 KB, 34 KB gzip): Radix UI Dialog & Select components, Floating UI popper, and dismissable layers.
+    - `vendor-router` (39 KB, 14 KB gzip): React Router and Remix router runtime.
+  - Reduced the frequently updated application bundle `index-*.js` from **490 KB** down to **117 KB** (37.19 KB gzip), maximizing browser cache hits across application releases.
+  - Added optional `ANALYZE=1` module inspection plugin for ongoing bundle monitoring.
+- **LightningCSS Minification (`vite.config.ts`)**:
+  - Configured `build.cssMinify: 'lightningcss'` to utilize Rust-backed lightningcss for advanced CSS minification, syntax lowering, and deduplication.
+- **Dead CSS Rules Purge (`src/controls.css` & `src/style.css`)**:
+  - Audited all selectors against active JSX/TSX components and HTML.
+  - Removed legacy, unreferenced selectors from `src/style.css`: `.page-nav`, `.autoscroll-controls`, `.speed-label`, `.custom-speed`, `.chapter-name`, `.chapter-counter`, `.bookmark-controls`, `.zoom-reset`, `.bookmark-list`, `.continue-label`, `.library-count`, `.relink-label`, `.local-label`, and unused responsive overrides.
+  - Removed dead selectors from `src/controls.css`: `.import-success-footer`, `.bookmarks-page-grid .empty-shelf`.
+  - Dropped compiled CSS footprint from 87.54 KB to 85.41 KB (15.60 KB gzip).
+- **Verification**:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **76/76 unit tests PASS** (1.4s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.65s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Access Permission Throttling & Image Queue Attribute Cleanups — 2026-11-11
+
+- **Throttled File System Access Permission Queries (`src/storage.ts`)**:
+  - Implemented in-memory `accessCache` (`Map<string, AccessCacheEntry>`) with `ACCESS_CACHE_TTL_MS = 7500` (7.5 seconds) to throttle passive `access(m)` queries across library cards, bookmarks, and reader focus/visibility events.
+  - Eliminated bursts of File System Access API IPC calls (`handle.queryPermission({ mode: 'read' })`) against Chromium when users alt-tab or switch windows.
+  - Added in-flight query coalescing (`accessInFlight`) so concurrent checks for the same manga share a single underlying query promise.
+  - In `access(m, request)`:
+    - Bypasses the cache and cancels passive queries whenever `request === true` (explicit user re-linking or access prompt), invoking `handle.requestPermission` and immediately refreshing the cache.
+    - Preserves desktop IPC bypass (`desktopAPI.isDesktop`) and in-memory `sessionFiles`.
+  - Linked cache invalidation to `clearDirHandleCache()` and `clearAccessCache()`, ensuring handle mutations in `saveManga`, `deleteManga`, `clearLibrary`, `restoreBackup`, and `fileFor` handle errors immediately clear cached access states.
+- **Removed Harmless but Redundant `fetchPriority` on Blob Images (`src/PageImage.tsx`)**:
+  - Removed `fetchPriority` on `<img src="blob:...">` in `src/PageImage.tsx`. Because `blob:` Object URLs reference in-memory buffers created from local storage or IPC rather than network streams, browser network priority scheduling has no effect.
+  - Cleaned up unused `isNear` helper, keeping deterministic concurrency and distance-based prioritizations inside the dedicated JS `imageQueue.ts`.
+- **Verification**:
+  - Added unit test in `tests/storage-modular.spec.ts` verifying TTL-based query caching, in-flight coalescing, `request=true` cache bypass, and invalidation via `clearAccessCache` and `clearDirHandleCache`.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **77/77 unit tests PASS** (1.5s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.65s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).

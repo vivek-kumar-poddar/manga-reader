@@ -95,6 +95,7 @@ export function broadcastSync(msg: StorageSyncMessage): void {
 let cachedSummaries: Summary[] | null = null;
 let cachedBookmarkedMangaIds: Set<string> | null = null;
 let cachedMangaBookmarkedIds: Set<string> | null = null;
+let bookmarkCachePromise: Promise<void> | null = null;
 
 export function invalidateSummaryCache(): void {
   cachedSummaries = null;
@@ -103,11 +104,13 @@ export function invalidateSummaryCache(): void {
 export function invalidateBookmarkCache(): void {
   cachedBookmarkedMangaIds = null;
   cachedMangaBookmarkedIds = null;
+  bookmarkCachePromise = null;
 }
 
 syncChannel?.addEventListener('message', () => {
   cachedSummaries = null;
   invalidateBookmarkCache();
+  clearDirHandleCache();
 });
 
 export const summary = (m: Manga): Summary => {
@@ -335,22 +338,27 @@ export async function saveManga(m: Manga): Promise<void> {
   });
   await tx.objectStore('summaries').put(summary({ ...m, updatedAt, revision, slug }));
   if (cover) await tx.objectStore('covers').put(cover, m.id);
-  const keys = await tx.objectStore('progress').index('mangaId').getAllKeys(m.id);
-  for (const k of keys) await tx.objectStore('progress').delete(k);
-  for (const c of m.chapters)
-    await tx.objectStore('progress').put({
-      mangaId: m.id,
-      chapter: c.name,
-      read: c.read,
-      position: c.position,
-      bookmarks: c.bookmarks,
-    });
+  const progressStore = tx.objectStore('progress');
+  const keys = await progressStore.index('mangaId').getAllKeys(m.id);
+  await Promise.all(keys.map((k) => progressStore.delete(k)));
+  await Promise.all(
+    m.chapters.map((c) =>
+      progressStore.put({
+        mangaId: m.id,
+        chapter: c.name,
+        read: c.read,
+        position: c.position,
+        bookmarks: c.bookmarks,
+      }),
+    ),
+  );
   await tx.done;
   m.updatedAt = updatedAt;
   m.revision = revision;
   m.slug = slug;
   cachedSummaries = null;
   invalidateBookmarkCache();
+  clearDirHandleCache(m.id);
 
   if (cover && desktopAPI.isDesktop && desktopAPI.saveThumbnail) {
     try {
@@ -439,34 +447,53 @@ export async function saveProgress(
   return 'saved';
 }
 
+async function ensureBookmarkCaches(): Promise<void> {
+  if (cachedBookmarkedMangaIds && cachedMangaBookmarkedIds) {
+    return;
+  }
+  if (bookmarkCachePromise) {
+    return bookmarkCachePromise;
+  }
+  bookmarkCachePromise = (async () => {
+    try {
+      if (typeof indexedDB === 'undefined') {
+        cachedBookmarkedMangaIds = new Set();
+        cachedMangaBookmarkedIds = new Set();
+        return;
+      }
+      const d = await db;
+      const progress = await d.getAll('progress');
+      const allBookmarked = new Set<string>();
+      const mangaBookmarked = new Set<string>();
+
+      for (const p of progress) {
+        if (!p.bookmarks || p.bookmarks.length === 0) continue;
+        allBookmarked.add(p.mangaId);
+        for (const b of p.bookmarks) {
+          if (b.mangaBookmark) {
+            mangaBookmarked.add(p.mangaId);
+            break;
+          }
+        }
+      }
+
+      cachedBookmarkedMangaIds = allBookmarked;
+      cachedMangaBookmarkedIds = mangaBookmarked;
+    } finally {
+      bookmarkCachePromise = null;
+    }
+  })();
+  return bookmarkCachePromise;
+}
+
 export async function getBookmarkedMangaIds(): Promise<Set<string>> {
-  if (cachedBookmarkedMangaIds) {
-    return new Set(cachedBookmarkedMangaIds);
-  }
-  if (typeof indexedDB === 'undefined') {
-    return new Set();
-  }
-  const d = await db;
-  const progress = await d.getAll('progress');
-  const ids = new Set(progress.filter((p) => p.bookmarks?.length).map((p) => p.mangaId));
-  cachedBookmarkedMangaIds = ids;
-  return new Set(ids);
+  await ensureBookmarkCaches();
+  return new Set(cachedBookmarkedMangaIds ?? []);
 }
 
 export async function getMangaBookmarkedIds(): Promise<Set<string>> {
-  if (cachedMangaBookmarkedIds) {
-    return new Set(cachedMangaBookmarkedIds);
-  }
-  if (typeof indexedDB === 'undefined') {
-    return new Set();
-  }
-  const d = await db;
-  const progress = await d.getAll('progress');
-  const ids = new Set(
-    progress.filter((p) => p.bookmarks?.some((b) => b.mangaBookmark)).map((p) => p.mangaId),
-  );
-  cachedMangaBookmarkedIds = ids;
-  return new Set(ids);
+  await ensureBookmarkCaches();
+  return new Set(cachedMangaBookmarkedIds ?? []);
 }
 
 export async function addBookmark(
@@ -540,14 +567,18 @@ export async function removeBookmark(
 export async function deleteManga(id: string): Promise<void> {
   notifyDelete(id);
   const tx = (await db).transaction(['manga', 'summaries', 'covers', 'progress'], 'readwrite');
-  await tx.objectStore('manga').delete(id);
-  await tx.objectStore('summaries').delete(id);
-  await tx.objectStore('covers').delete(id);
-  for (const key of await tx.objectStore('progress').index('mangaId').getAllKeys(id))
-    await tx.objectStore('progress').delete(key);
+  const progressStore = tx.objectStore('progress');
+  const keys = await progressStore.index('mangaId').getAllKeys(id);
+  await Promise.all([
+    tx.objectStore('manga').delete(id),
+    tx.objectStore('summaries').delete(id),
+    tx.objectStore('covers').delete(id),
+    ...keys.map((k) => progressStore.delete(k)),
+  ]);
   await tx.done;
   cachedSummaries = null;
   invalidateBookmarkCache();
+  clearDirHandleCache(id);
   sessionFiles.delete(id);
   if (desktopAPI.isDesktop && desktopAPI.deleteThumbnail) {
     desktopAPI.deleteThumbnail(id).catch((err) => {
@@ -560,11 +591,15 @@ export async function deleteManga(id: string): Promise<void> {
 export async function clearLibrary(): Promise<void> {
   notifyDelete(undefined);
   const tx = (await db).transaction(['manga', 'summaries', 'covers', 'progress'], 'readwrite');
-  for (const name of ['manga', 'summaries', 'covers', 'progress'] as const)
-    await tx.objectStore(name).clear();
+  await Promise.all(
+    (['manga', 'summaries', 'covers', 'progress'] as const).map((name) =>
+      tx.objectStore(name).clear(),
+    ),
+  );
   await tx.done;
   cachedSummaries = [];
   invalidateBookmarkCache();
+  clearDirHandleCache();
   sessionFiles.clear();
   if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
     desktopAPI.clearThumbnails().catch((err) => {
@@ -677,19 +712,17 @@ export async function restoreBackup(backup: {
         if (item.coverBlob) {
           await tx.objectStore('covers').put(item.coverBlob, item.manga.id);
         }
-        const oldKeys = await tx.objectStore('progress').index('mangaId').getAllKeys(item.manga.id);
-        for (const k of oldKeys) {
-          await tx.objectStore('progress').delete(k);
-        }
-        for (const p of item.progress) {
-          await tx.objectStore('progress').put(p);
-        }
+        const progressStore = tx.objectStore('progress');
+        const oldKeys = await progressStore.index('mangaId').getAllKeys(item.manga.id);
+        await Promise.all(oldKeys.map((k) => progressStore.delete(k)));
+        await Promise.all(item.progress.map((p) => progressStore.put(p)));
       }
 
       await tx.objectStore('settings').put(validatedSettings, 'global');
       await tx.done;
       cachedSummaries = null;
       invalidateBookmarkCache();
+      clearDirHandleCache();
 
       if (desktopAPI.isDesktop && desktopAPI.saveThumbnail) {
         for (const item of preparedList) {
@@ -792,6 +825,43 @@ const readFile = (f: SourceFile): Promise<File> =>
     'Reading file',
   );
 
+const MAX_CACHED_DIR_HANDLES = 500;
+export const dirHandleCache = new Map<string, FileSystemDirectoryHandle>();
+
+export const ACCESS_CACHE_TTL_MS = 7500;
+
+export interface AccessCacheEntry {
+  granted: boolean;
+  timestamp: number;
+}
+
+export const accessCache = new Map<string, AccessCacheEntry>();
+const accessInFlight = new Map<string, Promise<boolean>>();
+
+export function clearAccessCache(mangaId?: string): void {
+  if (mangaId) {
+    accessCache.delete(mangaId);
+    accessInFlight.delete(mangaId);
+  } else {
+    accessCache.clear();
+    accessInFlight.clear();
+  }
+}
+
+export function clearDirHandleCache(mangaId?: string): void {
+  clearAccessCache(mangaId);
+  if (mangaId) {
+    const prefix = `${mangaId}:`;
+    for (const key of dirHandleCache.keys()) {
+      if (key.startsWith(prefix)) {
+        dirHandleCache.delete(key);
+      }
+    }
+  } else {
+    dirHandleCache.clear();
+  }
+}
+
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
   // Desktop: read directly from the filesystem via IPC — works across restarts.
@@ -804,15 +874,51 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
   }
   if (m.handle) {
     const parts = p.path.split('/');
-    let h: FileSystemDirectoryHandle = m.handle;
-    for (const part of parts.slice(0, -1))
-      h = await withinTime(h.getDirectoryHandle(part), limits.ioTimeoutMs, 'Opening folder');
-    const handle = await withinTime(
-      h.getFileHandle(parts.at(-1)!),
-      limits.ioTimeoutMs,
-      'Opening file',
-    );
-    return readFile(handle);
+    const dirParts = parts.slice(0, -1);
+    const dirPath = dirParts.join('/');
+    const cacheKey = `${m.id}:${m.updatedAt}:${dirPath}`;
+
+    let h: FileSystemDirectoryHandle | undefined =
+      dirParts.length === 0 ? m.handle : dirHandleCache.get(cacheKey);
+
+    try {
+      if (!h) {
+        h = m.handle;
+        let subPath = '';
+        for (const part of dirParts) {
+          subPath = subPath ? `${subPath}/${part}` : part;
+          const subKey = `${m.id}:${m.updatedAt}:${subPath}`;
+          let subHandle = dirHandleCache.get(subKey);
+          if (!subHandle) {
+            subHandle = await withinTime(
+              h.getDirectoryHandle(part),
+              limits.ioTimeoutMs,
+              'Opening folder',
+            );
+            if (dirHandleCache.size >= MAX_CACHED_DIR_HANDLES) {
+              const oldest = dirHandleCache.keys().next().value;
+              if (oldest) dirHandleCache.delete(oldest);
+            }
+            dirHandleCache.set(subKey, subHandle);
+          }
+          h = subHandle;
+        }
+        if (dirHandleCache.size >= MAX_CACHED_DIR_HANDLES) {
+          const oldest = dirHandleCache.keys().next().value;
+          if (oldest) dirHandleCache.delete(oldest);
+        }
+        dirHandleCache.set(cacheKey, h);
+      }
+      const handle = await withinTime(
+        h.getFileHandle(parts.at(-1)!),
+        limits.ioTimeoutMs,
+        'Opening file',
+      );
+      return await readFile(handle);
+    } catch (err) {
+      clearDirHandleCache(m.id);
+      throw err;
+    }
   }
   const f = sessionFiles.get(m.id)?.get(p.path);
   if (!f) throw new Error('Folder access is needed. Re-link your folder to continue.');
@@ -830,24 +936,62 @@ export async function access(
     const full = await getManga(m.id);
     return Boolean(full?.localPath || sessionFiles.has(m.id));
   }
-  let handle = m.handle;
-  if (!handle) {
-    if (sessionFiles.has(m.id)) return true;
-    const full = await getManga(m.id);
-    handle = full?.handle;
+
+  // In-memory session files are always accessible without querying handle permissions.
+  if (sessionFiles.has(m.id)) {
+    return true;
   }
-  if (!handle) return sessionFiles.has(m.id);
-  try {
-    return (
-      (await withinTime(
+
+  // Passive access checks (request=false) reuse cached permission status within TTL
+  // to avoid bursts of File System Access API queries when alt-tabbing or window refocusing.
+  const now = Date.now();
+  if (!request) {
+    const cached = accessCache.get(m.id);
+    if (cached && now - cached.timestamp < ACCESS_CACHE_TTL_MS) {
+      return cached.granted;
+    }
+    const inFlight = accessInFlight.get(m.id);
+    if (inFlight) {
+      return inFlight;
+    }
+  }
+
+  const queryOrRequest = async (): Promise<boolean> => {
+    let handle = m.handle;
+    if (!handle) {
+      if (sessionFiles.has(m.id)) return true;
+      const full = await getManga(m.id);
+      handle = full?.handle;
+    }
+    if (!handle) return sessionFiles.has(m.id);
+    try {
+      const res = await withinTime(
         request
           ? handle.requestPermission({ mode: 'read' })
           : handle.queryPermission({ mode: 'read' }),
         limits.ioTimeoutMs,
         'Checking folder access',
-      )) === 'granted'
-    );
-  } catch {
-    return false;
+      );
+      return res === 'granted';
+    } catch {
+      return false;
+    }
+  };
+
+  if (request) {
+    accessInFlight.delete(m.id);
+    const granted = await queryOrRequest();
+    accessCache.set(m.id, { granted, timestamp: Date.now() });
+    return granted;
+  }
+
+  const task = queryOrRequest();
+  accessInFlight.set(m.id, task);
+  try {
+    const granted = await task;
+    accessCache.set(m.id, { granted, timestamp: Date.now() });
+    return granted;
+  } finally {
+    accessInFlight.delete(m.id);
   }
 }

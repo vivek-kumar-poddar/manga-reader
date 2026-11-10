@@ -56,7 +56,6 @@ function PageImage({
   const currentActive = activePage ?? index;
   const distance = Math.abs(index - currentActive);
   const priority = Math.max(1, 100 - distance * 10);
-  const isNear = distance <= 1;
 
   const { path: pagePath, width: pageWidth, height: pageHeight, dimensionsPending } = page;
   const {
@@ -216,7 +215,6 @@ function PageImage({
           alt={`Page ${index + 1}: ${page.name}`}
           draggable={false}
           decoding="async"
-          fetchPriority={isNear ? 'high' : 'low'}
           onError={() => {
             const message = `Page ${index + 1} (${page.name}): This browser could not decode the image. It may be damaged, unsupported, or too large for this device. Try another browser or a smaller copy of this image.`;
             setError(message);

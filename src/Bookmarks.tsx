@@ -29,6 +29,10 @@ import { APP_VERSION } from './updates';
 type Mark = { manga: Manga; chapter: number; position: Position };
 type BookmarkTab = 'all' | 'manga' | 'individual';
 type BookmarkSort = 'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'chapter';
+export const bookmarkCollator = new Intl.Collator(undefined, {
+  numeric: true,
+  sensitivity: 'base',
+});
 const key = (b: Mark) =>
   b.manga.id +
   '/' +
@@ -162,28 +166,19 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
         });
       case 'title-asc':
         return list.sort((a, b) => {
-          const cmp = a.manga.title.localeCompare(b.manga.title, undefined, {
-            sensitivity: 'base',
-            numeric: true,
-          });
+          const cmp = bookmarkCollator.compare(a.manga.title, b.manga.title);
           if (cmp !== 0) return cmp;
           return a.chapter - b.chapter || a.position.page - b.position.page;
         });
       case 'title-desc':
         return list.sort((a, b) => {
-          const cmp = b.manga.title.localeCompare(a.manga.title, undefined, {
-            sensitivity: 'base',
-            numeric: true,
-          });
+          const cmp = bookmarkCollator.compare(b.manga.title, a.manga.title);
           if (cmp !== 0) return cmp;
           return a.chapter - b.chapter || a.position.page - b.position.page;
         });
       case 'chapter':
         return list.sort((a, b) => {
-          const cmp = a.manga.title.localeCompare(b.manga.title, undefined, {
-            sensitivity: 'base',
-            numeric: true,
-          });
+          const cmp = bookmarkCollator.compare(a.manga.title, b.manga.title);
           if (cmp !== 0) return cmp;
           return a.chapter - b.chapter || a.position.page - b.position.page;
         });

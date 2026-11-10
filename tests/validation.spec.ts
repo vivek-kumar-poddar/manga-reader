@@ -10,6 +10,8 @@ import {
 } from '../src/validation';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { shelfCollator, sortLibraryEntries } from '../src/App';
+import { bookmarkCollator } from '../src/Bookmarks';
 
 const baselineBackup = JSON.parse(
   readFileSync(resolve('docs/baseline/after-format/backup.json'), 'utf8'),
@@ -270,5 +272,51 @@ test.describe('Step 04 — Input and Backup Validation', () => {
       { preserveHardwarePointers: true },
     );
     expect(preserved?.handle).toBe(fakeHandle);
+  });
+
+  test('sortLibraryEntries and shelfCollator naturally sort titles with numeric collation', () => {
+    const list = [
+      {
+        id: '1',
+        title: 'Chapter 10',
+        addedAt: 100,
+        updatedAt: 100,
+        chapterCount: 1,
+        chaptersRead: 0,
+      },
+      {
+        id: '2',
+        title: 'Chapter 2',
+        addedAt: 200,
+        updatedAt: 200,
+        chapterCount: 1,
+        chaptersRead: 0,
+      },
+      {
+        id: '3',
+        title: 'chapter 1',
+        addedAt: 300,
+        updatedAt: 300,
+        chapterCount: 1,
+        chaptersRead: 0,
+      },
+    ];
+    // Shelf sort 'title' sorts natural numeric order (chapter 1, Chapter 2, Chapter 10)
+    const sorted = sortLibraryEntries(list, 'title');
+    expect(sorted.map((m) => m.title)).toEqual(['chapter 1', 'Chapter 2', 'Chapter 10']);
+
+    // Module-level collator provides base sensitivity natural comparison
+    expect(shelfCollator.compare('Chapter 2', 'Chapter 10')).toBeLessThan(0);
+    expect(shelfCollator.compare('Chapter 10', 'Chapter 2')).toBeGreaterThan(0);
+    expect(shelfCollator.compare('naruto', 'Naruto')).toBe(0);
+
+    // Shelf sort 'recent' (default) sorts by updatedAt desc with title fallback
+    const byRecent = sortLibraryEntries(list, 'recent');
+    expect(byRecent.map((m) => m.id)).toEqual(['3', '2', '1']);
+  });
+
+  test('bookmarkCollator provides base sensitivity natural comparison', () => {
+    expect(bookmarkCollator.compare('Vol 2', 'Vol 10')).toBeLessThan(0);
+    expect(bookmarkCollator.compare('Bleach', 'bleach')).toBe(0);
   });
 });

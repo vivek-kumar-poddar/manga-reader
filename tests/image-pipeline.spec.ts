@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 import { headerDimensions, clearDimensionCache } from '../src/imageDimensions';
 import { thumbnail } from '../src/images';
-import { ImageQueue } from '../src/imageQueue';
+import { ImageQueue, resetConcurrencyCacheForTesting } from '../src/imageQueue';
 import { ObjectUrlPool } from '../src/objectUrlPool';
 
 test.describe('Image Loading Pipeline Improvements', () => {
@@ -240,5 +240,49 @@ test.describe('Image Loading Pipeline Improvements', () => {
     // In node/playwright test environment without full canvas toBlob support, thumbnail gracefully resolves
     const res = await thumbnail(file, undefined, 0.65).catch(() => undefined);
     expect(res === undefined || res instanceof Blob).toBe(true);
+  });
+
+  test('ImageQueue reprioritizes lazily and caches media query evaluations', async () => {
+    resetConcurrencyCacheForTesting();
+    const queue = new ImageQueue();
+    const order: string[] = [];
+    const blockers: Array<() => void> = [];
+
+    // Hold all slots
+    for (let i = 0; i < 4; i++) {
+      queue.enqueue({
+        key: `hold-${i}`,
+        run: () =>
+          new Promise<void>((resolve) => {
+            blockers.push(resolve);
+          }),
+      });
+    }
+
+    // Queue 5 waiting tasks
+    for (let i = 0; i < 5; i++) {
+      const id = `item-${i}`;
+      queue.enqueue({
+        key: id,
+        priority: i,
+        run: async () => {
+          order.push(id);
+        },
+      });
+    }
+
+    // Burst reprioritize multiple items (e.g. active page changes in reader)
+    queue.reprioritize('item-0', 100);
+    queue.reprioritize('item-1', 90);
+    queue.reprioritize('item-2', 80);
+
+    // Release blockers
+    for (const b of blockers) b();
+    await new Promise((r) => setTimeout(r, 20));
+
+    // Pump should have sorted lazily once and executed highest priority tasks first
+    expect(order[0]).toBe('item-0');
+    expect(order[1]).toBe('item-1');
+    expect(order[2]).toBe('item-2');
   });
 });
