@@ -2,6 +2,12 @@ import { mangaPath, mangaDetailsPath, chapterIndex } from './paths';
 import { limits } from './limits';
 import Dropdown from './Dropdown';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  computeOffsets,
+  getWindowRange,
+  type PageOffset,
+  type WindowRange,
+} from './readerGeometry';
 import { Link, useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -33,10 +39,14 @@ import {
   access,
   getManga,
   saveProgress,
+  addBookmark,
+  removeBookmark,
   matchingPosition,
   errorMessage,
+  clearImageQueue,
   type Manga,
   type Position,
+  type SaveProgressResult,
 } from './data';
 export default function Reader({
   indexing,
@@ -121,12 +131,7 @@ export default function Reader({
     );
   return <ReaderView key={manga.id + ':' + manga.updatedAt} manga={manga} />;
 }
-interface Offset {
-  page: number;
-  top: number;
-  height: number;
-  bottom: number;
-}
+type Offset = PageOffset;
 function ReaderView({ manga }: { manga: Manga }) {
   const [params] = useSearchParams();
   const { chapterSegment, mangaId } = useParams();
@@ -206,6 +211,11 @@ function ReaderView({ manga }: { manga: Manga }) {
   const edgeProgress = useRef<HTMLSpanElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const offsets = useRef<Offset[]>([]);
+  const measuredHeights = useRef<Map<number, number>>(new Map());
+  const lastWindowScrollY = useRef(0);
+  const [windowRange, setWindowRange] = useState<WindowRange>(() =>
+    getWindowRange(offsets.current, 0, typeof window !== 'undefined' ? window.innerHeight : 800),
+  );
   const position = useRef<Position>({ page: 0, fraction: 0 });
   const pendingRestore = useRef<Position | undefined>(undefined);
   const pointer = useRef(-1);
@@ -215,7 +225,9 @@ function ReaderView({ manga }: { manga: Manga }) {
   const playbackRevision = useRef(0);
   const dirty = useRef(false);
   const lastSave = useRef(0);
-  const savedSnapshot = useRef('');
+  const inFlight = useRef<Promise<SaveProgressResult> | null>(null);
+  const snapshotRevision = useRef(0);
+  const committedRevision = useRef(0);
   const restoring = useRef(false);
   const chapterRef = useRef(ci);
   const touch = useRef<{ x: number; y: number; multi: boolean } | null>(null);
@@ -260,25 +272,64 @@ function ReaderView({ manga }: { manga: Manga }) {
     playbackRevision.current++;
     pauseUntil.current = performance.now() + latest.current.s.resumeDelay * 1000;
   }
-  function flush() {
-    if (!latest.current.ready || !latest.current.allowed || !dirty.current)
-      return Promise.resolve();
+  function flush(): Promise<SaveProgressResult> {
+    if (!latest.current.ready || !latest.current.allowed) {
+      return Promise.resolve('missing');
+    }
+    if (inFlight.current) {
+      return inFlight.current.then(() => {
+        if (dirty.current) {
+          return flush();
+        }
+        return 'saved';
+      });
+    }
+    if (!dirty.current) {
+      return Promise.resolve('saved');
+    }
     const index = chapterRef.current;
     const c = metadata.current.chapters[index];
-    const p = { ...position.current };
-    const snapshot = JSON.stringify([index, p, c.read, c.bookmarks]);
-    if (snapshot === savedSnapshot.current) {
+    if (!c) {
       dirty.current = false;
-      return Promise.resolve();
+      return Promise.resolve('missing');
     }
+    const targetRevision = snapshotRevision.current;
+    const p = { ...position.current };
+    const isRead = Boolean(c.read);
+    const bookmarks = c.bookmarks ? [...c.bookmarks] : undefined;
+
     dirty.current = false;
     lastSave.current = performance.now();
-    savedSnapshot.current = snapshot;
-    return saveProgress(metadata.current, index, p, c.read, c.bookmarks).catch((e) => {
-      dirty.current = true;
-      savedSnapshot.current = '';
-      notify(errorMessage(e));
+
+    const savePromise = (async (): Promise<SaveProgressResult> => {
+      try {
+        const result = await saveProgress(metadata.current, index, p, isRead, bookmarks);
+        if (result === 'saved') {
+          committedRevision.current = Math.max(committedRevision.current, targetRevision);
+        } else {
+          if (committedRevision.current < targetRevision) {
+            dirty.current = true;
+          }
+        }
+        return result;
+      } catch (err) {
+        if (committedRevision.current < targetRevision) {
+          dirty.current = true;
+        }
+        throw err;
+      }
+    })();
+
+    inFlight.current = savePromise;
+    savePromise.finally(() => {
+      if (inFlight.current === savePromise) {
+        inFlight.current = null;
+      }
     });
+    return savePromise;
+
+    inFlight.current = savePromise;
+    return savePromise;
   }
   function capture() {
     if (restoring.current || !latest.current.ready || !offsets.current.length) return;
@@ -330,40 +381,91 @@ function ReaderView({ manga }: { manga: Manga }) {
     }
     c.position = { ...position.current };
     dirty.current = true;
-    if (performance.now() - lastSave.current >= 1500) void flush();
+    snapshotRevision.current++;
+    if (performance.now() - lastSave.current >= 1500)
+      void flush().catch((e) => notify(errorMessage(e)));
+  }
+  function updateWindow(force = false, targetPage?: number) {
+    if (latest.current.s.mode !== 'continuous' || chapter.pages.length <= 15) {
+      setWindowRange((prev) => {
+        if (prev.startIndex === 0 && prev.endIndex === Math.max(0, chapter.pages.length - 1)) {
+          return prev;
+        }
+        return {
+          startIndex: 0,
+          endIndex: Math.max(0, chapter.pages.length - 1),
+          topSpacer: 0,
+          bottomSpacer: 0,
+        };
+      });
+      return;
+    }
+    const y =
+      targetPage !== undefined && offsets.current[targetPage]
+        ? offsets.current[targetPage].top
+        : window.scrollY;
+    const h = window.innerHeight;
+    if (!force && Math.abs(y - lastWindowScrollY.current) < h * 1.0) {
+      return;
+    }
+    lastWindowScrollY.current = y;
+    const next = getWindowRange(offsets.current, y, h, 3);
+    setWindowRange((prev) => {
+      if (
+        prev.startIndex === next.startIndex &&
+        prev.endIndex === next.endIndex &&
+        Math.abs(prev.topSpacer - next.topSpacer) < 2 &&
+        Math.abs(prev.bottomSpacer - next.bottomSpacer) < 2
+      ) {
+        return prev;
+      }
+      return next;
+    });
   }
   function measure() {
     const nodes = content.current?.querySelectorAll<HTMLElement>('[data-page]');
-    offsets.current = nodes
-      ? Array.from(nodes).map((el) => {
-          const rect = el.getBoundingClientRect();
-          const top = rect.top + scrollY;
-          return {
-            page: Number(el.dataset.page),
-            top,
-            height: rect.height,
-            bottom: top + rect.height,
-          };
-        })
-      : [];
+    if (nodes) {
+      for (const el of nodes) {
+        const p = Number(el.dataset.page);
+        const rect = el.getBoundingClientRect();
+        if (rect.height > 0) {
+          measuredHeights.current.set(p, rect.height);
+        }
+      }
+    }
+    const containerWidth = content.current?.clientWidth || window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    offsets.current = computeOffsets(
+      chapter.pages,
+      {
+        containerWidth,
+        viewportHeight,
+        layout: latest.current.s.layout,
+        maxWidth: latest.current.s.maxWidth,
+        zoom: latest.current.zoom,
+      },
+      measuredHeights.current,
+    );
   }
   function restore(anchor: Position) {
-    const index = offsets.current.findIndex((o) => o.page === anchor.page);
-    const o = offsets.current[Math.max(0, index)];
+    const index = Math.max(0, Math.min(offsets.current.length - 1, anchor.page));
+    const o = offsets.current[index];
     if (o) window.scrollTo({ top: o.top + o.height * anchor.fraction, behavior: 'instant' });
     position.current = { ...anchor };
     playbackRevision.current++;
     restoring.current = false;
+    updateWindow(true, anchor.page);
   }
-  function goChapter(index: number, reset = false) {
+  async function goChapter(index: number, reset = false) {
     if (index < 0 || index >= manga.chapters.length) return;
     capture();
     if (index === ci + 1) {
       metadata.current.chapters[ci].read = true;
       dirty.current = true;
+      snapshotRevision.current++;
       setReadRevision((v) => v + 1);
     }
-    void flush();
+    await flush().catch((e) => notify(errorMessage(e)));
     // Suspend playback synchronously until the destination has been measured/restored.
     restoring.current = true;
     playbackRevision.current++;
@@ -373,6 +475,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         path: metadata.current.chapters[index].pages[0]?.path,
         fraction: 0,
       };
+    clearImageQueue();
     if (index === ci) {
       pendingRestore.current = metadata.current.chapters[index].position || {
         page: 0,
@@ -380,8 +483,10 @@ function ReaderView({ manga }: { manga: Manga }) {
       };
       setPage(0);
       setZoom(1);
+      measuredHeights.current.clear();
       requestAnimationFrame(() => {
         measure();
+        updateWindow(true, 0);
         restore(pendingRestore.current!);
         capture();
       });
@@ -397,7 +502,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     endHandled.current = false;
     if (s.mode === 'single') {
       capture();
-      void flush();
+      void flush().catch((e) => notify(errorMessage(e)));
       const group = groupsRef.current.find((g) => g.includes(n)) || [n];
       n = group[0];
       position.current = { page: n, path: chapter.pages[n].path, fraction: 0 };
@@ -406,12 +511,14 @@ function ReaderView({ manga }: { manga: Manga }) {
       setPage(n);
       setZoom(1);
       dirty.current = true;
+      snapshotRevision.current++;
     } else {
       // A chapter's saved-position restore may still be queued when the user jumps.
       // Replace that anchor as well, so it cannot later undo the user's selection.
       const anchor = { page: n, path: chapter.pages[n].path, fraction: 0 };
       pendingRestore.current = anchor;
       measure();
+      updateWindow(true, n);
       restore(anchor);
       capture();
     }
@@ -425,8 +532,8 @@ function ReaderView({ manga }: { manga: Manga }) {
     const next = list[index + direction];
     if (next) goPage(next[0]);
   }
-  const actions = useRef({ capture, flush, goChapter, goPage, step, pause });
-  actions.current = { capture, flush, goChapter, goPage, step, pause };
+  const actions = useRef({ capture, flush, goChapter, goPage, step, pause, updateWindow });
+  actions.current = { capture, flush, goChapter, goPage, step, pause, updateWindow };
   useLayoutEffect(() => {
     if (!allowed || prepared !== ci) {
       setReady(false);
@@ -447,8 +554,10 @@ function ReaderView({ manga }: { manga: Manga }) {
     setZoom(1);
     setEnded(false);
     endHandled.current = false;
+    measuredHeights.current.clear();
     const frame = requestAnimationFrame(() => {
       measure();
+      updateWindow(true, anchor.page);
       restore(pendingRestore.current || anchor);
       setReady(true);
     });
@@ -457,9 +566,11 @@ function ReaderView({ manga }: { manga: Manga }) {
   useLayoutEffect(() => {
     if (!allowed || !ready) return;
     restoring.current = true;
+    measuredHeights.current.clear();
     const frame = requestAnimationFrame(() => {
       const anchor = pendingRestore.current || position.current;
       measure();
+      updateWindow(true, anchor.page);
       restore(anchor);
       pendingRestore.current = undefined;
       capture();
@@ -491,9 +602,11 @@ function ReaderView({ manga }: { manga: Manga }) {
       const anchor = { ...position.current };
       restoring.current = true;
       setWide(innerWidth >= 700);
+      measuredHeights.current.clear();
       cancelAnimationFrame(frame);
       frame = requestAnimationFrame(() => {
         measure();
+        updateWindow(true, anchor.page);
         restore(anchor);
         actions.current.capture();
       });
@@ -520,6 +633,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         frame = requestAnimationFrame(() => {
           frame = 0;
           actions.current.capture();
+          actions.current.updateWindow();
         });
     };
     const move = (e: PointerEvent) => {
@@ -573,21 +687,21 @@ function ReaderView({ manga }: { manga: Manga }) {
     const blur = () => {
       held.current.clear();
       keysHeld.current.clear();
-      void actions.current.flush();
+      void actions.current.flush().catch((e) => notify(errorMessage(e)));
     };
     const leave = () => {
       pointer.current = -1;
     };
     const save = () => {
       actions.current.capture();
-      void actions.current.flush();
+      void actions.current.flush().catch((e) => notify(errorMessage(e)));
     };
     const update = (e: Event) => {
       actions.current.capture();
       (e as CustomEvent<Promise<unknown>[]>).detail.push(actions.current.flush());
     };
     const interval = setInterval(() => {
-      if (dirty.current) void actions.current.flush();
+      if (dirty.current) void actions.current.flush().catch((e) => notify(errorMessage(e)));
     }, 1500);
     window.addEventListener('scroll', scroll, { passive: true });
     window.addEventListener('pointermove', move, { passive: true });
@@ -624,6 +738,7 @@ function ReaderView({ manga }: { manga: Manga }) {
   useEffect(
     () => () => {
       void actions.current.flush().then(refresh);
+      clearImageQueue();
     },
     [],
   );
@@ -641,7 +756,7 @@ function ReaderView({ manga }: { manga: Manga }) {
       if (endHandled.current) return;
       endHandled.current = true;
       actions.current.capture();
-      void actions.current.flush();
+      void actions.current.flush().catch((e) => notify(errorMessage(e)));
       const action = latest.current.s.endAction;
       if (action === 'next' && ci < manga.chapters.length - 1)
         actions.current.goChapter(ci + 1, true);
@@ -710,8 +825,9 @@ function ReaderView({ manga }: { manga: Manga }) {
     capture();
     metadata.current.chapters[ci].read = true;
     dirty.current = true;
+    snapshotRevision.current++;
     setReadRevision((v) => v + 1);
-    void flush();
+    void flush().catch((e) => notify(errorMessage(e)));
   }
   function changeZoom(value: number) {
     capture();
@@ -743,19 +859,23 @@ function ReaderView({ manga }: { manga: Manga }) {
   function toggleBookmark() {
     actions.current.capture();
     const c = metadata.current.chapters[chapterRef.current];
-    const p = { ...position.current };
+    if (!c) return;
+    const p = { ...position.current, timestamp: Date.now() };
     const marks = c.bookmarks || [];
-    const exists = marks.findIndex((b) => b.path === p.path);
+    const exists = marks.findIndex((b) => (p.path ? b.path === p.path : b.page === p.page));
     if (exists < 0 && marks.length >= limits.bookmarksPerChapter) {
       notify(
         `Bookmark limit is ${limits.bookmarksPerChapter} per chapter. Remove one before adding another.`,
       );
       return;
     }
-    c.bookmarks = exists >= 0 ? marks.filter((_, i) => i !== exists) : [...marks, p];
-    dirty.current = true;
-    setBookmarkRevision((v) => v + 1);
-    void actions.current.flush();
+    const op = exists >= 0 ? removeBookmark(manga.id, c.name, p) : addBookmark(manga.id, c.name, p);
+    void op
+      .then((updatedMarks) => {
+        c.bookmarks = updatedMarks;
+        setBookmarkRevision((v) => v + 1);
+      })
+      .catch((e) => notify(errorMessage(e)));
     notify(exists >= 0 ? 'Bookmark removed.' : 'Page bookmarked.');
   }
   if (allowed === null)
@@ -972,29 +1092,50 @@ function ReaderView({ manga }: { manga: Manga }) {
           (s.direction === 'rtl' ? 'rtl-spread' : '')
         }
       >
-        {s.mode === 'continuous'
-          ? chapter.pages.map((p, i) => (
-              <PageImage
-                key={ci + '/' + p.path}
-                m={manga}
-                page={p}
-                index={i}
-                lowQuality={s.lowQuality}
-                report={setFailure}
-                retryPreparation={retryPreparation}
+        {s.mode === 'continuous' ? (
+          <>
+            {windowRange.topSpacer > 0 && (
+              <div
+                className="reader-spacer reader-spacer-top"
+                style={{ height: windowRange.topSpacer }}
+                aria-hidden="true"
               />
-            ))
-          : visible.map((i) => (
-              <PageImage
-                key={ci + '/' + i}
-                m={manga}
-                page={chapter.pages[i]}
-                index={i}
-                lowQuality={s.lowQuality}
-                report={setFailure}
-                retryPreparation={retryPreparation}
+            )}
+            {chapter.pages.slice(windowRange.startIndex, windowRange.endIndex + 1).map((p, idx) => {
+              const actualIndex = windowRange.startIndex + idx;
+              return (
+                <PageImage
+                  key={ci + '/' + p.path}
+                  m={manga}
+                  page={p}
+                  index={actualIndex}
+                  lowQuality={s.lowQuality}
+                  report={setFailure}
+                  retryPreparation={retryPreparation}
+                />
+              );
+            })}
+            {windowRange.bottomSpacer > 0 && (
+              <div
+                className="reader-spacer reader-spacer-bottom"
+                style={{ height: windowRange.bottomSpacer }}
+                aria-hidden="true"
               />
-            ))}
+            )}
+          </>
+        ) : (
+          visible.map((i) => (
+            <PageImage
+              key={ci + '/' + i}
+              m={manga}
+              page={chapter.pages[i]}
+              index={i}
+              lowQuality={s.lowQuality}
+              report={setFailure}
+              retryPreparation={retryPreparation}
+            />
+          ))
+        )}
       </div>
       {ended && (
         <div className="chapter-end">

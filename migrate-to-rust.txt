@@ -253,13 +253,20 @@ Use: Provides native Windows OS feedback during large folder scans and chapter i
 Check: Taskbar icon displays indeterminate animation on scan start, fractional fill
        during chapter indexing, and returns to normal state on completion.
 
-07. [COMPLETED] (Optional Native Optimization) Native Image Header Parsing in Rust
-Changes: Frontend imageDimensions.ts header parser preserved; native Rust traversal provides
-         metadata size/mtime directly to eliminate redundant stat operations.
-Verified: Header dimension parsing remains instantaneous on discovery.
-Keep: Fast header decode fallback for SVGs and non-standard image types.
-Path: NEW src-tauri/src/commands/image.rs; src-tauri/Cargo.toml.
-Function: get_image_dimensions Tauri command.
+07. [COMPLETED] Multi-Threaded Native Image Dimension Parsing in Rust
+Changes: src-tauri/Cargo.toml (imagesize = "0.13"); src-tauri/src/commands/fs.rs
+         (parse_image_dimensions reading first 32 KB via blob_size with reader_size fallback;
+         parallel header extraction across Rayon worker threads in list_folder; NEW get_image_dimensions);
+         src-tauri/src/lib.rs (registered get_image_dimensions); src/tauriBridge.ts (FolderEntry width/height,
+         getImageDimensions); src/data.ts (DesktopHandle width/height, fromDesktopFolder, skip warmup/read
+         when pre-populated by Rust, native dimension query in prepareChapter).
+Verified: `cargo check` exit 0; `cargo build --release` exit 0 (6.65 MB binary);
+          `npm run typecheck` exit 0; 16/16 validation unit tests PASS; `npm run build` exit 0;
+          `npm run format:check` PASS.
+Keep: 32 KB header reading ceiling, area overflow protection, graceful fallback for SVG/unsupported images,
+      zero-copy IPC dimension population without transferring image buffers to JS.
+Path: src-tauri/src/commands/fs.rs; src-tauri/Cargo.toml; src/tauriBridge.ts; src/data.ts.
+Function: list_folder, parse_image_dimensions, get_image_dimensions, DesktopHandle, indexSource.
 Change: Add lightweight header parser in Rust (e.g., imagesize crate or minimal byte
         reader for PNG, JPEG, GIF, WEBP, AVIF). Reads the first 64 KB of the file,
         extracts width and height in Rust threads during folder discovery, and caches

@@ -28,6 +28,7 @@ tokio = { version = "1", features = ["full"] }
 walkdir = "2.5"
 rayon = "1.10"
 dunce = "1.0"
+imagesize = "0.13"
 
 [profile.release]
 lto = true

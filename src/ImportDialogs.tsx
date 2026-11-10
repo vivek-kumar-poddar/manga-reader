@@ -17,23 +17,27 @@ export function Modal({
   title,
   description,
   children,
+  className,
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   description: string;
   children: ReactNode;
+  className?: string;
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="dialog-overlay" />
-        <Dialog.Content className="shortcuts-modal import-modal">
+        <Dialog.Content
+          className={`shortcuts-modal import-modal${className ? ` ${className}` : ''}`}
+        >
           <div className="dialog-heading">
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Close asChild>
               <button className="close-btn" aria-label="Close popup">
-                <X size={20} />
+                <X size={16} />
               </button>
             </Dialog.Close>
           </div>

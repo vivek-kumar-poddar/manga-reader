@@ -5,6 +5,8 @@ export interface FolderEntry {
   absolutePath: string;
   size: number;
   modified: number;
+  width?: number | null;
+  height?: number | null;
 }
 
 export interface DesktopAPI {
@@ -13,7 +15,12 @@ export interface DesktopAPI {
   selectFolder(): Promise<string | null>;
   listFolder(folderPath: string): Promise<FolderEntry[]>;
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
+  getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
   setProgressBar(progress: number): void;
+  saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
+  getThumbnail?(id: string): Promise<ArrayBuffer | null>;
+  deleteThumbnail?(id: string): Promise<void>;
+  clearThumbnails?(): Promise<void>;
 }
 
 // Detect Tauri runtime presence
@@ -78,11 +85,80 @@ class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
+  async getImageDimensions(
+    absolutePath: string,
+  ): Promise<{ width: number; height: number } | null> {
+    try {
+      const dim = await invoke<[number, number] | null>('get_image_dimensions', {
+        absolutePath,
+      });
+      if (dim && Array.isArray(dim) && dim.length === 2) {
+        return { width: dim[0], height: dim[1] };
+      }
+      return null;
+    } catch (err) {
+      console.warn('Tauri getImageDimensions failed for', absolutePath, err);
+      return null;
+    }
+  }
+
   setProgressBar(progress: number): void {
     try {
       void invoke('set_progress_bar', { progress });
     } catch (err) {
       console.warn('Tauri setProgressBar failed:', err);
+    }
+  }
+
+  async saveThumbnail(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean> {
+    try {
+      const bytes =
+        buffer instanceof Uint8Array ? Array.from(buffer) : Array.from(new Uint8Array(buffer));
+      await invoke('save_thumbnail', { id, bytes });
+      return true;
+    } catch (err) {
+      console.warn('Tauri saveThumbnail failed for', id, err);
+      return false;
+    }
+  }
+
+  async getThumbnail(id: string): Promise<ArrayBuffer | null> {
+    try {
+      const response = await invoke<Uint8Array | ArrayBuffer | number[]>('read_thumbnail', { id });
+      if (response instanceof ArrayBuffer) {
+        return response.byteLength > 0 ? response : null;
+      }
+      if (response instanceof Uint8Array) {
+        return response.byteLength > 0
+          ? (response.buffer.slice(
+              response.byteOffset,
+              response.byteOffset + response.byteLength,
+            ) as ArrayBuffer)
+          : null;
+      }
+      if (Array.isArray(response) && response.length > 0) {
+        return new Uint8Array(response).buffer as ArrayBuffer;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Tauri getThumbnail failed for', id, err);
+      return null;
+    }
+  }
+
+  async deleteThumbnail(id: string): Promise<void> {
+    try {
+      await invoke('delete_thumbnail', { id });
+    } catch (err) {
+      console.warn('Tauri deleteThumbnail failed for', id, err);
+    }
+  }
+
+  async clearThumbnails(): Promise<void> {
+    try {
+      await invoke('clear_thumbnails');
+    } catch (err) {
+      console.warn('Tauri clearThumbnails failed:', err);
     }
   }
 }
@@ -107,9 +183,25 @@ class LegacyElectronDesktopBridge implements DesktopAPI {
     return this.api?.readFile(absolutePath) ?? null;
   }
 
+  async getImageDimensions(): Promise<{ width: number; height: number } | null> {
+    return null;
+  }
+
   setProgressBar(progress: number): void {
     this.api?.setProgressBar(progress);
   }
+
+  async saveThumbnail(): Promise<boolean> {
+    return false;
+  }
+
+  async getThumbnail(): Promise<ArrayBuffer | null> {
+    return null;
+  }
+
+  async deleteThumbnail(): Promise<void> {}
+
+  async clearThumbnails(): Promise<void> {}
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -128,7 +220,23 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
+  async getImageDimensions(): Promise<{ width: number; height: number } | null> {
+    return null;
+  }
+
   setProgressBar(): void {}
+
+  async saveThumbnail(): Promise<boolean> {
+    return false;
+  }
+
+  async getThumbnail(): Promise<ArrayBuffer | null> {
+    return null;
+  }
+
+  async deleteThumbnail(): Promise<void> {}
+
+  async clearThumbnails(): Promise<void> {}
 }
 
 export const desktopAPI: DesktopAPI = isTauri

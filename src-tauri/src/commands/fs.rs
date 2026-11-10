@@ -1,4 +1,8 @@
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 use tauri::AppHandle;
 use tauri_plugin_dialog::DialogExt;
@@ -6,6 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 pub const MAX_DEPTH: usize = 64;
 pub const MAX_SCAN_FILES: usize = 100_000;
 pub const MAX_FILE_READ_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB safety cap
+pub const HEADER_READ_LIMIT: usize = 32 * 1024; // 32 KB header buffer
 
 pub const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "avif", "gif", "bmp", "svg", "ico", "heic", "heif", "tif",
@@ -28,12 +33,75 @@ pub struct FolderEntry {
     pub absolute_path: String,
     pub size: u64,
     pub modified: f64,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+}
+
+struct CandidateEntry {
+    rel_path: String,
+    abs_path: std::path::PathBuf,
+    size: u64,
+    modified: f64,
+}
+
+/// Parses image dimensions (width, height) without decoding pixel buffers.
+/// First reads up to 32 KB to parse headers via blob_size; falls back to size(path)
+/// for large EXIF/TIFF headers.
+pub fn parse_image_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
+    // 1. Fast header parse: read first 32 KB
+    if let Ok(mut file) = File::open(path) {
+        let mut buf = vec![0u8; HEADER_READ_LIMIT];
+        let mut total = 0;
+        while total < HEADER_READ_LIMIT {
+            match file.read(&mut buf[total..]) {
+                Ok(0) => break,
+                Ok(n) => total += n,
+                Err(_) => break,
+            }
+        }
+        buf.truncate(total);
+
+        if !buf.is_empty() {
+            if let Ok(dim) = imagesize::blob_size(&buf) {
+                if dim.width > 0 && dim.height > 0 {
+                    let w = dim.width as u64;
+                    let h = dim.height as u64;
+                    if w <= u32::MAX as u64 && h <= u32::MAX as u64 && w.saturating_mul(h) < (1u64 << 40) {
+                        return (Some(dim.width as u32), Some(dim.height as u32));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Fallback: stream through reader if metadata chunk is located past 32 KB
+    if let Ok(dim) = imagesize::size(path) {
+        if dim.width > 0 && dim.height > 0 {
+            let w = dim.width as u64;
+            let h = dim.height as u64;
+            if w <= u32::MAX as u64 && h <= u32::MAX as u64 && w.saturating_mul(h) < (1u64 << 40) {
+                return (Some(dim.width as u32), Some(dim.height as u32));
+            }
+        }
+    }
+
+    (None, None)
 }
 
 #[tauri::command]
 pub async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
     let folder = app.dialog().file().blocking_pick_folder();
     Ok(folder.map(|p| p.to_string()))
+}
+
+#[tauri::command]
+pub fn get_image_dimensions(absolute_path: String) -> Result<Option<(u32, u32)>, String> {
+    let path = Path::new(&absolute_path);
+    let (w, h) = parse_image_dimensions(path);
+    match (w, h) {
+        (Some(width), Some(height)) => Ok(Some((width, height))),
+        _ => Ok(None),
+    }
 }
 
 #[tauri::command]
@@ -45,7 +113,7 @@ pub fn list_folder(folder_path: String) -> Result<Vec<FolderEntry>, String> {
 
     let root = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
 
-    let mut results = Vec::new();
+    let mut candidates = Vec::new();
     let walker = walkdir::WalkDir::new(&root)
         .max_depth(MAX_DEPTH)
         .follow_links(false)
@@ -64,7 +132,7 @@ pub fn list_folder(folder_path: String) -> Result<Vec<FolderEntry>, String> {
         });
 
     for entry_res in walker {
-        if results.len() >= MAX_SCAN_FILES {
+        if candidates.len() >= MAX_SCAN_FILES {
             break;
         }
         let entry = match entry_res {
@@ -103,13 +171,29 @@ pub fn list_folder(folder_path: String) -> Result<Vec<FolderEntry>, String> {
             .map(|d| d.as_millis() as f64)
             .unwrap_or(0.0);
 
-        results.push(FolderEntry {
-            relative_path: rel_path,
-            absolute_path: file_path.to_string_lossy().to_string(),
+        candidates.push(CandidateEntry {
+            rel_path,
+            abs_path: file_path.to_path_buf(),
             size: metadata.len(),
             modified,
         });
     }
+
+    // Parallel dimension extraction across Rayon worker threads
+    let results: Vec<FolderEntry> = candidates
+        .into_par_iter()
+        .map(|entry| {
+            let (width, height) = parse_image_dimensions(&entry.abs_path);
+            FolderEntry {
+                relative_path: entry.rel_path,
+                absolute_path: entry.abs_path.to_string_lossy().to_string(),
+                size: entry.size,
+                modified: entry.modified,
+                width,
+                height,
+            }
+        })
+        .collect();
 
     Ok(results)
 }

@@ -812,3 +812,543 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
     - Rust release executable: `6.26 MB` (6,568,448 bytes) with all IPC commands, single-instance locking, window-state persistence, and dialog integration.
   - `npm run test:validation`: PASS (16/16 unit tests passed).
   - `npm run format:check`: PASS.
+
+## Multi-Threaded Native Image Dimension Parsing in Rust (Step 07) — 2026-11-10
+
+- Implemented parallel header dimension parsing in Rust backend:
+  - Added `imagesize = "0.13"` to `src-tauri/Cargo.toml`.
+  - Implemented `parse_image_dimensions` in `src-tauri/src/commands/fs.rs`:
+    - Reads first 32 KB (`HEADER_READ_LIMIT`) from image files and parses dimensions using `imagesize::blob_size`.
+    - Fallback to `imagesize::size(path)` for images with large EXIF/metadata chunks past 32 KB.
+    - Strictly bounded: area overflow protection (`w.saturating_mul(h) < 1 << 40`), positive integer pixel checks.
+    - Gracefully returns `(None, None)` for unsupported formats (e.g. SVG) or corrupt headers without blocking discovery.
+  - Multi-threaded traversal:
+    - In `list_folder`, candidate image files discovered via `walkdir` are dispatched to `rayon::into_par_iter()`.
+    - Dimension extraction runs in parallel across all available CPU cores.
+    - `FolderEntry` returned to frontend contains `{ relativePath, absolutePath, size, modified, width, height }`.
+  - Added `get_image_dimensions(absolute_path: String)` Tauri command in `src-tauri/src/commands/fs.rs` and registered in `src-tauri/src/lib.rs`.
+- Frontend integration:
+  - `src/tauriBridge.ts`: Updated `FolderEntry` interface to include optional `width?: number | null; height?: number | null;` and exposed `getImageDimensions` on `desktopAPI`.
+  - `src/data.ts`:
+    - Updated `DesktopHandle` constructor to accept `width` and `height`.
+    - Updated `fromDesktopFolder` to instantiate `DesktopHandle` with pre-extracted native dimensions.
+    - In `indexSource`: Directly populates `page.width`, `page.height`, and sets `dimensionsPending: false` when dimensions are pre-populated by Rust. Bypasses IPC image buffer transfers and canvas decoding entirely during initial indexing.
+    - In `warmSources`: Filters out entries whose dimensions are already resolved by Rust, avoiding redundant warmup tasks.
+    - In `prepareChapter`: Queries `desktopAPI.getImageDimensions` natively before falling back to full file read and JS decode.
+- Verification:
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: PASS (exit code 0).
+  - `cargo build --manifest-path src-tauri/Cargo.toml --release`: PASS (exit code 0, 6.65 MB release binary).
+  - `npm run typecheck` (`tsc -b`): PASS (0 errors).
+  - `npm run test:validation`: PASS (16/16 unit tests in 459ms).
+  - `npm run build`: PASS (`dist/` generated in 2.74s).
+  - `npm run format:check`: PASS.
+
+## Step 17 — Long Chapter DOM Virtualization / Windowing — 2026-11-10
+
+- Implemented pure geometry module in src/readerGeometry.ts:
+  - calculatePageDimensions: Calculates exact rendered page width and height across max, width, height, and uto layout modes, incorporating viewport height and zoom scaling.
+  - computeOffsets: Calculates cumulative prefix tops, heights, and bottoms for all pages in a chapter. Uses measured DOM heights when elements are mounted, falling back to computed dimensions.
+  - getWindowRange: Computes the visible window [startIndex, endIndex] with a 3-screen viewport buffer (3 screens above, 3 screens below). Accurately calculates opSpacer and ottomSpacer heights. Enforces total height conservation invariant: opSpacer + sum(windowedHeights) + bottomSpacer === offsets[N - 1].bottom.
+  - Non-windowing fast path: chapters with <= 15 pages render all pages with 0 spacers, avoiding churn for short chapters.
+- Integrated into src/Reader.tsx:
+  - ReaderView:
+    - Replaced full DOM page mapping in continuous scroll mode with windowed slice chapter.pages.slice(startIndex, endIndex + 1) flanked by .reader-spacer-top and .reader-spacer-bottom.
+    - Maintained measuredHeights ref to cache actual rendered page heights from active DOM elements.
+    - Added updateWindow(force, targetPage) throttled by
+      equestAnimationFrame with a 1.0-screen scroll hysteresis, avoiding unnecessary React re-renders during smooth reading.
+    - Ensured
+      estore(anchor), goPage(n), and goChapter(ci) immediately center the window on the target page.
+    - Single-page and spread modes remain completely untouched.
+- Styled in src/style.css:
+  - .reader-spacer: Transparent, non-interactive block spacer maintaining layout stability.
+- Created ests/reader-geometry.spec.ts:
+  - 5 comprehensive unit tests covering dimension calculations, prefix offset sums, measured height overrides, small chapter bypass, and long chapter buffer/spacer math and invariants.
+  - Updated playwright.unit.config.ts to include
+    eader-geometry.spec.ts.
+- Verification:
+  - `npm run test:validation`: **21/21 unit tests PASS** (536ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.67s).
+  - `npm run format:check`: **PASS**.
+
+## Steps 06 & 11 — Decomposing Monolithic src/data.ts (Storage, Images, ImportScan) — 2026-11-10
+
+- Decomposed monolithic `src/data.ts` (~1,320 lines) into focused, single-responsibility modules:
+  - `src/storage.ts` (Step 06):
+    - Strongly typed `MangaDB` DBSchema defining `manga`, `summaries`, `covers`, `progress`, and `settings` stores.
+    - Lazy IndexedDB initialization with SSR/Node.js environment guard (`typeof indexedDB !== 'undefined'`).
+    - Narrow repository functions: `getManga`, `listLibrary`, `allManga`, `saveManga`, `saveProgress`, `deleteManga`, `clearLibrary`.
+    - Added `removeBookmark` and `getBookmarkedMangaIds` repository helpers to eliminate raw component database writes.
+    - Added `onMangaDelete` pub/sub event bus so `storage.ts` can signal deletion/clear without circular dependency on `importScan.ts`.
+    - Preserved unmutated-on-abort invariant: `saveManga` validates limits and only assigns committed `slug` and `updatedAt` to the input object after `tx.done` completes.
+    - Preserved `fileFor`, `access`, `sessionFiles`, and mapped `errorMessage`.
+  - `src/images.ts` (Step 13 prep):
+    - Centralized `imageFile` MIME and extension validation.
+    - `dimensions(file, signal)`: Extracts header dimensions or falls back to `Image` decode with timeout, cancellation, natural dimension assertions, and object URL revocation.
+    - `thumbnail(file)`: Safely creates canvas thumbnails with dimension limits, 2D context checking, webp encoding, and URL cleanup.
+  - `src/importScan.ts` (Step 11):
+    - Subscribes to `onMangaDelete` from `storage.ts` to abort and clear background dimension-preparation jobs on title deletion.
+    - `fromHandle`: Replaced unbounded recursive directory traversal with an explicit bounded `StackFrame` stack:
+      `const stack: StackFrame[] = [{ dir: handle, prefix: '', depth: 0 }]`.
+      Strictly enforces `limits.folderDepth` (64) and `limits.discoveryEntries` (100,000).
+    - Preserved native `DesktopHandle`, `fromDesktopFolder`, `fromFiles`, `droppedSources`, `splitSource`, `chapterGroups`.
+    - `indexSource`: Returns `{ m, issues, reused }` preserving reuse counter metrics for UI feedback.
+    - Bounded concurrency with `pooled` worker queue and progressive scan reporting.
+  - `src/data.ts`:
+    - Reduced from ~1,320 lines to a 68-line backward-compatible facade re-exporting all APIs to ensure zero regressions across existing components and tests.
+  - `src/Bookmarks.tsx`:
+    - Replaced direct `(await db).transaction('progress', 'readwrite')` and raw `db.getAll('progress')` with `removeBookmark()` and `getBookmarkedMangaIds()`.
+  - `src/SettingsPanel.tsx`:
+    - Cleaned up unused `db` import.
+- Unit Testing:
+  - Created `tests/storage-modular.spec.ts` with 9 comprehensive tests:
+    - `summary()` metrics computation.
+    - `errorMessage()` DOMException mapping and error fallbacks.
+    - `onMangaDelete()` subscriber registration and unregistration.
+    - `imageFile()` allowlisted formats and non-image rejection.
+    - `DesktopHandle` metadata initialization.
+    - `fromFiles()` grouped source generation.
+    - `saveManga()` abort and unmutated caller on limit violation.
+    - `chapterGroups()` natural chapter partitioning.
+    - `splitSource()` multi-title folder decomposition.
+  - Updated `playwright.unit.config.ts` testMatch to include `storage-modular.spec.ts`.
+- Verification:
+  - `npm run test:validation`: **30/30 unit tests PASS** (725ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.65s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Steps 07 & 08 — Explicit Upgrade Failure & Atomic Backup Restore — 2026-11-10
+
+- Implemented Step 07 (Explicit & Recoverable Database Upgrades):
+  - Extracted `migrateV1ToV2(tx, d)` in `src/storage.ts` using cursor iteration across `manga` records to populate `summaries`, `covers`, and `progress`.
+  - Wrapped `upgrade` in an async handler with explicit `try / catch`: calls `tx.abort()` and re-throws on migration failures, rolling back schema and data changes.
+- Implemented Step 08 (Atomic Backup Restore & Reading Progress Reset):
+  - `restoreBackup(backup: { manga: Manga[]; settings: Settings })` in `src/storage.ts`:
+    - Enforces concurrency lock `isRestoring` preventing overlapping restore operations.
+    - Pre-transaction validation: validates `backup.manga.length <= limits.titles`, validates each `manga` against `assertMangaLimits`, and parses `settings`.
+    - Preserves existing local directory handles, `localPath` desktop roots, and covers across backup restore.
+    - Generates collision-free slugs and prepares records in memory.
+    - Executes inside **one atomic IndexedDB transaction** across all 5 stores: `['manga', 'summaries', 'covers', 'progress', 'settings']`.
+    - Commits `settings` into `'global'` and commits all manga/summaries/covers/progress only when all records succeed; aborts and rolls back completely on any write error.
+  - `resetProgress()` in `src/storage.ts`:
+    - Resets `read: false` and `position: undefined` in `progress` store across titles in a single transaction.
+    - **Preserves all user bookmarks** (`p.bookmarks` kept intact).
+    - Updates summaries (`chaptersRead: 0`, `lastChapter: 0`, `hasProgress: false`) directly without rebuilding covers or rewriting manga records.
+  - `getStoredSettings()` and `saveStoredSettings(settings)` in `src/storage.ts`:
+    - Replaced raw `db.then(d => d.get/put('settings', ...))` in `src/App.tsx` with repository functions.
+  - `src/SettingsPanel.tsx`:
+    - Replaced un-atomic `saveManga` loops with `await restoreBackup(value)` and `await resetProgress()`.
+    - UI settings state updated only after transaction commit resolves.
+- Unit Testing:
+  - Added test in `tests/storage-modular.spec.ts` verifying `restoreBackup` pre-transaction limit rejection (`limits.titles` and `limits.chaptersPerTitle`) without database writes.
+  - Added test in `tests/storage-modular.spec.ts` verifying `migrateV1ToV2` cursor iteration, summary/cover/progress population, and manga record stripping.
+- Verification:
+  - `npm run test:validation`: **32/32 unit tests PASS** (599ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.64s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Step 09 — Observable Reading Progress Durability & Coalescing — 2026-11-10
+
+- Implemented Step 09 (Progress Durability & Save Coalescing):
+  - In `src/storage.ts`:
+    - Updated `saveProgress(m, index, position, read, bookmarks, updateLast)` to return a strongly typed `SaveProgressResult`: `'saved' | 'stale' | 'missing'`.
+    - Explicitly checks for missing chapter or missing summary (`'missing'`).
+    - Explicitly checks whether `s.indexedAt === m.updatedAt`; if modified/re-indexed, returns `'stale'` without overwriting newer state.
+    - Re-exported `SaveProgressResult` from `src/data.ts`.
+  - In `src/Reader.tsx`:
+    - Tracked `inFlight = useRef<Promise<SaveProgressResult> | null>(null)`, `snapshotRevision = useRef(0)`, and `committedRevision = useRef(0)`.
+    - Replaced disconnected string snapshot comparison with revision-ordered write coalescing in `flush()`:
+      - If an `inFlight` save is active, returns a chained promise that re-flushes if `dirty.current` became true during the save.
+      - On commit, updates `committedRevision.current = Math.max(committedRevision.current, targetRevision)`.
+      - On write failure or stale status, retains `dirty.current = true` if the revision was not superseded, and propagates rejections to callers.
+    - Updated `goChapter(index, reset)` to `await flush().catch(...)` to ensure previous chapter reading progress is durably committed to IndexedDB before route navigation.
+    - Updated `capture()`, `goPage()`, `toggleBookmark()`, and `markComplete()` to increment `snapshotRevision.current++`.
+    - Fire-and-forget periodic and blur flushes catch errors with `notify(errorMessage(e))`.
+    - `reader-before-update` listener in `Reader.tsx` receives the real rejected promise from `flush()`, preventing `applyUpdate()` from calling `location.reload()` if disk persistence fails.
+- Unit Testing:
+  - Added test in `tests/storage-modular.spec.ts` verifying `saveProgress` returns `'missing'` for out-of-bounds chapter index.
+  - Added test in `tests/storage-modular.spec.ts` verifying `saveProgress` rejects bookmarks exceeding `limits.bookmarksPerChapter` before opening transaction.
+  - Added test in `tests/storage-modular.spec.ts` testing 3-revision rapid in-flight write coalescing, verifying convergence to newest revision in 2 writes and unmutated dirty flag on completion.
+- Verification:
+  - `npm run test:validation`: **35/35 unit tests PASS** (752ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.72s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Native On-Disk Thumbnail Cache — 2026-11-10
+
+- Implemented Native On-Disk Thumbnail Cache:
+  - In `src-tauri/src/commands/cache.rs`:
+    - `save_thumbnail(app: AppHandle, id: String, bytes: Vec<u8>) -> Result<(), String>`: writes `%LOCALAPPDATA%\manga-reader\cache\thumbnails\<id>.webp` with a 10 MiB safety cap.
+    - `read_thumbnail(app: AppHandle, id: String) -> Result<tauri::ipc::Response, String>`: zero-copy binary IPC response serving thumbnail bytes directly to frontend; returns 0-byte payload on cache miss.
+    - `delete_thumbnail(app: AppHandle, id: String) -> Result<(), String>`: deletes thumbnail file on manga deletion.
+    - `clear_thumbnails(app: AppHandle) -> Result<(), String>`: removes thumbnail directory on library clear.
+    - Strict ID path traversal defense: `sanitize_id` preserves alphanumeric, hyphen, and underscore characters, and deterministically hex-encodes non-standard or oversized identifiers, completely preventing directory traversal (`..`, `/`, `\`).
+  - In `src-tauri/src/commands/mod.rs` & `src-tauri/src/lib.rs`:
+    - Exposed `pub mod cache;` and registered `save_thumbnail`, `read_thumbnail`, `delete_thumbnail`, `clear_thumbnails` in Tauri command handler.
+  - In `src/tauriBridge.ts`:
+    - Added `saveThumbnail`, `getThumbnail`, `deleteThumbnail`, `clearThumbnails` to `DesktopAPI` interface and implemented them in `TauriDesktopBridge` (with no-op fallbacks in `LegacyElectronDesktopBridge` and `WebDesktopBridge`).
+  - In `src/storage.ts`:
+    - Implemented `getCover(id: string): Promise<Blob | undefined>`: queries native desktop thumbnail cache first via `desktopAPI.getThumbnail(id)`, with fallback to IndexedDB and automatic lazy background migration to disk cache on desktop.
+    - Updated `getManga(id: string)` to read cover via `getCover(id)`.
+    - Updated `saveManga(m: Manga)` to cache cover thumbnail to disk via `desktopAPI.saveThumbnail` after successful IndexedDB commit.
+    - Updated `restoreBackup(backup)` to write restored covers to disk cache via `desktopAPI.saveThumbnail`.
+    - Updated `deleteManga(id: string)` to delete thumbnail via `desktopAPI.deleteThumbnail(id)`.
+    - Updated `clearLibrary()` to clear disk thumbnails via `desktopAPI.clearThumbnails()`.
+  - In `src/data.ts`:
+    - Re-exported `getCover` from `./storage`.
+  - In `src/App.tsx`:
+    - Replaced direct `db.then(d => d.get('covers', m.id))` in `Cover` component with `getCover(m.id)`.
+- Unit Testing:
+  - Added test in `tests/storage-modular.spec.ts` verifying `getCover()` queries native desktop thumbnail cache first, constructs `Blob` with `image/webp`, and falls back gracefully when absent.
+- Verification:
+  - `npm run test:validation`: **36/36 unit tests PASS** (763ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.68s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Step 12 & Step 13 — Removable Image Task Lifecycle & Centralized Safe Image Decoding — 2026-11-10
+
+- Implemented Step 12 (Removable Task Lifecycle for Page Images):
+  - In `src/imageQueue.ts`:
+    - Implemented `ImageQueue` with priority queueing, task cancellation handles, in-flight `AbortSignal` propagation, and deduplication by `${mangaId}:${updatedAt}:${pagePath}:${quality}` key.
+    - Bound queue capacity to `limits.queuedJobs` (64) and concurrency to mobile (1) vs desktop (4) limits.
+    - When `cancel(key)` is invoked:
+      - If the task is still waiting in queue, it is immediately spliced out without consuming a worker slot.
+      - If the task is running in-flight, its `AbortController.abort()` is triggered.
+    - Worker rejection resilience: slot decrement and subsequent task pumping are guaranteed via `finally` blocks, preventing any queue stalling on corrupted images.
+    - `clearImageQueue()` purges all queued tasks and aborts all in-flight workers.
+  - In `src/PageImage.tsx`:
+    - Replaced the monolithic uncancelable `jobs` array with `enqueueImage`.
+    - When an element scrolls out of view or unmounts, its `cancelTask()` is immediately called, dropping pending decodes and revoking existing object URLs.
+  - In `src/Reader.tsx`:
+    - Called `clearImageQueue()` upon chapter navigation (`goChapter`) and on reader unmount, dropping leftover queued decode tasks from previous chapters.
+  - In `src/data.ts`:
+    - Re-exported `enqueueImage`, `clearImageQueue`, `ImageQueue`, and `defaultImageQueue`.
+
+- Implemented Step 13 (Centralized Safe Image Decoding & Resource Cleanup):
+  - In `src/images.ts`:
+    - Implemented `downscaleImage(blob, targetWidth, targetHeight, signal)`:
+      - Safely wraps `createImageBitmap` with timeout and late-resolution closing `bitmap.close()`.
+      - Draws to offscreen canvas with null 2D context guards.
+      - Always resets canvas backing store (`canvas.width = 0; canvas.height = 0;`) in `finally`.
+      - Respects `AbortSignal` and releases `ImageBitmap` memory immediately on abort.
+    - Updated `thumbnail(file, signal)`:
+      - Added single-settlement timeout and abort listener wrapper.
+      - Clears image event handlers (`onload = null; onerror = null; src = ''`) on finish.
+      - Resets canvas dimensions in `finally` and always revokes object URLs.
+    - Updated `dimensions(file, signal)`:
+      - Validates `signal.throwIfAborted()` before header check and before decoder fallback.
+  - In `src/PageImage.tsx`:
+    - Replaced embedded canvas downscaling code with centralized `downscaleImage`.
+  - In `src/data.ts`:
+    - Re-exported `downscaleImage`.
+
+- Unit Testing:
+  - Created `tests/image-lifecycle.spec.ts` with 12 comprehensive unit tests:
+    - Step 12: Enqueue and slot release, queue eviction before execution, in-flight AbortSignal cancellation, priority ordering (visible tasks first), deduplication by key, worker rejection resilience, capacity bounding at `limits.queuedJobs`, and `clear()` teardown.
+    - Step 13: `downscaleImage` non-browser fallback, `downscaleImage` AbortSignal rejection, `dimensions` AbortSignal rejection, and `thumbnail` AbortSignal rejection.
+  - Updated `playwright.unit.config.ts` to include `image-lifecycle.spec.ts`.
+
+- Verification:
+  - `npm run test:validation`: **48/48 unit tests PASS** (824ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.77s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Step 10, Step 14 & Step 15 — Cross-Tab Concurrency Ownership, Import State Machine & Bounded Diagnostics — 2026-11-10
+
+- Implemented Step 10 (Concurrency Ownership Across Tabs & Jobs):
+  - In `src/model.ts`:
+    - Added `revision?: number` to `Manga` and `Summary`.
+  - In `src/storage.ts`:
+    - `saveManga` now monotonically increments `revision: (existing?.revision ?? 0) + 1` and commits it to both `manga` and `summaries` stores.
+    - `summary(m)` carries `revision: m.revision ?? 1`.
+    - `saveProgress` enforces revision consistency `(m.revision && s.revision && s.revision !== m.revision)` alongside timestamp checks, detecting same-millisecond stale writes.
+    - Implemented atomic `addBookmark(mangaId, chapterName, position)` and `removeBookmark(mangaId, chapterName, position)` running in dedicated `progress` transactions with `limits.bookmarksPerChapter` validation, preventing array clobbering across tabs.
+    - Initialized `syncChannel` (`BroadcastChannel('manga-reader:sync')`) to broadcast `{ type: 'library' | 'progress', id }` events.
+  - In `src/importScan.ts`:
+    - `backgroundJobs` now stores lightweight records `{ id, revision, updatedAt, controller }` instead of holding entire `Manga` objects.
+    - `prepareChapter` checks both `stored.updatedAt === m.updatedAt` and `stored.revision === m.revision` before persisting dimensions, guaranteeing that background scans cannot overwrite re-indexed titles or resurrect deleted data.
+    - Multi-tab locking: `drainBackground` guards execution using `navigator.locks.request('manga-reader:bg-prep', { ifAvailable: true })` so only a single tab processes background preparation at any given time.
+  - In `src/Reader.tsx`:
+    - Replaced in-memory bookmark array mutations in `toggleBookmark` with atomic calls to `addBookmark` and `removeBookmark`.
+  - In `src/App.tsx`:
+    - Listens to `syncChannel` and refreshes library on cross-tab modifications.
+
+- Implemented Step 14 (Explicit Import State Machine):
+  - Created `src/useImport.ts`:
+    - Models import lifecycle with a strongly typed discriminated union `ImportState`: `'idle' | 'discovering' | 'preview' | 'indexing' | 'complete' | 'failed'`.
+    - Tracks `activeOp.current` counter so callbacks from canceled or superseded operations are ignored.
+    - Guarantees staged scans (`discardScan`) are disposed on exit, unmount, or error.
+    - Reports completed titles separately from failed titles with an itemized `retry` plan.
+  - In `src/App.tsx`:
+    - Replaced raw flags (`busy`, `scan`, `preview`, `report`, `locked`, `controller`) and ~100 lines of orchestration with `useImport`.
+
+- Implemented Step 15 (Bounded Diagnostics & User Recovery):
+  - Created `src/diagnostics.ts`:
+    - Bounded 50-entry ring buffer with automatic eviction of older records.
+    - 2000ms sliding-window deduplication of repeated errors.
+    - Drops expected user cancellations and `AbortError`s to keep logs focused on actionable problems.
+    - `sanitizeIdentifier`: Truncates full filesystem paths to leaf directory/file names.
+  - In `src/useImport.ts`:
+    - Records diagnostics on discover and import failures with durations and safe identifiers.
+  - In `src/SettingsPanel.tsx`:
+    - Added a `Diagnostics` section under the `Storage` tab with an "Export diagnostic log" button for instant user troubleshooting.
+
+- Unit Testing:
+  - Created `tests/concurrency-diagnostics.spec.ts` with 6 unit tests:
+    - Step 10: Revision counter preservation in `summary()` and legacy default fallback.
+    - Step 15: 50-entry maximum bounding, 2000ms deduplication, AbortError dropping, and leaf path sanitization.
+  - Updated `playwright.unit.config.ts`.
+
+- Verification:
+  - `npm run test:validation`: **54/54 unit tests PASS** (993ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated cleanly in 2.78s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Settings and Reader Bars Typography & Contrast Refinements — 2026-11-10
+
+- UI & Theme Contrast Refinements:
+  - In `src/style.css`:
+    - Light mode: Darkened `--text` and body text from `#27272a` to `#09090b`, and `--muted` from `#73737b` to `#3f3f46` for crisp, high-contrast readability.
+    - Dark mode: Lightened `--text` and body text from `#e8e8e9` to `#fafafa`, and `--muted` from `#a1a1aa` to `#d4d4d8` for high legibility against dark surfaces without eye fatigue.
+- Font Size Normalization to Strict 16px:
+  - In `src/style.css`:
+    - Updated `.dialog-heading h2`, `.modal-heading .dialog-heading h2`, `.settings-panel h3`, and `.settings-tab-body section h3` to `16px; font-weight: 600;`.
+    - Updated `.reader-title` and `.organized-bar .reader-title` to `16px; font-weight: 600;` across all responsive breakpoints.
+    - Updated `.bar-popover-panel h3` to `16px; font-weight: 600;`.
+  - In `src/controls.css`:
+    - Added explicit rule locking Settings top bar (`.settings-panel`, `.modal-heading .dialog-heading h2`, `.settings-tabs button`, `.settings-tab-body section h3`) and auto-hiding Reader top and bottom bars (`.reader-bar`, `.reader-top`, `.reader-bottom`, `.reader-title`, `.current-page-input`, `.total-page-count`, `.zoom-trigger`, `select`, `.bar-popover-panel`) to strictly `16px !important`.
+
+- Verification:
+  - `npm run test:validation`: **54/54 unit tests PASS** (852ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated in 2.72s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Settings Storage Modal Clean-up (Desktop / Native Transition) — 2026-11-10
+
+- In `src/SettingsPanel.tsx`:
+  - Removed browser PWA specific rows: "Offline app shell" and "Storage protection" from `<dl className="storage-stats">`.
+  - Removed "Protect local storage" button and unused `ShieldCheck` icon import.
+  - Removed obsolete state hooks (`persisted`, `protecting`, `offline`), `protect()` handler, and service-worker / browser persistence queries from `updateStorage()`.
+  - Removed browser PWA offline shell text from the About tab and updated storage descriptions to reflect the Windows desktop app (native thumbnail disk cache and local application database).
+- Verification:
+  - `npm run test:validation`: **54/54 unit tests PASS** (755ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (SettingsPanel chunk reduced to 18.05 kB).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Appearance Font Size Controls (Titles & UI Font Size) — 2026-11-10
+
+- In `src/model.ts`:
+  - Added `fontSizeTitle: number` and `fontSizeUi: number` to `Settings` interface.
+  - Initialized both to default `15` in `defaults`.
+- In `src/validation.ts`:
+  - Added parsing, sanitization, and finite clamping (10px–36px) with fallback to default 15px in `parseSettings()`.
+- In `src/App.tsx`:
+  - Dynamically sets CSS variables `--font-size-ui` and `--font-size-title` on `document.documentElement` inside settings sync effect.
+- In `src/style.css` & `src/controls.css`:
+  - Configured `:root` and `body` to inherit `var(--font-size-ui, 15px)` and headings/titles to `var(--font-size-title, 15px)`.
+- In `src/SettingsPanel.tsx`:
+  - Added "Headings & titles font size" and "UI font size (Inter)" dropdowns under Settings > Appearance with options 12px–24px (15px marked as Default).
+- In `tests/validation.spec.ts`:
+  - Added unit test assertions verifying default values (15px), clamping bounds, and custom size preservation.
+- Verification:
+  - `npm run test:validation`: **54/54 unit tests PASS** (915ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated in 2.75s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Frontpage Manga Shelf Card Layout & Re-link State Resolution — 2026-11-10
+
+- In `src/App.tsx`:
+  - Restructured shelf manga card into three distinct sections under `.manga-card`:
+    - Top clickable container (`.manga-open`):
+      - Left: `.manga-card-left` containing `<Cover m={m} />`, spanning top-to-bottom of the section with `object-fit: cover` and `object-position: top center`.
+      - Right: `.manga-card-right` containing `.manga-card-title-row` (title on top, `{chaptersRead} / {chapterCount}` at right corner) and centered `.reading-progress`.
+    - Bottom section (`.manga-card-bottom`):
+      - Left: Info button with Info SVG and "Info" text linking to `mangaDetailsPath(m)`.
+      - Right: Triple-dot options dropdown menu (`details.card-menu`).
+      - If `needs.has(m.id)`: Hides Info button/icon and shows "Re-link needed" button. Clicking "Re-link needed" requests permission directly on the existing handle via `access(m, true)` (resolving access in one click when permission was pending), falling back to directory picker if re-selection is needed.
+- In `src/validation.ts`:
+  - Updated `parseSummary(value, options)` with `preserveHardwarePointers: boolean` to retain `handle` pointer from IndexedDB summaries store.
+- In `src/storage.ts`:
+  - Updated `listLibrary()` to pass `{ preserveHardwarePointers: true }` so summaries returned to `App.tsx` preserve their directory handles.
+  - Updated `access(m)` to fall back to `getManga(m.id)` when `m.handle` or `m.localPath` is absent on a lightweight summary, preventing false "Re-link needed" state after reading or re-linking.
+- In `src/importScan.ts`:
+  - Updated `indexSource()` to persist scanned/relinked titles via `await saveManga(m)` and maintain `sessionFiles`.
+- In `src/style.css`:
+  - Styled `.manga-card`, `.manga-open`, `.manga-card-left .cover`, `.manga-card-title-row`, `.manga-card-counter`, `.manga-card-bottom`, `.manga-info-btn`, and `.relink-needed-btn`.
+- In `tests/validation.spec.ts`:
+  - Added unit test asserting `parseSummary` preserves `handle` when `preserveHardwarePointers: true`.
+- In `src/App.tsx`:
+  - Added `positionCardMenu(details)` helper computing available viewport space below and above the trigger button.
+  - Attached position calculation to `summary.onPointerDown`, `details.onToggle`, and global `resize` / `scroll` listeners to ensure the menu renders above the button when near the bottom of the viewport and flips below when space permits.
+  - Conditionally rendered "Re-link / re-index" button in the three-dot popover menu only when `needs.has(m.id)` is true, hiding it when folder access is already valid.
+- In `src/style.css`:
+  - Added `.card-menu.popover-top .menu-popover` rule placing the popover menu 6px above the summary button (`bottom: calc(100% + 6px); top: auto`).
+- In `src/model.ts` & `src/validation.ts`:
+  - Added `fontSizeButton` to `Settings` interface and `defaults` (default 15px, clamped 10-36px).
+  - Validated and clamped `fontSizeButton` in `parseSettings()`.
+- In `src/App.tsx`:
+  - Bound `--font-size-button` dynamically on `document.documentElement` alongside `--font-size-ui` and `--font-size-title`.
+- In `src/SettingsPanel.tsx`:
+  - Renamed "UI font size (Inter)" label to "UI font size".
+  - Added "Button font size" setting dropdown in Appearance tab.
+- In `src/style.css` & `src/controls.css`:
+  - Linked `.library-footer` and `.library-footer span:first-child` to `var(--font-size-ui, 15px)`.
+  - Added `@font-face` declaration for `Inter_24pt-Bold.ttf` with `font-weight: 700`.
+  - Applied bold weight (`font-weight: 700`) to `label` and `.label`, and regular weight (`font-weight: 400`) to `option`, `.dropdown-item`, and `select`.
+  - Bound `button`, `.dropdown-trigger`, `.chapter-select`, `.zoom-trigger`, `summary.icon-button`, `.icon-button`, etc., to `var(--font-size-button, 15px)`.
+  - Scaled button SVG icons proportionally with `var(--font-size-button)` (`1.15em` / `calc(...)`, dropdown chevron `0.933em`, zoom menu chevron `0.8em`, close icon `1.33em`).
+- In `tests/validation.spec.ts`:
+  - Verified default, bounded clamping, and custom settings preservation for `fontSizeButton`.
+- In `src/App.tsx`:
+  - Restructured `manga-card-right` into top aligned block (`manga-card-right-top` with `manga-card-title-row` and `reading-progress`) and bottom aligned block (`manga-card-right-bottom`).
+  - Added formatted `"Added on DD/MM/YYYY"` text (`formatAddedDate(m.addedAt)`).
+  - Added icon-based bookmark toggle button to bookmark the manga itself (`toggleMangaBookmark`), integrated with `getBookmarkedMangaIds`, `addBookmark`, and `removeBookmark`.
+- In `src/style.css` & `src/controls.css`:
+  - Styled `manga-card-right` with `justify-content: space-between` and `manga-card-right-top` with `gap: 14px`.
+  - Added `.manga-card:hover .reading-progress span` and `.manga-open:hover .reading-progress span` turning progress bar fill blue (`#2563eb` light / `#3b82f6` dark) while retaining the full track background.
+  - Styled `.manga-card-right-bottom`, `.manga-card-date`, and `.manga-bookmark-btn` with reactive hover and active accent fill states.
+- In `src/App.tsx`:
+  - Replaced "Added on" text in manga card with user-provided `CalendarIcon` SVG.
+  - Added space-aware, efficient `DateTooltip` component that dynamically tests viewport bounds (`getBoundingClientRect()`) to position above/below and align left/right.
+  - Displays `"Manga was added on {whole date}"` (`formatWholeDate`) on hover/focus over the calendar icon and date.
+  - Removed duplicate `formatWholeDate`, `CalendarIcon`, and `DateTooltip` definitions.
+- In `src/style.css` & `src/controls.css`:
+  - Ensured UI font size (`--font-size-ui`) controls the date badge, calendar icon, space-aware tooltip, bookmark icon, info button, triple dot menu trigger, and popover menus along with their SVG icons.
+  - Excluded manga card UI controls from `--font-size-button` so reader buttons scale independently from shelf card controls.
+  - Added styles and animations for `.manga-card-date-badge`, `.manga-card-calendar-icon`, and `.space-tooltip`.
+- In `src/model.ts` & `src/validation.ts`:
+  - Added optional `mangaBookmark?: boolean` to `Position` interface.
+  - Updated `matchingPosition()` and `parsePosition()` to preserve `mangaBookmark: true` on manga-level bookmarks and strictly validate that `mangaBookmark` is boolean when provided.
+- In `src/storage.ts` & `src/data.ts`:
+  - Added `getMangaBookmarkedIds()` to distinguish manga with manga-level bookmarks from titles with reader-only page bookmarks.
+  - Updated `addBookmark()` and `removeBookmark()` to handle manga-level bookmarks cleanly without clobbering reader page bookmarks.
+- In `src/App.tsx`:
+  - Updated `toggleMangaBookmark()` to bookmark the manga with the 1st page of the 1st chapter (`chapter: 0`, `page: 0`, `fraction: 0`, `mangaBookmark: true`).
+  - Added sync listener to update `bookmarkedIds` reactively when bookmarks change.
+- In `src/Bookmarks.tsx`:
+  - When `mark.position.mangaBookmark` is true, renders `<span className="bookmark-page-number">Manga Bookmarked</span>` instead of showing chapter name or page number.
+  - Linked page number span to explicit class `.bookmark-page-number`.
+  - Updated `key(b)` to differentiate manga-level bookmarks and prevent collision with chapter 0 page 0 reader bookmarks.
+  - Added `syncChannel` reactive listener to reload bookmarks on progress changes.
+- In `src/style.css` & `src/controls.css`:
+  - Linked `.bookmark-caption-bottom`, `.bookmark-caption-bottom p`, and `.bookmark-page-number` to `var(--font-size-ui, 15px) !important;`.
+  - Linked `.bookmark-navigation`, `.bookmark-navigation > a`, and `.bookmark-navigation button` to `var(--font-size-ui, 15px) !important;`, with chevron SVG icons scaled by `calc(var(--font-size-ui, 15px) * 1.1)`.
+  - Linked `.library-footer`, `.library-footer span`, and `.library-footer a` to `var(--font-size-ui, 15px) !important;`, ensuring both "By Vivek Kr. Poddar · v..." and "A quieter way to read." resize strictly with UI font size.
+- In `src/controls.css` & `src/style.css`:
+  - Removed all `onhover` and `onactive` `var(--line-hover)` / `var(--line-hover) !important` rules across buttons, inputs, tabs, and dropdown triggers.
+  - Implemented sticky bottom footer layout: `#root` configured with `min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column;`, `.library-main` with `flex: 1 0 auto; display: flex; flex-direction: column;`, and `.library-footer` with `margin-top: auto;`. The footer sticks firmly to the visible viewport bottom when empty or content is short, while naturally remaining below content with margin when data is present.
+  - Added tab and toolbar styles for `.bookmarks-toolbar`, `.bookmark-tabs`, `.bookmark-tab-button`, `.bookmark-tab-count`, and `.shelf-sort.bookmark-sort`, along with mobile responsive layout.
+- In `src/Bookmarks.tsx`:
+  - Added tab-based section controls for "Manga Bookmarks" and "Individual Bookmarks" displaying live item counts.
+  - Added bookmarks sorting dropdown supporting "Newest added", "Oldest added", "Title A–Z", "Title Z–A", and "Chapter / Page".
+  - Added page heading on the Bookmarks page matching library aesthetics and per-tab empty state descriptions.
+- In `src/model.ts` & `src/validation.ts`:
+  - Added optional `timestamp?: number` on `Position` to record bookmark creation time.
+  - Validated and preserved `Position.timestamp` across parsing and position matching with fallback to manga timestamps.
+- In `src/App.tsx` & `src/Reader.tsx`:
+  - Assigned `timestamp: Date.now()` when adding manga-level bookmarks and chapter-page bookmarks.
+- Verification:
+  - `tests/validation.spec.ts`: Added unit tests verifying `Position.timestamp` parsing and validation.
+  - `npm run test:validation`: **57/57 unit tests PASS** (845ms).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (dist/ generated in 2.66s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Delete buttons hover styling and accidental delete control — 2026-11-10
+
+- In `src/controls.css` & `src/style.css`:
+  - Styled delete buttons (`.bookmark-card .bookmark-remove`, `.bookmark-remove`, `button.danger-text`, and `.menu-popover button.danger-text`) with red background (`#dc2626` light / `#b91c1c` dark), slightly darker red border (`#991b1b` light / `#7f1d1d` dark), and crisp white text and SVG icon stroke/fill on hover and focus-visible.
+  - Preserved smooth ease-in-out CSS transitions (`160ms ease` in `controls.css` and `0.18s ease` in `style.css`) across `background-color`, `border-color`, `color`, and `box-shadow`.
+- In `src/model.ts` & `src/validation.ts`:
+  - Added `confirmDelete?: boolean` to `Settings` interface and initialized `confirmDelete: false` in `defaults`.
+  - Added strict validation and defaulting in `parseSettings()` ensuring invalid values fall back to safe default (`false`).
+- In `src/SettingsPanel.tsx`:
+  - Added "Accidental delete control" section under the Reading settings tab with a "Confirm before deleting" toggle checkbox and helper description.
+- In `src/App.tsx`:
+  - Updated the "Remove" option in the manga card popover menu: when `settings.confirmDelete` is true, opens the confirmation `Modal`; when false, deletes immediately without popup prompt.
+- In `src/Bookmarks.tsx`:
+  - Imported `Modal` and added `confirmMark` state.
+  - When `settings.confirmDelete` is true, clicking the remove trash icon on a bookmark card opens a confirmation modal detailing the manga title and bookmark target ("Remove bookmark" vs "Cancel"); when false, removes immediately without popup prompt.
+- Verification:
+  - `tests/validation.spec.ts`: Added unit tests asserting `confirmDelete` default (`false`), preservation of `true`/`false`, and sanitation of invalid non-boolean values.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **57/57 unit tests PASS** (878ms).
+  - `npm run build`: **PASS** (built in 2.71s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Confirmation modal typography, close button design, and layout alignment — 2026-11-10
+
+- In `src/controls.css` & `src/style.css`:
+  - Unlinked modal title from UI and headings font size (`.shortcuts-modal .dialog-heading h2`, `.import-modal .dialog-heading h2`, `.confirm-modal .dialog-heading h2`), fixing it at 18px (`font-size: 20px !important; font-weight: 600; line-height: 1.3; margin: 0;`).
+  - Positioned modal title on the left and close button on the right inside `.dialog-heading` (`display: flex; justify-content: space-between; align-items: center;`).
+  - Added a thin border below the title and close button row (`border-bottom: 1px solid var(--line); padding-bottom: 14px; margin-bottom: 16px;`).
+  - Styled description message (`Dialog.Description`, `p`) directly below the thin border with clean line-height and margin (`line-height: 1.55; margin: 0 0 20px 0; color: var(--muted);`).
+  - Unified the close button (`.close-btn`) with the trash/delete button design: 32px square, 16px icon, `var(--surface)` background, `1px solid var(--line)` border, and identical hover effect (red background `#dc2626` / `#b91c1c` dark, darker red border `#991b1b` / `#7f1d1d` dark, white icon `#ffffff`).
+  - Configured modal button rows (`.shortcuts-modal .button-row`, `.import-modal .button-row`, `.confirm-modal .button-row`) with `display: flex; justify-content: space-between; align-items: center; width: 100%;`, placing "Remove bookmark" / "Remove title" on the left side and "Cancel" on the right side.
+  - Applied `.confirm-modal` width constraint (`width: min(440px, calc(100vw - 32px)) !important;`) for compact, proportionate confirmation dialogs.
+  - Unified ease-in-ease-out CSS transitions across all modal buttons, close buttons, and interactive triggers (`160ms ease` in `controls.css`, `0.18s ease` in `style.css`).
+- In `src/ImportDialogs.tsx`, `src/Bookmarks.tsx`, and `src/App.tsx`:
+  - Added optional `className?: string` prop to `Modal`.
+  - Scaled modal close icon to `<X size={16} />` to match `<Trash2 size={16} />` optical balance.
+  - Passed `className="confirm-modal"` to confirmation modals in `Bookmarks.tsx` and `App.tsx`.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **57/57 unit tests PASS** (799ms).
+  - `npm run build`: **PASS** (built in 2.59s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Sort By UI Font Size and Toggle Options Button Font Size Alignment — 2026-11-10
+
+- In `src/controls.css` & `src/style.css`:
+  - Linked the "Sort by" label and text (`.shelf-sort`, `.shelf-sort > span`, `.shelf-sort.bookmark-sort`, `.shelf-sort.bookmark-sort > span`) to UI font size (`var(--font-size-ui, 15px) !important;`).
+  - Linked the Sort by dropdown trigger button and toggle options (`.shelf-sort .dropdown-trigger`, `.shelf-sort .dropdown-trigger span`, `.shelf-sort.bookmark-sort .dropdown-trigger`, `.shelf-sort.bookmark-sort .dropdown-trigger span`, `.dropdown-trigger`, `.dropdown-trigger span`, `.dropdown-content`, `.dropdown-item`, `.dropdown-item span`, `option`, `select`) to Button font size (`var(--font-size-button, 15px) !important;`).
+  - Proportional SVG icon scaling via Button font size for `.dropdown-trigger .dropdown-chevron svg`, `.dropdown-chevron svg`, `.dropdown-check svg`, and `.dropdown-scroll svg` (`calc(var(--font-size-button, 15px) * 0.933)`).
+  - Adjusted `.shelf-sort .dropdown-trigger` sizing to `min-width: 164px; width: auto; max-width: 100%;` and `.dropdown-item` min-height to `calc(var(--font-size-button, 15px) * 2.1)` to scale comfortably without text truncation at larger button font sizes.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **57/57 unit tests PASS** (828ms).
+  - `npm run build`: **PASS** (built in 2.61s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Tab Pill Capsule and Badge Styling (Matching make tabs look like this.png) — 2026-11-10
+
+- In `src/Bookmarks.tsx`:
+  - Added `'all'` to `BookmarkTab` union (`'all' | 'manga' | 'individual'`), setting default tab to `'all'`.
+  - Updated tab layout to 3 tabs: "All" with total count, "Manga" with manga count, and "Manga Chapters" with individual chapter count, matching `make tabs look like this.png`.
+  - Updated empty states to gracefully support 'all', 'manga', and 'individual' views.
+- In `src/controls.css` & `src/style.css`:
+  - Styled `.bookmark-tabs` outer container as a dark rounded pill capsule (`background: #1c1d21; border: 1px solid rgba(255, 255, 255, 0.07); border-radius: 10px; padding: 4px; gap: 4px;` in dark mode; `#f1f2f5` in light mode).
+  - Styled `.bookmark-tab-button`:
+    - Inactive tab: transparent background, muted text (`#8f96a3` dark / `#6b7280` light), subtle hover state.
+    - Active tab (`[aria-selected='true']`): charcoal pill highlight (`#2b2c31` dark / `#ffffff` light), bright text (`#ffffff` dark / `#111827` light), border radius 7px, subtle shadow.
+  - Styled `.bookmark-tab-count` badge as a rounded rectangle (`border-radius: 5px; padding: 2px 6px; font-size: 12px;`):
+    - Inactive badge: subtle border (`rgba(255, 255, 255, 0.1)` dark / `rgba(0, 0, 0, 0.1)` light), matching muted text color.
+    - Active badge: border (`rgba(255, 255, 255, 0.18)` dark / `rgba(0, 0, 0, 0.14)` light), dark translucent background, bright white text.
+- Verification:
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **57/57 unit tests PASS** (815ms).
+  - `npm run build`: **PASS** (built in 2.73s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).

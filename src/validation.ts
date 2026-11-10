@@ -74,6 +74,10 @@ export function matchingPosition(
     page: validIndex,
     path: pages[validIndex].path,
     fraction: Math.max(0, Math.min(1, Number.isFinite(p.fraction) ? p.fraction : 0)),
+    ...(p.mangaBookmark ? { mangaBookmark: true } : {}),
+    ...(typeof p.timestamp === 'number' && Number.isFinite(p.timestamp)
+      ? { timestamp: p.timestamp }
+      : {}),
   };
 }
 
@@ -105,11 +109,31 @@ export function parsePosition(
     validatedPath = validateRelativePath(value.path);
   }
 
+  let mangaBookmark: boolean | undefined;
+  if ('mangaBookmark' in value && value.mangaBookmark !== undefined) {
+    if (typeof value.mangaBookmark !== 'boolean') {
+      throw new ValidationError('Position mangaBookmark must be a boolean.');
+    }
+    if (value.mangaBookmark) {
+      mangaBookmark = true;
+    }
+  }
+
+  let timestamp: number | undefined;
+  if ('timestamp' in value && value.timestamp !== undefined) {
+    if (typeof value.timestamp !== 'number' || !Number.isFinite(value.timestamp)) {
+      throw new ValidationError('Position timestamp must be a finite number.');
+    }
+    timestamp = value.timestamp;
+  }
+
   return matchingPosition(
     {
       page: value.page,
       path: validatedPath,
       fraction,
+      ...(mangaBookmark ? { mangaBookmark: true } : {}),
+      ...(timestamp !== undefined ? { timestamp } : {}),
     },
     pages,
     oldPages,
@@ -334,7 +358,10 @@ export function parseManga(
  * Validates a Summary record read from IndexedDB.
  * Returns undefined if the record is missing essential identifiers.
  */
-export function parseSummary(value: unknown): Summary | undefined {
+export function parseSummary(
+  value: unknown,
+  options: { preserveHardwarePointers?: boolean } = {},
+): Summary | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.id !== 'string' || !value.id.trim()) return undefined;
   if (typeof value.title !== 'string' || !value.title.trim()) return undefined;
@@ -389,6 +416,11 @@ export function parseSummary(value: unknown): Summary | undefined {
       ? value.localPath.trim()
       : undefined;
 
+  const handle =
+    options.preserveHardwarePointers && value.handle && typeof value.handle === 'object'
+      ? (value.handle as Summary['handle'])
+      : undefined;
+
   const sort =
     value.sort === 'name' || value.sort === 'reverse' || value.sort === 'natural'
       ? value.sort
@@ -407,6 +439,7 @@ export function parseSummary(value: unknown): Summary | undefined {
     addedAt,
     updatedAt,
     ...(localPath ? { localPath } : {}),
+    ...(handle ? { handle } : {}),
     ...(sort ? { sort } : {}),
   };
 }
@@ -464,6 +497,24 @@ export function parseSettings(value: unknown): Settings {
         ? 'stop'
         : defaults.endAction;
 
+  const fontSizeTitle =
+    typeof s.fontSizeTitle === 'number' && Number.isFinite(s.fontSizeTitle)
+      ? Math.max(10, Math.min(36, Math.round(s.fontSizeTitle)))
+      : defaults.fontSizeTitle;
+
+  const fontSizeUi =
+    typeof s.fontSizeUi === 'number' && Number.isFinite(s.fontSizeUi)
+      ? Math.max(10, Math.min(36, Math.round(s.fontSizeUi)))
+      : defaults.fontSizeUi;
+
+  const fontSizeButton =
+    typeof s.fontSizeButton === 'number' && Number.isFinite(s.fontSizeButton)
+      ? Math.max(10, Math.min(36, Math.round(s.fontSizeButton)))
+      : defaults.fontSizeButton;
+
+  const confirmDelete =
+    typeof s.confirmDelete === 'boolean' ? s.confirmDelete : (defaults.confirmDelete ?? false);
+
   const shelfSort: Settings['shelfSort'] =
     s.shelfSort === 'recent' ||
     s.shelfSort === 'title' ||
@@ -488,6 +539,10 @@ export function parseSettings(value: unknown): Settings {
     spread,
     singleCover,
     endAction,
+    fontSizeTitle,
+    fontSizeUi,
+    fontSizeButton,
+    confirmDelete,
     ...(shelfSort ? { shelfSort } : {}),
   };
 }

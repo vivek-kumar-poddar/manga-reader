@@ -19,7 +19,12 @@ pub fn run() {
             commands::fs::select_folder,
             commands::fs::list_folder,
             commands::fs::read_file,
+            commands::fs::get_image_dimensions,
             commands::window::set_progress_bar,
+            commands::cache::save_thumbnail,
+            commands::cache::read_thumbnail,
+            commands::cache::delete_thumbnail,
+            commands::cache::clear_thumbnails,
         ])
         .setup(|app| {
             if cfg!(debug_assertions) {

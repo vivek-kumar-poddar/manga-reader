@@ -1,8 +1,12 @@
 import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fileFor, errorMessage, type Manga, type Page } from './data';
-import { limits, assertImageDimensions, withinTime } from './limits';
+import { limits, assertImageDimensions } from './limits';
+import { enqueueImage, type CancelHandle } from './imageQueue';
+import { downscaleImage } from './images';
+
 const watched = new Map<Element, (visible: boolean) => void>();
 let observer: IntersectionObserver | undefined;
+
 function observe(element: Element, callback: (visible: boolean) => void) {
   observer ??= new IntersectionObserver(
     (entries) => {
@@ -21,26 +25,7 @@ function observe(element: Element, callback: (visible: boolean) => void) {
     }
   };
 }
-const jobs: (() => Promise<void>)[] = [];
-let active = 0;
-function pump() {
-  const limit = matchMedia('(max-width:700px)').matches
-    ? limits.mobilePageConcurrency
-    : limits.desktopPageConcurrency;
-  while (active < limit && jobs.length) {
-    active++;
-    void jobs.shift()!().finally(() => {
-      active--;
-      pump();
-    });
-  }
-}
-function queue(task: () => Promise<void>) {
-  if (jobs.length >= limits.queuedJobs) return false;
-  jobs.push(task);
-  pump();
-  return true;
-}
+
 export default memo(function PageImage({
   m,
   page,
@@ -62,103 +47,81 @@ export default memo(function PageImage({
   const [retry, setRetry] = useState(0);
   const reportRef = useRef(report);
   reportRef.current = report;
+
   useEffect(() => {
     if (page.dimensionsPending) return;
     let live = true,
       wanted = false,
-      loading = false,
+      cancelTask: CancelHandle | null = null,
       objectUrl = '';
+
     const release = () => {
+      if (cancelTask) {
+        cancelTask();
+        cancelTask = null;
+      }
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = '';
       if (live) setUrl('');
     };
+
     const load = () => {
-      if (loading || objectUrl || !wanted) return;
-      loading = true;
-      const accepted = queue(async () => {
-        try {
-          if (!live || !wanted) return;
-          assertImageDimensions(page.width, page.height);
-          let blob: Blob = await fileFor(m, page);
-          if (
-            lowQuality &&
-            matchMedia('(max-width:700px)').matches &&
-            page.width > 1000 &&
-            page.width * page.height <= limits.imagePixels &&
-            Math.max(page.width, page.height) <= limits.imageSide &&
-            'createImageBitmap' in window
-          ) {
-            try {
-              let expired = false;
-              const task = createImageBitmap(blob, {
-                resizeWidth: 1000,
-                resizeHeight: Math.max(1, Math.round((page.height * 1000) / page.width)),
-                resizeQuality: 'medium',
-              });
-              // A timed-out decoder may still resolve; release its late bitmap.
-              void task.then(
-                (bitmap) => {
-                  if (expired) bitmap.close();
-                },
-                () => {},
-              );
-              const bitmap = await withinTime(task, limits.imageTimeoutMs, 'Resizing image').catch(
-                (error) => {
-                  expired = true;
-                  throw error;
-                },
-              );
-              if (!live || !wanted) {
-                bitmap.close();
-                return;
-              }
-              const canvas = document.createElement('canvas');
+      if (objectUrl || !wanted) return;
+      const taskKey = `${m.id}:${m.updatedAt}:${page.path}:${lowQuality ? 'low' : 'full'}`;
+      const cancel = enqueueImage({
+        key: taskKey,
+        priority: 10,
+        run: async (signal) => {
+          try {
+            if (!live || !wanted || signal.aborted) return;
+            assertImageDimensions(page.width, page.height);
+            let blob: Blob = await fileFor(m, page);
+            if (!live || !wanted || signal.aborted) return;
+
+            if (
+              lowQuality &&
+              typeof matchMedia === 'function' &&
+              matchMedia('(max-width:700px)').matches &&
+              page.width > 1000 &&
+              page.width * page.height <= limits.imagePixels &&
+              Math.max(page.width, page.height) <= limits.imageSide
+            ) {
               try {
-                try {
-                  canvas.width = bitmap.width;
-                  canvas.height = bitmap.height;
-                  const context = canvas.getContext('2d');
-                  if (!context) throw new Error('Image resizing is unavailable.');
-                  context.drawImage(bitmap, 0, 0);
-                } finally {
-                  bitmap.close();
-                }
-                blob = await withinTime(
-                  new Promise<Blob>((r) => canvas.toBlob((b) => r(b || blob), 'image/webp', 0.8)),
-                  limits.imageTimeoutMs,
-                  'Encoding image',
+                blob = await downscaleImage(
+                  blob,
+                  1000,
+                  Math.max(1, Math.round((page.height * 1000) / page.width)),
+                  signal,
                 );
-              } finally {
-                canvas.width = 0;
-                canvas.height = 0;
+              } catch {
+                /* Use original unmodified blob if downscaling is unavailable or fails */
               }
-            } catch {
-              /* Use the unmodified original when resizing is unavailable. */
+            }
+
+            if (live && wanted && !signal.aborted) {
+              objectUrl = URL.createObjectURL(blob);
+              setUrl(objectUrl);
+              setError('');
+            }
+          } catch (e) {
+            if (live && wanted && !signal.aborted) {
+              const message = errorMessage(e);
+              setError(message);
+              reportRef.current(message);
             }
           }
-          if (live && wanted) {
-            objectUrl = URL.createObjectURL(blob);
-            setUrl(objectUrl);
-            setError('');
-          }
-        } catch (e) {
-          if (live && wanted) {
-            const message = errorMessage(e);
-            setError(message);
-            reportRef.current(message);
-          }
-        } finally {
-          loading = false;
-        }
+        },
       });
-      if (!accepted) {
-        loading = false;
+
+      if (!cancel) {
         const message = `Image queue is full (${limits.queuedJobs} waiting). Retry this page shortly.`;
         setError(message);
         reportRef.current(message);
+        return;
       }
+      cancelTask = cancel;
     };
+
     const stop = host.current
       ? observe(host.current, (v) => {
           wanted = v;
@@ -166,12 +129,14 @@ export default memo(function PageImage({
           else release();
         })
       : () => {};
+
     return () => {
       live = false;
       stop();
       release();
     };
-  }, [m.id, m.handle, m.localPath, page, lowQuality, retry]);
+  }, [m.id, m.updatedAt, m.handle, m.localPath, page, lowQuality, retry]);
+
   return (
     <div
       ref={host}

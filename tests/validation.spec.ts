@@ -79,6 +79,32 @@ test.describe('Step 04 — Input and Backup Validation', () => {
     );
   });
 
+  test('Position mangaBookmark flag is parsed or rejected when invalid', () => {
+    const samplePages = [{ name: '001.png', path: 'ch1/001.png', width: 800, height: 1200 }];
+    const parsed = parsePosition({ page: 0, fraction: 0, mangaBookmark: true }, samplePages);
+    expect(parsed?.mangaBookmark).toBe(true);
+
+    const normal = parsePosition({ page: 0, fraction: 0 }, samplePages);
+    expect(normal?.mangaBookmark).toBeUndefined();
+
+    expect(() =>
+      parsePosition({ page: 0, fraction: 0, mangaBookmark: 'yes' }, samplePages),
+    ).toThrow(ValidationError);
+  });
+
+  test('Position timestamp is parsed or rejected when invalid', () => {
+    const samplePages = [{ name: '001.png', path: 'ch1/001.png', width: 800, height: 1200 }];
+    const parsed = parsePosition(
+      { page: 0, fraction: 0, mangaBookmark: true, timestamp: 1731234567890 },
+      samplePages,
+    );
+    expect(parsed?.timestamp).toBe(1731234567890);
+
+    expect(() =>
+      parsePosition({ page: 0, fraction: 0, timestamp: 'invalid-time' }, samplePages),
+    ).toThrow(ValidationError);
+  });
+
   test('malformed bookmarks in chapter throw ValidationError', () => {
     const corrupted = JSON.parse(JSON.stringify(baselineBackup));
     corrupted.manga[0].chapters[0].bookmarks = 'not-an-array';
@@ -126,7 +152,38 @@ test.describe('Step 04 — Input and Backup Validation', () => {
     expect(clean.seconds).toBe(0.5); // Clamped to lower bound
     expect(clean.maxWidth).toBe(920); // Fallback to valid preset
     expect(clean.advance).toBe(false);
+    expect(clean.fontSizeTitle).toBe(15); // Default headings/titles font size
+    expect(clean.fontSizeUi).toBe(15); // Default Inter UI font size
+    expect(clean.fontSizeButton).toBe(15); // Default button font size
+    expect(clean.confirmDelete).toBe(false);
     expect((clean as Record<string, unknown>).extraProperty).toBeUndefined();
+
+    const clamped = parseSettings({
+      fontSizeTitle: -50,
+      fontSizeUi: 999,
+      fontSizeButton: -10,
+    });
+    expect(clamped.fontSizeTitle).toBe(10);
+    expect(clamped.fontSizeUi).toBe(36);
+    expect(clamped.fontSizeButton).toBe(10);
+
+    const customSizes = parseSettings({
+      fontSizeTitle: 18,
+      fontSizeUi: 14,
+      fontSizeButton: 16,
+    });
+    expect(customSizes.fontSizeTitle).toBe(18);
+    expect(customSizes.fontSizeUi).toBe(14);
+    expect(customSizes.fontSizeButton).toBe(16);
+
+    const confirmDeleteTrue = parseSettings({ confirmDelete: true });
+    expect(confirmDeleteTrue.confirmDelete).toBe(true);
+
+    const confirmDeleteFalse = parseSettings({ confirmDelete: false });
+    expect(confirmDeleteFalse.confirmDelete).toBe(false);
+
+    const confirmDeleteInvalid = parseSettings({ confirmDelete: 'yes' });
+    expect(confirmDeleteInvalid.confirmDelete).toBe(false);
   });
 
   test('parseSettings migrates legacy values and preserves shelfSort', () => {
@@ -193,5 +250,25 @@ test.describe('Step 04 — Input and Backup Validation', () => {
       ],
     });
     expect(manga.localPath).toBe('C:\\Manga\\DesktopTitle');
+  });
+
+  test('parseSummary preserves handle when preserveHardwarePointers is true', () => {
+    const fakeHandle = { kind: 'directory', name: 'MangaFolder' };
+    const stripped = parseSummary({
+      id: 'manga-handle',
+      title: 'Manga Handle',
+      handle: fakeHandle,
+    });
+    expect(stripped?.handle).toBeUndefined();
+
+    const preserved = parseSummary(
+      {
+        id: 'manga-handle',
+        title: 'Manga Handle',
+        handle: fakeHandle,
+      },
+      { preserveHardwarePointers: true },
+    );
+    expect(preserved?.handle).toBe(fakeHandle);
   });
 });

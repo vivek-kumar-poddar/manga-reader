@@ -17,6 +17,8 @@ export interface Position {
   page: number;
   path?: string;
   fraction: number;
+  mangaBookmark?: boolean;
+  timestamp?: number;
 }
 export interface Chapter {
   name: string;
@@ -36,6 +38,7 @@ export interface Manga {
   lastChapter: number;
   addedAt: number;
   updatedAt: number;
+  revision?: number;
   sort?: 'natural' | 'name' | 'reverse';
 }
 export type Summary = Omit<Manga, 'chapters' | 'cover'> & {
@@ -44,6 +47,7 @@ export type Summary = Omit<Manga, 'chapters' | 'cover'> & {
   lastChapterName: string;
   hasProgress: boolean;
   indexedAt: number;
+  revision?: number;
 };
 export interface Progress {
   mangaId: string;
@@ -69,6 +73,10 @@ export interface Settings {
   spread: boolean;
   singleCover: boolean;
   endAction: 'next' | 'stop' | 'replay';
+  fontSizeTitle: number;
+  fontSizeUi: number;
+  fontSizeButton: number;
+  confirmDelete?: boolean;
 }
 export const defaults: Settings = {
   theme: 'system',
@@ -86,4 +94,8 @@ export const defaults: Settings = {
   spread: false,
   singleCover: true,
   endAction: 'next',
+  fontSizeTitle: 15,
+  fontSizeUi: 15,
+  fontSizeButton: 15,
+  confirmDelete: false,
 };

@@ -1,15 +1,16 @@
 import Dropdown from './Dropdown';
 import { useState, useEffect, useRef } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Download, Upload, ShieldCheck, RefreshCw } from 'lucide-react';
+import { X, Download, Upload, RefreshCw } from 'lucide-react';
 import { useApp } from './App';
 import { APP_VERSION } from './updates';
 import { limits, assertAtMost, withinTime } from './limits';
+import { getDiagnostics } from './diagnostics';
 import {
   allManga,
-  db,
   defaults,
-  saveManga,
+  restoreBackup,
+  resetProgress,
   clearLibrary,
   getManga,
   sessionFiles,
@@ -28,26 +29,17 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const { settings: s, setSettings, notify, refresh, library } = useApp();
   const [tab, setTab] = useState<(typeof tabs)[number]>('Reading');
   const [usage, setUsage] = useState<StorageEstimate | null>(null);
-  const [persisted, setPersisted] = useState<boolean | null>(null);
-  const [protecting, setProtecting] = useState(false);
   const [storageError, setStorageError] = useState('');
-  const [offline, setOffline] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'progress' | 'all' | null>(null);
   const [clearing, setClearing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   async function updateStorage() {
     setStorageError('');
     try {
-      const [estimate, protectedStorage] = await Promise.all([
-        navigator.storage?.estimate?.(),
-        navigator.storage?.persisted?.(),
-      ]);
+      const estimate = await navigator.storage?.estimate?.();
       setUsage(estimate || null);
-      setPersisted(protectedStorage ?? null);
-      const registration = await navigator.serviceWorker?.getRegistration();
-      setOffline(!!registration?.active);
     } catch {
-      setStorageError('Your browser could not provide storage details.');
+      setStorageError('Could not retrieve storage details.');
     }
   }
   useEffect(() => {
@@ -58,22 +50,6 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   }, [open, library]);
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings({ ...s, [key]: value });
-  async function protect() {
-    setProtecting(true);
-    try {
-      const granted = await navigator.storage.persist();
-      setPersisted(granted);
-      notify(
-        granted
-          ? 'Storage protection enabled. Keep a backup too.'
-          : 'Your browser did not grant storage protection. You can still export a backup.',
-      );
-    } catch {
-      notify('Storage protection is unavailable in this browser or view.');
-    } finally {
-      setProtecting(false);
-    }
-  }
   async function exportData() {
     const manga = (await allManga()).map(({ handle, cover, ...m }) => m);
     const url = URL.createObjectURL(
@@ -92,11 +68,8 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
       const value = validateBackup(
         JSON.parse(await withinTime(file.text(), limits.ioTimeoutMs, 'Reading backup')),
       );
-      for (const m of value.manga) {
-        const old = await getManga(m.id);
-        await saveManga({ ...m, handle: old?.handle, cover: old?.cover });
-      }
-      setSettings(value.settings);
+      const appliedSettings = await restoreBackup(value);
+      setSettings(appliedSettings);
       await refresh();
       notify('Backup imported. Re-link folders when requested.');
     } catch (e) {
@@ -108,12 +81,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     setClearing(true);
     try {
       if (confirmAction === 'progress') {
-        for (const m of await allManga())
-          await saveManga({
-            ...m,
-            lastChapter: 0,
-            chapters: m.chapters.map((c) => ({ ...c, read: false, position: undefined })),
-          });
+        await resetProgress();
       } else {
         await clearLibrary();
       }
@@ -349,6 +317,21 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     this idle time. Opening a popup pauses it until the popup closes.
                   </p>
                 </section>
+                <section>
+                  <h3>Accidental delete control</h3>
+                  <label>
+                    Confirm before deleting
+                    <input
+                      type="checkbox"
+                      checked={Boolean(s.confirmDelete)}
+                      onChange={(e) => change('confirmDelete', e.target.checked)}
+                    />
+                  </label>
+                  <p className="subtle">
+                    When enabled, clicking a delete button opens a confirmation popup modal to
+                    confirm the deletion or cancel the action.
+                  </p>
+                </section>
               </>
             )}
             {tab === 'Appearance' && (
@@ -365,6 +348,57 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       <option value="system">System</option>
                       <option value="light">Light</option>
                       <option value="dark">Dark</option>
+                    </Dropdown>
+                  </label>
+                  <label>
+                    Headings & titles font size
+                    <Dropdown
+                      aria-label="Headings and titles font size"
+                      value={s.fontSizeTitle}
+                      onChange={(e) => change('fontSizeTitle', Number(e.target.value))}
+                    >
+                      {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
+                        <option key={size} value={size}>
+                          {size}px{size === 15 ? ' (Default)' : ''}
+                        </option>
+                      ))}
+                      {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeTitle) && (
+                        <option value={s.fontSizeTitle}>{s.fontSizeTitle}px</option>
+                      )}
+                    </Dropdown>
+                  </label>
+                  <label>
+                    UI font size
+                    <Dropdown
+                      aria-label="UI font size"
+                      value={s.fontSizeUi}
+                      onChange={(e) => change('fontSizeUi', Number(e.target.value))}
+                    >
+                      {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
+                        <option key={size} value={size}>
+                          {size}px{size === 15 ? ' (Default)' : ''}
+                        </option>
+                      ))}
+                      {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeUi) && (
+                        <option value={s.fontSizeUi}>{s.fontSizeUi}px</option>
+                      )}
+                    </Dropdown>
+                  </label>
+                  <label>
+                    Button font size
+                    <Dropdown
+                      aria-label="Button font size"
+                      value={s.fontSizeButton}
+                      onChange={(e) => change('fontSizeButton', Number(e.target.value))}
+                    >
+                      {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
+                        <option key={size} value={size}>
+                          {size}px{size === 15 ? ' (Default)' : ''}
+                        </option>
+                      ))}
+                      {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeButton) && (
+                        <option value={s.fontSizeButton}>{s.fontSizeButton}px</option>
+                      )}
                     </Dropdown>
                   </label>
                   <label>
@@ -431,11 +465,11 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <h3>On this device</h3>
                   <dl className="storage-stats">
                     <div>
-                      <dt>Site storage used</dt>
+                      <dt>Storage used</dt>
                       <dd>{usage?.usage !== undefined ? bytes(usage.usage) : 'Unavailable'}</dd>
                     </div>
                     <div>
-                      <dt>Estimated site quota</dt>
+                      <dt>Estimated quota</dt>
                       <dd>{usage?.quota !== undefined ? bytes(usage.quota) : 'Unavailable'}</dd>
                     </div>
                     <div>
@@ -445,41 +479,17 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                         chapters
                       </dd>
                     </div>
-                    <div>
-                      <dt>Offline app shell</dt>
-                      <dd>{offline ? 'Installed' : 'Not yet available'}</dd>
-                    </div>
-                    <div>
-                      <dt>Storage protection</dt>
-                      <dd>
-                        {persisted === null ? 'Unavailable' : persisted ? 'Enabled' : 'Not enabled'}
-                      </dd>
-                    </div>
                   </dl>
                   {storageError && <p role="status">{storageError}</p>}
                   <p className="subtle">
-                    These browser estimates cover this site’s database and app cache, not the size
-                    of your manga folders. Quota is an estimate, not reserved disk space.
+                    These estimates cover the application database and cached thumbnails, not the
+                    size of your manga folders. Quota is an estimate, not reserved disk space.
                   </p>
                   <div className="button-row">
                     <button className="secondary" onClick={() => void updateStorage()}>
                       <RefreshCw size={16} /> Refresh details
                     </button>
-                    {typeof navigator.storage?.persist === 'function' && !persisted && (
-                      <button
-                        className="secondary"
-                        disabled={protecting}
-                        onClick={() => void protect()}
-                      >
-                        <ShieldCheck size={16} />
-                        {protecting ? 'Requesting…' : 'Protect local storage'}
-                      </button>
-                    )}
                   </div>
-                  <p className="subtle">
-                    Protection asks your browser to retain site data under storage pressure. It
-                    cannot prevent manual clearing or replace a backup.
-                  </p>
                 </section>
                 <section>
                   <h3>What is saved?</h3>
@@ -490,8 +500,8 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       Reading progress and bookmarks are saved separately in small updates.
                     </li>
                     <li>
-                      <strong>In the app cache:</strong> scripts, styles, and fonts for offline use.
-                      Original manga pages are not copied into this cache.
+                      <strong>In the thumbnail cache:</strong> cover art and generated previews
+                      stored on disk. Original manga pages are not copied into this cache.
                     </li>
                     <li>
                       <strong>In temporary memory:</strong> selected files and nearby page previews.
@@ -499,9 +509,8 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     </li>
                   </ul>
                   <p className="subtle">
-                    Data belongs to this browser profile and site address. It does not sync across
-                    devices. Private browsing, clearing site data, or browser storage cleanup can
-                    remove your saved library. Manga files remain in their original folders.
+                    Data belongs to this device installation. It does not sync across devices. Manga
+                    files remain in their original folders.
                   </p>
                 </section>
                 <section>
@@ -577,7 +586,40 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     </div>
                   )}
                   <p className="subtle">
-                    These actions leave your settings and offline app cache in place.
+                    These actions leave your settings and thumbnail cache in place.
+                  </p>
+                </section>
+                <section>
+                  <h3>Diagnostics</h3>
+                  <div className="button-row">
+                    <button
+                      className="secondary"
+                      onClick={() => {
+                        const logs = getDiagnostics();
+                        if (!logs.length) {
+                          notify('No diagnostic entries recorded.');
+                          return;
+                        }
+                        const text = logs
+                          .map(
+                            (d) =>
+                              `[${new Date(d.timestamp).toISOString()}] [${d.level.toUpperCase()}] [${d.operation}] ${d.code ? `(${d.code}) ` : ''}${d.safeIdentifier ? `[${d.safeIdentifier}] ` : ''}${d.message}${d.durationMs ? ` (${d.durationMs}ms)` : ''}`,
+                          )
+                          .join('\n');
+                        const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = 'manga-reader-diagnostics.txt';
+                        a.click();
+                        setTimeout(() => URL.revokeObjectURL(url), 1000);
+                      }}
+                    >
+                      <Download size={16} /> Export diagnostic log
+                    </button>
+                  </div>
+                  <p className="subtle">
+                    Keeps a bounded log of the last 50 operation events for troubleshooting without
+                    retaining private files.
                   </p>
                 </section>
               </>
@@ -636,7 +678,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   </p>
                 </section>
                 <section>
-                  <h3>Folder access & offline reading</h3>
+                  <h3>Folder access & reading</h3>
                   <p>
                     In the browser’s folder permission prompt, choose “Allow on every visit”, if
                     offered, to avoid granting access each session. “Allow this time” is temporary.
@@ -659,11 +701,6 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     Reader reuses unchanged dimensions and restores progress by page path. Renamed
                     chapters with uniquely matching page metadata can keep progress. A mismatched
                     selection requires explicit confirmation in the import preview.
-                  </p>
-                  <p>
-                    The offline app shell becomes available after its service worker finishes
-                    installing. You still need access to your original files. Opening this site in a
-                    different browser or at a different address creates a separate local library.
                   </p>
                 </section>
                 <section>

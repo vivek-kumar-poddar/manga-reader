@@ -17,6 +17,7 @@ import {
 import { Link, Route, Routes, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
+  Bookmark,
   BookMarked,
   FolderPlus,
   Settings as Gear,
@@ -33,19 +34,22 @@ import {
   Download,
 } from 'lucide-react';
 import {
-  warmSources,
-  discardScan,
-  scheduleBackground,
   resumeBackground,
   allManga,
   listLibrary,
   getManga,
   deleteManga,
-  db,
+  getStoredSettings,
+  saveStoredSettings,
+  syncChannel,
+  getCover,
   defaults,
   parseSettings,
   saveManga,
-  indexSource,
+  getBookmarkedMangaIds,
+  getMangaBookmarkedIds,
+  addBookmark,
+  removeBookmark,
   fromHandle,
   fromFiles,
   fromDesktopFolder,
@@ -55,12 +59,12 @@ import {
   type Manga,
   type Summary,
   type Settings,
+  type Position,
   type Directory,
-  type Source,
   type ScanOptions,
   type ScanState,
-  type Issue,
 } from './data';
+import { useImport } from './useImport';
 import { SupportedDialog, ImportDialog, Modal, type ImportPlan } from './ImportDialogs';
 import { APP_VERSION, applyUpdate, hasUpdate } from './updates';
 
@@ -129,8 +133,7 @@ export function Cover({ m }: { m: Pick<Summary, 'id'> }) {
       (entries) => {
         if (!entries[0].isIntersecting) return;
         observer.disconnect();
-        void db
-          .then((d) => d.get('covers', m.id))
+        void getCover(m.id)
           .then((blob) => {
             if (live && blob) {
               u = URL.createObjectURL(blob);
@@ -154,6 +157,111 @@ export function Cover({ m }: { m: Pick<Summary, 'id'> }) {
     </div>
   );
 }
+function positionCardMenu(details: HTMLDetailsElement) {
+  const rect = details.getBoundingClientRect();
+  const popover = details.querySelector<HTMLElement>('.menu-popover');
+  const popoverHeight = popover ? popover.offsetHeight || 195 : 195;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const spaceAbove = rect.top;
+  if (spaceBelow < popoverHeight && spaceAbove > spaceBelow) {
+    details.classList.add('popover-top');
+  } else {
+    details.classList.remove('popover-top');
+  }
+}
+
+function formatAddedDate(timestamp?: number): string {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+}
+
+function formatWholeDate(timestamp?: number): string {
+  if (!timestamp) return '';
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return '';
+  return d.toLocaleDateString(undefined, {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+}
+
+function CalendarIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M16 2v4M8 2v4m13 8v-2c0-3.771 0-5.657-1.172-6.828S16.771 4 13 4h-2C7.229 4 5.343 4 4.172 5.172S3 8.229 3 12v2c0 3.771 0 5.657 1.172 6.828S7.229 22 11 22h2M3 10h18m-3.5 5v7m3.5-3.5h-7" />
+    </svg>
+  );
+}
+
+function DateTooltip({ timestamp, children }: { timestamp?: number; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
+  const [align, setAlign] = useState<'left' | 'right'>('left');
+  const badgeRef = useRef<HTMLDivElement>(null);
+
+  const showTooltip = () => {
+    if (badgeRef.current) {
+      const rect = badgeRef.current.getBoundingClientRect();
+      if (rect.top < 44) {
+        setPlacement('bottom');
+      } else {
+        setPlacement('top');
+      }
+      if (rect.left + 260 > window.innerWidth) {
+        setAlign('right');
+      } else {
+        setAlign('left');
+      }
+    }
+    setOpen(true);
+  };
+
+  const hideTooltip = () => {
+    setOpen(false);
+  };
+
+  const wholeDate = formatWholeDate(timestamp);
+
+  return (
+    <div
+      ref={badgeRef}
+      className="manga-card-date-badge"
+      onPointerEnter={showTooltip}
+      onPointerLeave={hideTooltip}
+      onFocus={showTooltip}
+      onBlur={hideTooltip}
+      onClick={(e) => e.stopPropagation()}
+      tabIndex={0}
+      role="note"
+      aria-label={wholeDate ? `Manga was added on ${wholeDate}` : undefined}
+    >
+      {children}
+      {open && wholeDate && (
+        <div className={`space-tooltip tooltip-${placement} tooltip-align-${align}`} role="tooltip">
+          Manga was added on {wholeDate}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Library({
   busy,
   scan,
@@ -193,7 +301,79 @@ function Library({
   const [needs, setNeeds] = useState<Set<string>>(new Set());
   const [supported, setSupported] = useState(false);
   const [removeId, setRemoveId] = useState<string>();
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const nav = useNavigate();
+
+  useEffect(() => {
+    let live = true;
+    function updateBookmarkedIds() {
+      void getMangaBookmarkedIds().then((ids) => {
+        if (live) setBookmarkedIds(ids);
+      });
+    }
+    updateBookmarkedIds();
+    const onSync = (e: MessageEvent) => {
+      if (e.data?.type === 'progress') updateBookmarkedIds();
+    };
+    syncChannel?.addEventListener('message', onSync);
+    return () => {
+      live = false;
+      syncChannel?.removeEventListener('message', onSync);
+    };
+  }, [library]);
+
+  async function toggleMangaBookmark(m: Summary, e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    const isBookmarked = bookmarkedIds.has(m.id);
+    try {
+      const manga = await getManga(m.id);
+      if (!manga) return;
+      if (isBookmarked) {
+        let removedMangaBookmark = false;
+        for (const ch of manga.chapters) {
+          for (const b of ch.bookmarks || []) {
+            if (b.mangaBookmark) {
+              await removeBookmark(m.id, ch.name, b);
+              removedMangaBookmark = true;
+            }
+          }
+        }
+        if (!removedMangaBookmark) {
+          for (const ch of manga.chapters) {
+            for (const b of ch.bookmarks || []) {
+              await removeBookmark(m.id, ch.name, b);
+            }
+          }
+        }
+        setBookmarkedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(m.id);
+          return next;
+        });
+        await refresh();
+        notify(`Bookmark removed.`);
+      } else {
+        const ch = manga.chapters[0];
+        if (ch) {
+          const pagePath = ch.pages[0]?.path;
+          const pos: Position = {
+            page: 0,
+            fraction: 0,
+            path: pagePath,
+            mangaBookmark: true,
+            timestamp: Date.now(),
+          };
+          await addBookmark(m.id, ch.name, pos);
+          setBookmarkedIds((prev) => new Set(prev).add(m.id));
+          await refresh();
+          notify(`Bookmarked ${m.title}.`);
+        }
+      }
+    } catch (err) {
+      notify(errorMessage(err));
+    }
+  }
   useEffect(() => {
     function dismiss(event: MouseEvent | KeyboardEvent) {
       if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
@@ -206,13 +386,20 @@ function Library({
         }
       });
     }
+    function reposition() {
+      document.querySelectorAll<HTMLDetailsElement>('.card-menu[open]').forEach(positionCardMenu);
+    }
     document.addEventListener('pointerdown', dismiss, true);
     document.addEventListener('click', dismiss, true);
     document.addEventListener('keydown', dismiss);
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
     return () => {
       document.removeEventListener('pointerdown', dismiss, true);
       document.removeEventListener('click', dismiss, true);
       document.removeEventListener('keydown', dismiss);
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
     };
   }, []);
   useEffect(() => {
@@ -258,7 +445,6 @@ function Library({
           </span>
         </Link>
         <div className="header-actions">
-          <span className="local-label">Your files. Your space.</span>
           <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
             <BookMarked size={19} />
           </Link>
@@ -271,7 +457,6 @@ function Library({
       <main className="library-main">
         <div className="page-heading">
           <div>
-            <div className="eyebrow">A LITTLE SPACE FOR YOUR STORIES</div>
             <h1>Your library</h1>
             <DailyWelcome />
           </div>
@@ -325,9 +510,6 @@ function Library({
                   <Info size={16} /> What’s supported
                 </button>
               </div>
-              <span className="subtle upload-note">
-                Files stay on your device. No uploads, ever.
-              </span>
             </>
           )}
         </div>
@@ -363,80 +545,188 @@ function Library({
           <div className="manga-grid">
             {sortedLibrary.map((m) => (
               <article className="manga-card" key={m.id}>
-                <div className="manga-open">
-                  <Cover m={m} />
-                  <div className="manga-info">
-                    <h3 title={m.title}>{m.title}</h3>
-                    <p>
-                      {m.chaptersRead} / {m.chapterCount} chapters read
-                    </p>
-                    <div className="reading-progress">
-                      <span
-                        style={{
-                          width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
-                        }}
-                      />
+                <div
+                  className="manga-open"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() =>
+                    void getManga(m.id)
+                      .then((latest) => {
+                        if (latest) nav(mangaPath(latest));
+                      })
+                      .catch((error) => notify(errorMessage(error)))
+                  }
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      void getManga(m.id)
+                        .then((latest) => {
+                          if (latest) nav(mangaPath(latest));
+                        })
+                        .catch((error) => notify(errorMessage(error)));
+                    }
+                  }}
+                  aria-label={(m.hasProgress ? 'Continue reading ' : 'Start reading ') + m.title}
+                >
+                  <div className="manga-card-left">
+                    <Cover m={m} />
+                  </div>
+                  <div className="manga-card-right">
+                    <div className="manga-card-right-top">
+                      <div className="manga-card-title-row">
+                        <h3 title={m.title}>{m.title}</h3>
+                        <span className="manga-card-counter">
+                          {m.chaptersRead} / {m.chapterCount}
+                        </span>
+                      </div>
+                      <div className="reading-progress">
+                        <span
+                          style={{
+                            width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div className="manga-card-actions">
+                    <div className="manga-card-right-bottom">
+                      <DateTooltip timestamp={m.addedAt}>
+                        <CalendarIcon className="manga-card-calendar-icon" />
+                        <span className="manga-card-date">{formatAddedDate(m.addedAt)}</span>
+                      </DateTooltip>
                       <button
-                        className="continue-label"
-                        onClick={() =>
-                          void getManga(m.id)
-                            .then((latest) => {
-                              if (latest) nav(mangaPath(latest));
-                            })
-                            .catch((error) => notify(errorMessage(error)))
+                        type="button"
+                        className={
+                          'manga-bookmark-btn' + (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
                         }
+                        onClick={(e) => void toggleMangaBookmark(m, e)}
+                        title={bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'}
+                        aria-label={
+                          bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+                        }
+                        aria-pressed={bookmarkedIds.has(m.id)}
                       >
-                        {m.hasProgress ? 'Continue reading' : 'Start reading'}{' '}
-                        <ArrowUpRight size={13} />
+                        <Bookmark
+                          size={16}
+                          fill={bookmarkedIds.has(m.id) ? 'currentColor' : 'none'}
+                        />
                       </button>
-                      <Link className="manga-details-link" to={mangaDetailsPath(m)}>
-                        Chapters
-                      </Link>
                     </div>
-                    {needs.has(m.id) && (
-                      <span className="relink-label">
-                        {m.handle ? 'Folder access needed' : 'Re-link folder to read'}
-                      </span>
-                    )}
                   </div>
                 </div>
-                <details className="card-menu">
-                  <summary aria-label={'Options for ' + m.title}>
-                    <MoreHorizontal className="card-menu-dots" size={19} />
-                    <X className="card-menu-close" size={19} />
-                  </summary>
-                  <div
-                    className="menu-popover"
-                    onClick={(event) => {
-                      if ((event.target as Element).closest('button')) {
-                        const menu = event.currentTarget.closest('details');
-                        if (menu) {
-                          menu.querySelector('summary')?.focus();
-                          menu.open = false;
+                <div className="manga-card-bottom">
+                  {needs.has(m.id) ? (
+                    <button
+                      type="button"
+                      className="relink-needed-btn"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        try {
+                          const allowed = await access(m, true);
+                          if (allowed) {
+                            setNeeds((prev) => {
+                              const next = new Set(prev);
+                              next.delete(m.id);
+                              return next;
+                            });
+                            await refresh();
+                            return;
+                          }
+                        } catch {
+                          // Fall through to folder picker
                         }
+                        void pick(m);
+                      }}
+                      title="Grant access or re-link folder"
+                    >
+                      Re-link needed
+                    </button>
+                  ) : (
+                    <Link
+                      className="manga-info-btn"
+                      to={mangaDetailsPath(m)}
+                      aria-label={'Info for ' + m.title}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        width="18"
+                        height="18"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        color="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M12 16v-4m.125-3.75H12m.25 0a.25.25 0 1 0-.5 0 .25.25 0 0 0 .5 0" />
+                      </svg>
+                      <span>Info</span>
+                    </Link>
+                  )}
+                  <details
+                    className="card-menu"
+                    onToggle={(e) => {
+                      if (e.currentTarget.open) {
+                        positionCardMenu(e.currentTarget);
                       }
                     }}
                   >
-                    <button onClick={() => void pick(m)}>
-                      <FolderSync size={16} /> Re-link / re-index
-                    </button>
-                    <button
-                      onClick={() => void mark(m.id, true).catch((e) => notify(errorMessage(e)))}
+                    <summary
+                      aria-label={'Options for ' + m.title}
+                      onPointerDown={(e) => {
+                        const details = e.currentTarget.closest<HTMLDetailsElement>('details');
+                        if (details) positionCardMenu(details);
+                      }}
                     >
-                      <Check size={16} /> Mark all read
-                    </button>
-                    <button
-                      onClick={() => void mark(m.id, false).catch((e) => notify(errorMessage(e)))}
+                      <MoreHorizontal className="card-menu-dots" size={19} />
+                      <X className="card-menu-close" size={19} />
+                    </summary>
+                    <div
+                      className="menu-popover"
+                      onClick={(event) => {
+                        if ((event.target as Element).closest('button')) {
+                          const menu = event.currentTarget.closest('details');
+                          if (menu) {
+                            menu.querySelector('summary')?.focus();
+                            menu.open = false;
+                          }
+                        }
+                      }}
                     >
-                      <BookOpen size={16} /> Mark all unread
-                    </button>
-                    <button className="danger-text" onClick={() => setRemoveId(m.id)}>
-                      <Trash2 size={16} /> Remove
-                    </button>
-                  </div>
-                </details>
+                      {needs.has(m.id) && (
+                        <button onClick={() => void pick(m)}>
+                          <FolderSync size={16} /> Re-link / re-index
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void mark(m.id, true).catch((e) => notify(errorMessage(e)))}
+                      >
+                        <Check size={16} /> Mark all read
+                      </button>
+                      <button
+                        onClick={() => void mark(m.id, false).catch((e) => notify(errorMessage(e)))}
+                      >
+                        <BookOpen size={16} /> Mark all unread
+                      </button>
+                      <button
+                        className="danger-text"
+                        onClick={() => {
+                          if (settings.confirmDelete) {
+                            setRemoveId(m.id);
+                          } else {
+                            void deleteManga(m.id)
+                              .then(refresh)
+                              .then(() => notify('Manga removed.'))
+                              .catch((e) => notify(errorMessage(e)));
+                          }
+                        }}
+                      >
+                        <Trash2 size={16} /> Remove
+                      </button>
+                    </div>
+                  </details>
+                </div>
               </article>
             ))}
           </div>
@@ -457,6 +747,7 @@ function Library({
         open={!!removeId}
         onClose={() => setRemoveId(undefined)}
         title="Remove this title?"
+        className="confirm-modal"
         description="Only this title’s saved metadata, cover, bookmarks, and reading progress will be removed. Your original files stay untouched."
       >
         <div className="button-row">
@@ -480,46 +771,52 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [notice, notify] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [scan, setScan] = useState<ScanState>({ phase: 'discover', done: 0, total: 0 });
-  const [preview, setPreview] = useState<{ sources: Source[]; target?: Manga }>();
-  const [report, setReport] = useState<{
-    titles: Manga[];
-    issues: Issue[];
-    count: number;
-    reused: number;
-    retry: ImportPlan[];
-  }>();
   const [updateReady, setUpdateReady] = useState(hasUpdate());
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState('');
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const pending = useRef<Summary | Manga | undefined>(undefined);
-  const locked = useRef(false);
-  const controller = useRef<AbortController | undefined>(undefined);
   const standardOnly = useRef(false);
   useInterfaceMotion(settings.reduced);
   const refresh = async () => setLibrary(await listLibrary());
+
+  const {
+    state: importState,
+    isBusy: busy,
+    scanState: scan,
+    discover,
+    runImport,
+    cancel,
+    dismiss: dismissImport,
+  } = useImport({
+    onRefresh: refresh,
+    onNotify: notify,
+  });
   useEffect(() => {
     const blocked = () =>
       notify(
         'Close other Reader tabs to finish upgrading local storage. Your data will be preserved.',
       );
     window.addEventListener('reader-storage-blocked', blocked);
+    const onSync = () => {
+      void refresh();
+    };
+    syncChannel?.addEventListener('message', onSync);
     Promise.all([
       refresh(),
-      db
-        .then((d) => d.get('settings', 'global'))
-        .then((s) => {
-          if (s) {
-            setSettingsState(parseSettings(s));
-          }
-        }),
+      getStoredSettings().then((s) => {
+        if (s) {
+          setSettingsState(s);
+        }
+      }),
     ])
       .catch((e) => notify(errorMessage(e)))
       .finally(() => setReady(true));
-    return () => window.removeEventListener('reader-storage-blocked', blocked);
+    return () => {
+      window.removeEventListener('reader-storage-blocked', blocked);
+      syncChannel?.removeEventListener('message', onSync);
+    };
   }, []);
   useEffect(() => {
     void resumeBackground().catch(() => {});
@@ -533,9 +830,7 @@ export default function App() {
   function setSettings(s: Settings) {
     const validated = parseSettings(s);
     setSettingsState(validated);
-    void db
-      .then((d) => d.put('settings', validated, 'global'))
-      .catch((e) => notify(errorMessage(e)));
+    void saveStoredSettings(validated).catch((e) => notify(errorMessage(e)));
   }
   useEffect(() => {
     const media = matchMedia('(prefers-color-scheme: dark)');
@@ -545,6 +840,18 @@ export default function App() {
         settings.theme === 'dark' || (settings.theme === 'system' && media.matches),
       );
       document.documentElement.classList.toggle('reduced', settings.reduced);
+      document.documentElement.style.setProperty(
+        '--font-size-ui',
+        `${settings.fontSizeUi ?? 15}px`,
+      );
+      document.documentElement.style.setProperty(
+        '--font-size-title',
+        `${settings.fontSizeTitle ?? 15}px`,
+      );
+      document.documentElement.style.setProperty(
+        '--font-size-button',
+        `${settings.fontSizeButton ?? 15}px`,
+      );
     };
     update();
     media.addEventListener('change', update);
@@ -555,107 +862,8 @@ export default function App() {
     const timer = setTimeout(() => notify(''), 3000);
     return () => clearTimeout(timer);
   }, [notice]);
-  function start() {
-    locked.current = true;
-    setBusy(true);
-    setScan({ phase: 'discover', done: 0, total: 0 });
-    controller.current = new AbortController();
-    let last = 0;
-    desktopAPI.setProgressBar(2); // Indeterminate mode while discovering
-    return {
-      signal: controller.current.signal,
-      update: (s: ScanState) => {
-        const now = performance.now();
-        if (now - last > 80 || s.done === s.total) {
-          setScan(s);
-          last = now;
-          if (s.total > 0) {
-            desktopAPI.setProgressBar(Math.min(1, Math.max(0, s.done / s.total)));
-          } else {
-            desktopAPI.setProgressBar(2);
-          }
-        }
-      },
-    } satisfies ScanOptions;
-  }
-  function finish() {
-    locked.current = false;
-    setBusy(false);
-    desktopAPI.setProgressBar(-1);
-  }
-  async function discover(
-    read: (options: ScanOptions) => Promise<Source[]>,
-    target?: Summary | Manga,
-  ) {
-    if (locked.current) return;
-    const options = start();
-    let sources: Source[] = [];
-    try {
-      sources = await read(options);
-      await warmSources(sources, options);
-      options.signal.throwIfAborted();
-      if (!sources.length)
-        throw new Error(
-          'No supported image candidates found. Select folders with images, or extract archives first.',
-        );
-      setPreview({ sources, target: target ? await getManga(target.id) : undefined });
-    } catch (e) {
-      discardScan(sources);
-      notify(
-        e instanceof DOMException && e.name === 'AbortError'
-          ? 'Import cancelled. Existing data is unchanged.'
-          : errorMessage(e),
-      );
-    } finally {
-      finish();
-    }
-  }
-  async function runImport(plans: ImportPlan[]) {
-    if (locked.current) return;
-    setPreview(undefined);
-    setReport(undefined);
-    const options = start();
-    const issues: Issue[] = [];
-    const retry: ImportPlan[] = [];
-    const titles: Manga[] = [];
-    let count = 0,
-      reused = 0;
-    try {
-      for (const plan of plans) {
-        options.signal.throwIfAborted();
-        try {
-          const previous = plan.targetId ? await getManga(plan.targetId) : undefined;
-          const result = await indexSource(plan.source, options, previous, plan.sort);
-          count++;
-          titles.push(result.m);
-          scheduleBackground(result.m);
-          reused += result.reused;
-          issues.push(
-            ...result.issues.map((i) => ({ ...i, path: plan.source.title + '/' + i.path })),
-          );
-          if (result.issues.length) retry.push({ ...plan, targetId: result.m.id });
-        } catch (e) {
-          options.signal.throwIfAborted();
-          issues.push({ path: plan.source.title, reason: errorMessage(e) });
-          retry.push(plan);
-        }
-      }
-      await refresh();
-      setReport({ titles, count, reused, issues, retry });
-    } catch (e) {
-      await refresh();
-      notify(
-        e instanceof DOMException && e.name === 'AbortError'
-          ? `Import cancelled. ${count} completed titles saved; the unfinished title was not changed.`
-          : errorMessage(e),
-      );
-    } finally {
-      discardScan(plans.map((p) => p.source));
-      finish();
-    }
-  }
   async function pick(m?: Summary | Manga) {
-    if (locked.current) return;
+    if (busy) return;
     pending.current = m;
     // On desktop, use the native folder dialog and IPC-based file access.
     // This avoids File System Access API permission issues in the installed app.
@@ -690,32 +898,13 @@ export default function App() {
       else notify('Direct folder selection is unavailable. Click again to use standard selection.');
     }
   }
-  const cancel = () => controller.current?.abort();
+
   const drop = (items: DataTransferItem[]) => {
-    if (locked.current) return;
-    const options = start();
-    const read = droppedSources(items, options);
-    void read()
-      .then(async (sources) => {
-        try {
-          await warmSources(sources, options);
-        } catch (e) {
-          discardScan(sources);
-          throw e;
-        }
-        options.signal.throwIfAborted();
-        if (!sources.length)
-          throw new Error('Drop folders or image files. Extract archives first.');
-        setPreview({ sources });
-      })
-      .catch((e) =>
-        notify(
-          e instanceof DOMException && e.name === 'AbortError'
-            ? 'Import cancelled.'
-            : errorMessage(e),
-        ),
-      )
-      .finally(finish);
+    if (busy) return;
+    void discover(async (options) => {
+      const read = droppedSources(items, options);
+      return await read();
+    });
   };
   useEffect(() => {
     const context = (
@@ -749,9 +938,9 @@ export default function App() {
     return () => lifecycle.abort();
   }, []);
   function exportReport() {
-    if (!report) return;
+    if (importState.status !== 'complete') return;
     const url = URL.createObjectURL(
-      new Blob([report.issues.map((i) => `${i.path}: ${i.reason}`).join('\n')], {
+      new Blob([importState.report.issues.map((i) => `${i.path}: ${i.reason}`).join('\n')], {
         type: 'text/plain',
       }),
     );
@@ -852,26 +1041,23 @@ export default function App() {
           <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
         </Suspense>
       )}
-      {preview && (
+      {importState.status === 'preview' && (
         <ImportDialog
-          sources={preview.sources}
-          target={preview.target}
+          sources={importState.preview.sources}
+          target={importState.preview.target}
           library={library}
-          onClose={() => {
-            discardScan(preview.sources);
-            setPreview(undefined);
-          }}
+          onClose={dismissImport}
           onImport={(plans) => void runImport(plans)}
         />
       )}
-      {report && (
+      {importState.status === 'complete' && (
         <Suspense fallback={null}>
           <ImportComplete
-            titles={report.titles}
-            issues={report.issues}
-            onClose={() => setReport(undefined)}
+            titles={importState.report.titles}
+            issues={importState.report.issues}
+            onClose={dismissImport}
             onExport={exportReport}
-            onRetry={() => void runImport(report.retry)}
+            onRetry={() => void runImport(importState.report.retry)}
           />
         </Suspense>
       )}
