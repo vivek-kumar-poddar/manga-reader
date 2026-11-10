@@ -225,6 +225,14 @@ export const listLibrary = async (): Promise<Summary[]> => {
   }
   entries.sort((a, b) => b.updatedAt - a.updatedAt);
   cachedSummaries = entries;
+  if (desktopAPI.isDesktop && desktopAPI.registerAllowedRoots) {
+    const localRoots = entries
+      .map((s) => s.localPath)
+      .filter((p): p is string => typeof p === 'string' && p.length > 0);
+    if (localRoots.length > 0) {
+      void desktopAPI.registerAllowedRoots(localRoots);
+    }
+  }
   return entries.slice();
 };
 
@@ -866,6 +874,9 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
   // Desktop: read directly from the filesystem via IPC — works across restarts.
   if (desktopAPI.isDesktop && m.localPath) {
+    if (desktopAPI.registerAllowedRoots) {
+      void desktopAPI.registerAllowedRoots([m.localPath]);
+    }
     const sep = m.localPath.includes('\\') ? '\\' : '/';
     const absPath = m.localPath + sep + p.path.split('/').join(sep);
     const buf = await withinTime(desktopAPI.readFile(absPath), limits.ioTimeoutMs, 'Reading file');

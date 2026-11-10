@@ -23,7 +23,7 @@ import {
   type SaveProgressResult,
 } from '../src/storage';
 import { clearCoverUrlPool } from '../src/App';
-import { desktopAPI } from '../src/tauriBridge';
+import { desktopAPI, TauriDesktopBridge, parseFsError } from '../src/tauriBridge';
 import { imageFile } from '../src/images';
 import { fromFiles, DesktopHandle, chapterGroups, splitSource } from '../src/importScan';
 import { LimitError } from '../src/limits';
@@ -447,6 +447,245 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         configurable: true,
       });
       (desktopAPI as any).getThumbnail = originalGetThumbnail;
+    }
+  });
+
+  test('TauriDesktopBridge thumbnail IPC sends raw Uint8Array and receives binary buffer', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'read_thumbnail') {
+          return new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+        }
+        return null;
+      },
+    };
+
+    try {
+      // 1. saveThumbnail with ArrayBuffer passes Uint8Array directly (no JS number array conversion)
+      const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
+      const saved = await bridge.saveThumbnail('thumb-1', buffer);
+      expect(saved).toBe(true);
+      expect(calls.length).toBe(1);
+      expect(calls[0].cmd).toBe('save_thumbnail');
+      expect(calls[0].args.id).toBe('thumb-1');
+      expect(calls[0].args.bytes).toBeInstanceOf(Uint8Array);
+      expect(Array.isArray(calls[0].args.bytes)).toBe(false);
+
+      // 2. saveThumbnail with Uint8Array passes Uint8Array directly
+      const uint8 = new Uint8Array([5, 6, 7, 8]);
+      const savedUint8 = await bridge.saveThumbnail('thumb-2', uint8);
+      expect(savedUint8).toBe(true);
+      expect(calls.length).toBe(2);
+      expect(calls[1].cmd).toBe('save_thumbnail');
+      expect(calls[1].args.id).toBe('thumb-2');
+      expect(calls[1].args.bytes).toBe(uint8);
+
+      // 3. getThumbnail receives binary Uint8Array and returns ArrayBuffer
+      const readBuffer = await bridge.getThumbnail('thumb-1');
+      expect(readBuffer).toBeInstanceOf(ArrayBuffer);
+      expect(readBuffer?.byteLength).toBe(4);
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
+  test('parseFsError parses structured error payloads from Rust command rejections', () => {
+    // 1. Structured object from Tauri IPC
+    const errObj = { code: 'PathNotAllowed', message: 'Path /etc is not allowed' };
+    expect(parseFsError(errObj)).toEqual(errObj);
+
+    // 2. JSON stringified error
+    const errJson = JSON.stringify({ code: 'Cancelled' });
+    expect(parseFsError(errJson)).toEqual({ code: 'Cancelled' });
+
+    // 3. Other errors return null
+    expect(parseFsError(new Error('Unknown generic error'))).toBeNull();
+    expect(parseFsError('Random string error')).toBeNull();
+    expect(parseFsError(null)).toBeNull();
+  });
+
+  test('TauriDesktopBridge listFolder supports scanId, cancellation via AbortSignal, and registerAllowedRoots', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'list_folder') {
+          if (args?.scanId === 'cancelled-scan') {
+            throw { code: 'Cancelled', message: 'Operation was cancelled' };
+          }
+          return [
+            {
+              relativePath: 'ch1/01.webp',
+              absolutePath: 'C:/manga/ch1/01.webp',
+              size: 1000,
+              modified: 12345,
+              width: 800,
+              height: 1200,
+            },
+          ];
+        }
+        if (cmd === 'cancel_scan') {
+          return true;
+        }
+        if (cmd === 'register_allowed_roots') {
+          return null;
+        }
+        return null;
+      },
+    };
+
+    try {
+      // 1. Successful listFolder with scanId
+      const entries = await bridge.listFolder('C:/manga', { scanId: 'scan-123' });
+      expect(entries.length).toBe(1);
+      expect(entries[0].relativePath).toBe('ch1/01.webp');
+      expect(calls.some((c) => c.cmd === 'list_folder' && c.args.scanId === 'scan-123')).toBe(true);
+
+      // 2. Cancellation via AbortSignal triggers cancelScan and rejects with AbortError
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        bridge.listFolder('C:/manga', { scanId: 'scan-abc', signal: controller.signal }),
+      ).rejects.toThrow('The operation was aborted');
+
+      // 3. Rust rejection with FsError::Cancelled throws AbortError
+      await expect(bridge.listFolder('C:/manga', { scanId: 'cancelled-scan' })).rejects.toThrow(
+        'The operation was aborted',
+      );
+
+      // 4. registerAllowedRoots invokes Tauri command
+      await bridge.registerAllowedRoots(['C:/manga', 'D:/other']);
+      expect(
+        calls.some(
+          (c) =>
+            c.cmd === 'register_allowed_roots' &&
+            c.args.roots.includes('C:/manga') &&
+            c.args.roots.includes('D:/other'),
+        ),
+      ).toBe(true);
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
+  test('TauriDesktopBridge supports naturalSortPaths, prepareChapterHeaders, and discoverLibrary', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'natural_sort_paths') {
+          return ['ch 1/01.webp', 'ch 1/02.webp', 'ch 1/10.webp'];
+        }
+        if (cmd === 'prepare_chapter_headers') {
+          return [
+            {
+              path: 'C:/manga/ch1/01.webp',
+              width: 800,
+              height: 1200,
+              size: 54321,
+              modified: 12345,
+              checksum: 'deadbeef12345678',
+            },
+          ];
+        }
+        if (cmd === 'discover_library') {
+          return {
+            rootPath: 'C:/manga',
+            totalFiles: 2,
+            titles: [
+              {
+                title: 'Test Manga',
+                rootPath: 'C:/manga/Test Manga',
+                totalImages: 2,
+                coverPath: 'C:/manga/Test Manga/ch1/01.webp',
+                chapters: [
+                  {
+                    name: 'Chapter 1',
+                    pages: [
+                      {
+                        name: '01.webp',
+                        relativePath: 'ch1/01.webp',
+                        absolutePath: 'C:/manga/Test Manga/ch1/01.webp',
+                        width: 800,
+                        height: 1200,
+                        size: 5000,
+                        modified: 100,
+                      },
+                      {
+                        name: '02.webp',
+                        relativePath: 'ch1/02.webp',
+                        absolutePath: 'C:/manga/Test Manga/ch1/02.webp',
+                        width: 800,
+                        height: 1200,
+                        size: 5500,
+                        modified: 200,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          };
+        }
+        return null;
+      },
+    };
+
+    try {
+      // 1. naturalSortPaths
+      const sorted = await bridge.naturalSortPaths([
+        'ch 1/10.webp',
+        'ch 1/01.webp',
+        'ch 1/02.webp',
+      ]);
+      expect(sorted).toEqual(['ch 1/01.webp', 'ch 1/02.webp', 'ch 1/10.webp']);
+
+      // 2. prepareChapterHeaders
+      const headers = await bridge.prepareChapterHeaders(['C:/manga/ch1/01.webp']);
+      expect(headers.length).toBe(1);
+      expect(headers[0].width).toBe(800);
+      expect(headers[0].checksum).toBe('deadbeef12345678');
+
+      // 3. discoverLibrary
+      const discovery = await bridge.discoverLibrary('C:/manga');
+      expect(discovery).toBeDefined();
+      expect(discovery?.titles.length).toBe(1);
+      expect(discovery?.titles[0].chapters[0].pages.length).toBe(2);
+      expect(discovery?.titles[0].chapters[0].pages[0].width).toBe(800);
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
     }
   });
 

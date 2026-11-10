@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 
 export interface FolderEntry {
   relativePath: string;
@@ -9,11 +10,93 @@ export interface FolderEntry {
   height?: number | null;
 }
 
+export interface PageHeader {
+  path: string;
+  width: number;
+  height: number;
+  size: number;
+  modified: number;
+  checksum?: string;
+}
+
+export interface DiscoveredPage {
+  name: string;
+  relativePath: string;
+  absolutePath: string;
+  width?: number | null;
+  height?: number | null;
+  size: number;
+  modified: number;
+}
+
+export interface DiscoveredChapter {
+  name: string;
+  pages: DiscoveredPage[];
+}
+
+export interface DiscoveredTitle {
+  title: string;
+  rootPath: string;
+  chapters: DiscoveredChapter[];
+  totalImages: number;
+  coverPath?: string;
+}
+
+export interface LibraryDiscovery {
+  rootPath: string;
+  titles: DiscoveredTitle[];
+  totalFiles: number;
+}
+
+export interface ScanProgress {
+  scanId?: string;
+  done: number;
+  total: number;
+}
+
+export interface ListFolderOptions {
+  scanId?: string;
+  signal?: AbortSignal;
+  onProgress?: (progress: ScanProgress) => void;
+}
+
+export interface FsErrorPayload {
+  code: 'NotFound' | 'TooLarge' | 'ForbiddenExt' | 'PathNotAllowed' | 'Cancelled' | 'Io';
+  message?: string;
+}
+
+export function parseFsError(err: unknown): FsErrorPayload | null {
+  if (err && typeof err === 'object') {
+    if ('code' in err && typeof (err as any).code === 'string') {
+      return err as FsErrorPayload;
+    }
+  }
+  if (typeof err === 'string') {
+    try {
+      const parsed = JSON.parse(err);
+      if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+        return parsed as FsErrorPayload;
+      }
+    } catch {
+      // not JSON
+    }
+  }
+  return null;
+}
+
 export interface DesktopAPI {
   readonly isDesktop: boolean;
   readonly isTauri: boolean;
   selectFolder(): Promise<string | null>;
-  listFolder(folderPath: string): Promise<FolderEntry[]>;
+  listFolder(folderPath: string, options?: ListFolderOptions): Promise<FolderEntry[]>;
+  discoverLibrary?(
+    folderPath: string,
+    options?: ListFolderOptions,
+  ): Promise<LibraryDiscovery | null>;
+  naturalSortPaths?(paths: string[]): Promise<string[]>;
+  prepareChapterHeaders?(paths: string[]): Promise<PageHeader[]>;
+  cancelScan?(scanId: string): Promise<boolean>;
+  registerAllowedRoots?(roots: string[]): Promise<void>;
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
   setProgressBar(progress: number): void;
@@ -38,7 +121,7 @@ export const isLegacyElectron =
 
 export const isDesktop = isTauri || isLegacyElectron;
 
-class TauriDesktopBridge implements DesktopAPI {
+export class TauriDesktopBridge implements DesktopAPI {
   readonly isDesktop = true;
   readonly isTauri = true;
 
@@ -47,23 +130,156 @@ class TauriDesktopBridge implements DesktopAPI {
       const selected = await invoke<string | null>('select_folder');
       return selected ?? null;
     } catch (err) {
-      console.error('Tauri selectFolder failed:', err);
+      console.error('Tauri selectFolder failed:', parseFsError(err) ?? err);
       return null;
     }
   }
 
-  async listFolder(folderPath: string): Promise<FolderEntry[]> {
+  async listFolder(folderPath: string, options?: ListFolderOptions): Promise<FolderEntry[]> {
+    let unlisten: (() => void) | undefined;
+    const scanId =
+      options?.scanId ??
+      (options?.signal || options?.onProgress
+        ? `scan-${Math.random().toString(36).slice(2)}`
+        : undefined);
+
+    let abortHandler: (() => void) | undefined;
+    if (options?.signal && scanId) {
+      if (options.signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      abortHandler = () => {
+        void this.cancelScan(scanId);
+      };
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
     try {
-      return await invoke<FolderEntry[]>('list_folder', { folderPath });
+      if (
+        options?.onProgress &&
+        typeof window !== 'undefined' &&
+        (window as any).__TAURI_INTERNALS__
+      ) {
+        try {
+          unlisten = await listen<ScanProgress>('scan-progress', (event) => {
+            if (!scanId || event.payload.scanId === scanId) {
+              options.onProgress?.(event.payload);
+            }
+          });
+        } catch (err) {
+          console.warn('Tauri scan-progress listen failed:', err);
+        }
+      }
+
+      return await invoke<FolderEntry[]>('list_folder', { folderPath, scanId });
     } catch (err) {
-      console.error('Tauri listFolder failed:', err);
+      const fsErr = parseFsError(err);
+      if (fsErr?.code === 'Cancelled') {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      console.error('Tauri listFolder failed:', fsErr ?? err);
       return [];
+    } finally {
+      if (abortHandler && options?.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+      unlisten?.();
+    }
+  }
+
+  async discoverLibrary(
+    folderPath: string,
+    options?: ListFolderOptions,
+  ): Promise<LibraryDiscovery | null> {
+    let unlisten: (() => void) | undefined;
+    const scanId =
+      options?.scanId ??
+      (options?.signal || options?.onProgress
+        ? `scan-${Math.random().toString(36).slice(2)}`
+        : undefined);
+
+    let abortHandler: (() => void) | undefined;
+    if (options?.signal && scanId) {
+      if (options.signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      abortHandler = () => {
+        void this.cancelScan(scanId);
+      };
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    try {
+      if (
+        options?.onProgress &&
+        typeof window !== 'undefined' &&
+        (window as any).__TAURI_INTERNALS__
+      ) {
+        try {
+          unlisten = await listen<ScanProgress>('scan-progress', (event) => {
+            if (!scanId || event.payload.scanId === scanId) {
+              options.onProgress?.(event.payload);
+            }
+          });
+        } catch (err) {
+          console.warn('Tauri scan-progress listen failed:', err);
+        }
+      }
+
+      return await invoke<LibraryDiscovery>('discover_library', { folderPath, scanId });
+    } catch (err) {
+      const fsErr = parseFsError(err);
+      if (fsErr?.code === 'Cancelled') {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      console.error('Tauri discoverLibrary failed:', fsErr ?? err);
+      return null;
+    } finally {
+      if (abortHandler && options?.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+      unlisten?.();
+    }
+  }
+
+  async naturalSortPaths(paths: string[]): Promise<string[]> {
+    try {
+      return await invoke<string[]>('natural_sort_paths', { paths });
+    } catch (err) {
+      console.warn('Tauri naturalSortPaths failed:', parseFsError(err) ?? err);
+      return paths;
+    }
+  }
+
+  async prepareChapterHeaders(paths: string[]): Promise<PageHeader[]> {
+    try {
+      return await invoke<PageHeader[]>('prepare_chapter_headers', { paths });
+    } catch (err) {
+      console.warn('Tauri prepareChapterHeaders failed:', parseFsError(err) ?? err);
+      return [];
+    }
+  }
+
+  async cancelScan(scanId: string): Promise<boolean> {
+    try {
+      return await invoke<boolean>('cancel_scan', { scanId });
+    } catch (err) {
+      console.warn('Tauri cancelScan failed for', scanId, err);
+      return false;
+    }
+  }
+
+  async registerAllowedRoots(roots: string[]): Promise<void> {
+    try {
+      await invoke('register_allowed_roots', { roots });
+    } catch (err) {
+      console.warn('Tauri registerAllowedRoots failed:', err);
     }
   }
 
   async readFile(absolutePath: string): Promise<ArrayBuffer | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer | number[]>('read_file', {
+      const response = await invoke<Uint8Array | ArrayBuffer>('read_file', {
         absolutePath,
       });
       if (response instanceof ArrayBuffer) {
@@ -75,12 +291,9 @@ class TauriDesktopBridge implements DesktopAPI {
           response.byteOffset + response.byteLength,
         ) as ArrayBuffer;
       }
-      if (Array.isArray(response)) {
-        return new Uint8Array(response).buffer as ArrayBuffer;
-      }
       return null;
     } catch (err) {
-      console.error('Tauri readFile failed for', absolutePath, err);
+      console.error('Tauri readFile failed for', absolutePath, parseFsError(err) ?? err);
       return null;
     }
   }
@@ -97,7 +310,7 @@ class TauriDesktopBridge implements DesktopAPI {
       }
       return null;
     } catch (err) {
-      console.warn('Tauri getImageDimensions failed for', absolutePath, err);
+      console.warn('Tauri getImageDimensions failed for', absolutePath, parseFsError(err) ?? err);
       return null;
     }
   }
@@ -112,19 +325,18 @@ class TauriDesktopBridge implements DesktopAPI {
 
   async saveThumbnail(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean> {
     try {
-      const bytes =
-        buffer instanceof Uint8Array ? Array.from(buffer) : Array.from(new Uint8Array(buffer));
+      const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
       await invoke('save_thumbnail', { id, bytes });
       return true;
     } catch (err) {
-      console.warn('Tauri saveThumbnail failed for', id, err);
+      console.warn('Tauri saveThumbnail failed for', id, parseFsError(err) ?? err);
       return false;
     }
   }
 
   async getThumbnail(id: string): Promise<ArrayBuffer | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer | number[]>('read_thumbnail', { id });
+      const response = await invoke<Uint8Array | ArrayBuffer>('read_thumbnail', { id });
       if (response instanceof ArrayBuffer) {
         return response.byteLength > 0 ? response : null;
       }
@@ -136,12 +348,9 @@ class TauriDesktopBridge implements DesktopAPI {
             ) as ArrayBuffer)
           : null;
       }
-      if (Array.isArray(response) && response.length > 0) {
-        return new Uint8Array(response).buffer as ArrayBuffer;
-      }
       return null;
     } catch (err) {
-      console.warn('Tauri getThumbnail failed for', id, err);
+      console.warn('Tauri getThumbnail failed for', id, parseFsError(err) ?? err);
       return null;
     }
   }
@@ -150,7 +359,7 @@ class TauriDesktopBridge implements DesktopAPI {
     try {
       await invoke('delete_thumbnail', { id });
     } catch (err) {
-      console.warn('Tauri deleteThumbnail failed for', id, err);
+      console.warn('Tauri deleteThumbnail failed for', id, parseFsError(err) ?? err);
     }
   }
 
@@ -158,7 +367,7 @@ class TauriDesktopBridge implements DesktopAPI {
     try {
       await invoke('clear_thumbnails');
     } catch (err) {
-      console.warn('Tauri clearThumbnails failed:', err);
+      console.warn('Tauri clearThumbnails failed:', parseFsError(err) ?? err);
     }
   }
 }
@@ -178,6 +387,24 @@ class LegacyElectronDesktopBridge implements DesktopAPI {
   async listFolder(folderPath: string): Promise<FolderEntry[]> {
     return this.api?.listFolder(folderPath) ?? [];
   }
+
+  async discoverLibrary(): Promise<LibraryDiscovery | null> {
+    return null;
+  }
+
+  async naturalSortPaths(paths: string[]): Promise<string[]> {
+    return paths;
+  }
+
+  async prepareChapterHeaders(): Promise<PageHeader[]> {
+    return [];
+  }
+
+  async cancelScan(): Promise<boolean> {
+    return false;
+  }
+
+  async registerAllowedRoots(): Promise<void> {}
 
   async readFile(absolutePath: string): Promise<ArrayBuffer | null> {
     return this.api?.readFile(absolutePath) ?? null;
@@ -215,6 +442,24 @@ class WebDesktopBridge implements DesktopAPI {
   async listFolder(): Promise<FolderEntry[]> {
     return [];
   }
+
+  async discoverLibrary(): Promise<LibraryDiscovery | null> {
+    return null;
+  }
+
+  async naturalSortPaths(paths: string[]): Promise<string[]> {
+    return paths;
+  }
+
+  async prepareChapterHeaders(): Promise<PageHeader[]> {
+    return [];
+  }
+
+  async cancelScan(): Promise<boolean> {
+    return false;
+  }
+
+  async registerAllowedRoots(): Promise<void> {}
 
   async readFile(): Promise<ArrayBuffer | null> {
     return null;

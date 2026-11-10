@@ -20,6 +20,11 @@ pub fn run() {
             commands::fs::list_folder,
             commands::fs::read_file,
             commands::fs::get_image_dimensions,
+            commands::fs::cancel_scan,
+            commands::fs::register_allowed_roots,
+            commands::fs::natural_sort_paths,
+            commands::fs::prepare_chapter_headers,
+            commands::fs::discover_library,
             commands::window::set_progress_bar,
             commands::cache::save_thumbnail,
             commands::cache::read_thumbnail,
@@ -27,6 +32,11 @@ pub fn run() {
             commands::cache::clear_thumbnails,
         ])
         .setup(|app| {
+            let handle = app.handle();
+            let initial_roots = commands::fs::init_allowed_roots(&handle);
+            app.manage(initial_roots);
+            app.manage(commands::fs::ScanManager::default());
+
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

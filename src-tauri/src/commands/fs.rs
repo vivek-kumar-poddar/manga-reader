@@ -1,16 +1,19 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::RwLock;
 use std::time::UNIX_EPOCH;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 
 pub const MAX_DEPTH: usize = 64;
 pub const MAX_SCAN_FILES: usize = 100_000;
 pub const MAX_FILE_READ_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB safety cap
 pub const HEADER_READ_LIMIT: usize = 32 * 1024; // 32 KB header buffer
+pub const SCAN_BATCH_SIZE: usize = 128; // Batched Rayon dimension processing
 
 pub const ALLOWED_IMAGE_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "avif", "gif", "bmp", "svg", "ico", "heic", "heif", "tif",
@@ -26,6 +29,28 @@ pub const IGNORED_FOLDER_NAMES: &[&str] = &[
     "system volume information",
 ];
 
+#[derive(Debug, thiserror::Error, Serialize, Deserialize)]
+#[serde(tag = "code", content = "message")]
+pub enum FsError {
+    #[error("Target path not found: {0}")]
+    NotFound(String),
+
+    #[error("File exceeds maximum allowed size: {0}")]
+    TooLarge(String),
+
+    #[error("Forbidden file extension: {0}")]
+    ForbiddenExt(String),
+
+    #[error("Path is not under an allowed root: {0}")]
+    PathNotAllowed(String),
+
+    #[error("Operation was cancelled")]
+    Cancelled,
+
+    #[error("IO error: {0}")]
+    Io(String),
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FolderEntry {
@@ -37,11 +62,337 @@ pub struct FolderEntry {
     pub height: Option<u32>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageHeader {
+    pub path: String,
+    pub width: u32,
+    pub height: u32,
+    pub size: u64,
+    pub modified: f64,
+    pub checksum: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredPage {
+    pub name: String,
+    pub relative_path: String,
+    pub absolute_path: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub size: u64,
+    pub modified: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredChapter {
+    pub name: String,
+    pub pages: Vec<DiscoveredPage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredTitle {
+    pub title: String,
+    pub root_path: String,
+    pub chapters: Vec<DiscoveredChapter>,
+    pub total_images: usize,
+    pub cover_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryDiscovery {
+    pub root_path: String,
+    pub titles: Vec<DiscoveredTitle>,
+    pub total_files: usize,
+}
+
+pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn category(s: &str) -> i32 {
+        let trimmed = s.trim_start();
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("prologue") || lower.starts_with("opening") {
+            -1
+        } else if lower.starts_with("extra")
+            || lower.starts_with("bonus")
+            || lower.starts_with("special")
+            || lower.starts_with("epilogue")
+        {
+            1
+        } else {
+            0
+        }
+    }
+
+    let cat_a = category(a);
+    let cat_b = category(b);
+    if cat_a != cat_b {
+        return cat_a.cmp(&cat_b);
+    }
+
+    #[derive(Debug, PartialEq)]
+    enum Token<'a> {
+        Num(f64),
+        Str(&'a str),
+    }
+
+    fn extract_tokens(s: &str) -> Vec<Token<'_>> {
+        let mut tokens = Vec::new();
+        let mut start = 0;
+        let mut in_num = false;
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+
+        let mut i = 0;
+        while i < len {
+            let c = bytes[i];
+            let is_digit = c.is_ascii_digit();
+            if is_digit != in_num {
+                if i > start {
+                    let slice = &s[start..i];
+                    if in_num {
+                        if let Ok(n) = slice.parse::<f64>() {
+                            tokens.push(Token::Num(n));
+                        } else {
+                            tokens.push(Token::Str(slice));
+                        }
+                    } else {
+                        tokens.push(Token::Str(slice));
+                    }
+                }
+                start = i;
+                in_num = is_digit;
+            }
+            i += 1;
+        }
+
+        if start < len {
+            let slice = &s[start..len];
+            if in_num {
+                if let Ok(n) = slice.parse::<f64>() {
+                    tokens.push(Token::Num(n));
+                } else {
+                    tokens.push(Token::Str(slice));
+                }
+            } else {
+                tokens.push(Token::Str(slice));
+            }
+        }
+
+        tokens
+    }
+
+    let lower_a = a.to_lowercase();
+    let lower_b = b.to_lowercase();
+
+    let tokens_a = extract_tokens(&lower_a);
+    let tokens_b = extract_tokens(&lower_b);
+
+    for (x, y) in tokens_a.iter().zip(tokens_b.iter()) {
+        match (x, y) {
+            (Token::Num(nx), Token::Num(ny)) => {
+                if let Some(ord) = nx.partial_cmp(ny) {
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+            }
+            (Token::Str(sx), Token::Str(sy)) => {
+                let ord = sx.cmp(sy);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+            (Token::Num(_), Token::Str(_)) => return std::cmp::Ordering::Less,
+            (Token::Str(_), Token::Num(_)) => return std::cmp::Ordering::Greater,
+        }
+    }
+
+    tokens_a.len().cmp(&tokens_b.len()).then_with(|| a.cmp(b))
+}
+
+#[tauri::command]
+pub fn natural_sort_paths(mut paths: Vec<String>) -> Vec<String> {
+    paths.sort_by(|a, b| natural_order(a, b));
+    paths
+}
+
+#[tauri::command]
+pub async fn prepare_chapter_headers(
+    app: AppHandle,
+    paths: Vec<String>,
+) -> Result<Vec<PageHeader>, FsError> {
+    let allowed_set = {
+        let allowed = app.state::<AllowedRoots>();
+        allowed.0.read().unwrap().clone()
+    };
+
+    // Parallel extraction with Rayon off main thread
+    let results: Vec<PageHeader> = tokio::task::spawn_blocking(move || {
+        paths
+            .into_par_iter()
+            .filter_map(|p_str| {
+                let trimmed = p_str.trim();
+                let path = Path::new(trimmed);
+                let resolved = dunce::canonicalize(path).ok()?;
+                if !allowed_set.is_empty() && !allowed_set.iter().any(|r| resolved.starts_with(r)) {
+                    return None;
+                }
+                let ext = resolved.extension()?.to_str()?.to_lowercase();
+                if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                    return None;
+                }
+                let metadata = std::fs::metadata(&resolved).ok()?;
+                if !metadata.is_file() || metadata.len() > MAX_FILE_READ_BYTES {
+                    return None;
+                }
+                let (w, h) = parse_image_dimensions(&resolved);
+                let width = w.unwrap_or(800);
+                let height = h.unwrap_or(1200);
+
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as f64)
+                    .unwrap_or(0.0);
+
+                // Lightweight checksum: FNV-1a of size + modified + first 512 bytes
+                let mut hash: u64 = 0xcbf29ce484222325;
+                let size = metadata.len();
+                for b in size.to_le_bytes() {
+                    hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
+                }
+                for b in (modified as u64).to_le_bytes() {
+                    hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
+                }
+                if let Ok(mut f) = File::open(&resolved) {
+                    let mut sample = [0u8; 512];
+                    if let Ok(n) = f.read(&mut sample) {
+                        for &b in &sample[..n] {
+                            hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
+                        }
+                    }
+                }
+                let checksum = Some(format!("{:016x}", hash));
+
+                Some(PageHeader {
+                    path: p_str,
+                    width,
+                    height,
+                    size,
+                    modified,
+                    checksum,
+                })
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| FsError::Io(e.to_string()))?;
+
+    Ok(results)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProgressPayload {
+    pub scan_id: Option<String>,
+    pub done: usize,
+    pub total: usize,
+}
+
+#[derive(Clone)]
 struct CandidateEntry {
     rel_path: String,
-    abs_path: std::path::PathBuf,
+    abs_path: PathBuf,
     size: u64,
     modified: f64,
+}
+
+#[derive(Default)]
+pub struct AllowedRoots(pub RwLock<HashSet<PathBuf>>);
+
+impl AllowedRoots {
+    pub fn is_allowed(&self, path: &Path) -> bool {
+        let roots = self.0.read().unwrap();
+        if roots.is_empty() {
+            return true;
+        }
+        roots.iter().any(|root| path.starts_with(root))
+    }
+
+    pub fn add_root(&self, path: PathBuf) {
+        let canonical = dunce::canonicalize(&path).unwrap_or(path);
+        self.0.write().unwrap().insert(canonical);
+    }
+}
+
+pub fn load_persisted_roots(app: &AppHandle) -> HashSet<PathBuf> {
+    let mut set = HashSet::new();
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let file_path = app_dir.join("allowed_roots.json");
+        if file_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&file_path) {
+                if let Ok(paths) = serde_json::from_str::<Vec<String>>(&data) {
+                    for p in paths {
+                        let pb = PathBuf::from(p);
+                        if let Ok(canonical) = dunce::canonicalize(&pb) {
+                            set.insert(canonical);
+                        } else {
+                            set.insert(pb);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    set
+}
+
+pub fn save_persisted_roots(app: &AppHandle, roots: &HashSet<PathBuf>) {
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let _ = std::fs::create_dir_all(&app_dir);
+        let file_path = app_dir.join("allowed_roots.json");
+        let list: Vec<String> = roots.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        if let Ok(data) = serde_json::to_string(&list) {
+            let _ = std::fs::write(file_path, data);
+        }
+    }
+}
+
+pub fn init_allowed_roots(app: &AppHandle) -> AllowedRoots {
+    let loaded = load_persisted_roots(app);
+    AllowedRoots(RwLock::new(loaded))
+}
+
+#[derive(Default)]
+pub struct ScanManager {
+    active_scans:
+        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
+}
+
+impl ScanManager {
+    pub fn register(&self, id: &str) -> tokio::sync::watch::Receiver<bool> {
+        let (tx, rx) = tokio::sync::watch::channel(false);
+        self.active_scans.lock().unwrap().insert(id.to_string(), tx);
+        rx
+    }
+
+    pub fn unregister(&self, id: &str) {
+        self.active_scans.lock().unwrap().remove(id);
+    }
+
+    pub fn cancel(&self, id: &str) -> bool {
+        if let Some(tx) = self.active_scans.lock().unwrap().get(id) {
+            let _ = tx.send(true);
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// Parses image dimensions (width, height) without decoding pixel buffers.
@@ -66,7 +417,10 @@ pub fn parse_image_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
                 if dim.width > 0 && dim.height > 0 {
                     let w = dim.width as u64;
                     let h = dim.height as u64;
-                    if w <= u32::MAX as u64 && h <= u32::MAX as u64 && w.saturating_mul(h) < (1u64 << 40) {
+                    if w <= u32::MAX as u64
+                        && h <= u32::MAX as u64
+                        && w.saturating_mul(h) < (1u64 << 40)
+                    {
                         return (Some(dim.width as u32), Some(dim.height as u32));
                     }
                 }
@@ -89,23 +443,65 @@ pub fn parse_image_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
 }
 
 #[tauri::command]
-pub async fn select_folder(app: AppHandle) -> Result<Option<String>, String> {
+pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
     let folder = app.dialog().file().blocking_pick_folder();
+    if let Some(ref path) = folder {
+        let pb = PathBuf::from(path.to_string());
+        let allowed = app.state::<AllowedRoots>();
+        allowed.add_root(pb);
+        save_persisted_roots(&app, &allowed.0.read().unwrap());
+    }
     Ok(folder.map(|p| p.to_string()))
 }
 
 #[tauri::command]
-pub fn get_image_dimensions(absolute_path: String) -> Result<Option<(u32, u32)>, String> {
+pub fn register_allowed_roots(app: AppHandle, roots: Vec<String>) -> Result<(), FsError> {
+    let allowed = app.state::<AllowedRoots>();
+    for root in roots {
+        if !root.trim().is_empty() {
+            allowed.add_root(PathBuf::from(root));
+        }
+    }
+    save_persisted_roots(&app, &allowed.0.read().unwrap());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_scan(app: AppHandle, scan_id: String) -> Result<bool, FsError> {
+    let scan_mgr = app.state::<ScanManager>();
+    Ok(scan_mgr.cancel(&scan_id))
+}
+
+#[tauri::command]
+pub fn get_image_dimensions(
+    app: AppHandle,
+    absolute_path: String,
+) -> Result<Option<(u32, u32)>, FsError> {
     let path = Path::new(&absolute_path);
-    let (w, h) = parse_image_dimensions(path);
-    match (w, h) {
-        (Some(width), Some(height)) => Ok(Some((width, height))),
-        _ => Ok(None),
+    if let Ok(resolved) = dunce::canonicalize(path) {
+        let allowed = app.state::<AllowedRoots>();
+        if !allowed.is_allowed(&resolved) {
+            return Err(FsError::PathNotAllowed(format!(
+                "Path '{}' is not under an allowed library root",
+                resolved.display()
+            )));
+        }
+        let (w, h) = parse_image_dimensions(&resolved);
+        match (w, h) {
+            (Some(width), Some(height)) => Ok(Some((width, height))),
+            _ => Ok(None),
+        }
+    } else {
+        Ok(None)
     }
 }
 
 #[tauri::command]
-pub fn list_folder(folder_path: String) -> Result<Vec<FolderEntry>, String> {
+pub async fn list_folder(
+    app: AppHandle,
+    folder_path: String,
+    scan_id: Option<String>,
+) -> Result<Vec<FolderEntry>, FsError> {
     let raw_path = std::path::Path::new(folder_path.trim());
     if !raw_path.exists() || !raw_path.is_dir() {
         return Ok(Vec::new());
@@ -113,130 +509,533 @@ pub fn list_folder(folder_path: String) -> Result<Vec<FolderEntry>, String> {
 
     let root = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
 
-    let mut candidates = Vec::new();
-    let walker = walkdir::WalkDir::new(&root)
-        .max_depth(MAX_DEPTH)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|entry| {
-            if entry.depth() == 0 {
-                return true;
+    // Register root as allowed and persist
+    let allowed = app.state::<AllowedRoots>();
+    allowed.add_root(root.clone());
+    save_persisted_roots(&app, &allowed.0.read().unwrap());
+
+    // Setup cancellation receiver if scan_id provided
+    let scan_mgr = app.state::<ScanManager>();
+    let rx = scan_id.as_deref().map(|id| scan_mgr.register(id));
+
+    struct ScanGuard<'a> {
+        mgr: &'a ScanManager,
+        id: Option<&'a str>,
+    }
+    impl<'a> Drop for ScanGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(id) = self.id {
+                self.mgr.unregister(id);
             }
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if entry.file_type().is_dir() {
-                if name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str()) {
-                    return false;
+        }
+    }
+    let _guard = ScanGuard {
+        mgr: &scan_mgr,
+        id: scan_id.as_deref(),
+    };
+
+    let check_cancelled = |rx: Option<&tokio::sync::watch::Receiver<bool>>| -> Result<(), FsError> {
+        if let Some(receiver) = rx {
+            if *receiver.borrow() {
+                return Err(FsError::Cancelled);
+            }
+        }
+        Ok(())
+    };
+
+    check_cancelled(rx.as_ref())?;
+
+    // Collect candidates off the main thread
+    let root_clone = root.clone();
+    let candidates = tokio::task::spawn_blocking(move || {
+        let mut list = Vec::new();
+        let walker = walkdir::WalkDir::new(&root_clone)
+            .max_depth(MAX_DEPTH)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| {
+                if entry.depth() == 0 {
+                    return true;
                 }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if entry.file_type().is_dir() {
+                    if name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str()) {
+                        return false;
+                    }
+                }
+                true
+            });
+
+        for entry_res in walker {
+            if list.len() >= MAX_SCAN_FILES {
+                break;
             }
-            true
-        });
+            let entry = match entry_res {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
 
-    for entry_res in walker {
-        if candidates.len() >= MAX_SCAN_FILES {
-            break;
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let file_path = entry.path();
+            let ext = match file_path.extension() {
+                Some(e) => e.to_string_lossy().to_lowercase(),
+                None => continue,
+            };
+
+            if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                continue;
+            }
+
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            let rel_path = match file_path.strip_prefix(&root_clone) {
+                Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                Err(_) => continue,
+            };
+
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as f64)
+                .unwrap_or(0.0);
+
+            list.push(CandidateEntry {
+                rel_path,
+                abs_path: file_path.to_path_buf(),
+                size: metadata.len(),
+                modified,
+            });
         }
-        let entry = match entry_res {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
+        list
+    })
+    .await
+    .map_err(|e| FsError::Io(e.to_string()))?;
 
-        if !entry.file_type().is_file() {
-            continue;
-        }
+    check_cancelled(rx.as_ref())?;
 
-        let file_path = entry.path();
-        let ext = match file_path.extension() {
-            Some(e) => e.to_string_lossy().to_lowercase(),
-            None => continue,
-        };
+    let total = candidates.len();
+    let _ = app.emit(
+        "scan-progress",
+        ScanProgressPayload {
+            scan_id: scan_id.clone(),
+            done: 0,
+            total,
+        },
+    );
 
-        if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-            continue;
-        }
-
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-
-        let rel_path = match file_path.strip_prefix(&root) {
-            Ok(p) => p.to_string_lossy().replace('\\', "/"),
-            Err(_) => continue,
-        };
-
-        let modified = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_millis() as f64)
-            .unwrap_or(0.0);
-
-        candidates.push(CandidateEntry {
-            rel_path,
-            abs_path: file_path.to_path_buf(),
-            size: metadata.len(),
-            modified,
-        });
+    if total == 0 {
+        return Ok(Vec::new());
     }
 
-    // Parallel dimension extraction across Rayon worker threads
-    let results: Vec<FolderEntry> = candidates
-        .into_par_iter()
-        .map(|entry| {
-            let (width, height) = parse_image_dimensions(&entry.abs_path);
-            FolderEntry {
-                relative_path: entry.rel_path,
-                absolute_path: entry.abs_path.to_string_lossy().to_string(),
-                size: entry.size,
-                modified: entry.modified,
-                width,
-                height,
-            }
+    // Process dimensions in chunks with Rayon parallelism and progress emission
+    let mut results = Vec::with_capacity(total);
+    let mut done = 0;
+
+    for chunk in candidates.chunks(SCAN_BATCH_SIZE) {
+        check_cancelled(rx.as_ref())?;
+
+        let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
+        let batch_results: Vec<FolderEntry> = tokio::task::spawn_blocking(move || {
+            chunk_vec
+                .into_par_iter()
+                .map(|entry| {
+                    let (width, height) = parse_image_dimensions(&entry.abs_path);
+                    FolderEntry {
+                        relative_path: entry.rel_path,
+                        absolute_path: entry.abs_path.to_string_lossy().to_string(),
+                        size: entry.size,
+                        modified: entry.modified,
+                        width,
+                        height,
+                    }
+                })
+                .collect()
         })
-        .collect();
+        .await
+        .map_err(|e| FsError::Io(e.to_string()))?;
+
+        done += batch_results.len();
+        results.extend(batch_results);
+
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressPayload {
+                scan_id: scan_id.clone(),
+                done,
+                total,
+            },
+        );
+
+        tokio::task::yield_now().await;
+    }
+
+    check_cancelled(rx.as_ref())?;
 
     Ok(results)
 }
 
 #[tauri::command]
-pub async fn read_file(absolute_path: String) -> Result<tauri::ipc::Response, String> {
+pub async fn discover_library(
+    app: AppHandle,
+    folder_path: String,
+    scan_id: Option<String>,
+) -> Result<LibraryDiscovery, FsError> {
+    let raw_path = std::path::Path::new(folder_path.trim());
+    if !raw_path.exists() || !raw_path.is_dir() {
+        return Ok(LibraryDiscovery {
+            root_path: folder_path,
+            titles: Vec::new(),
+            total_files: 0,
+        });
+    }
+
+    let root = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
+
+    // Register root as allowed
+    let allowed = app.state::<AllowedRoots>();
+    allowed.add_root(root.clone());
+    save_persisted_roots(&app, &allowed.0.read().unwrap());
+
+    let scan_mgr = app.state::<ScanManager>();
+    let rx = scan_id.as_deref().map(|id| scan_mgr.register(id));
+
+    struct ScanGuard<'a> {
+        mgr: &'a ScanManager,
+        id: Option<&'a str>,
+    }
+    impl<'a> Drop for ScanGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(id) = self.id {
+                self.mgr.unregister(id);
+            }
+        }
+    }
+    let _guard = ScanGuard {
+        mgr: &scan_mgr,
+        id: scan_id.as_deref(),
+    };
+
+    let check_cancelled = |rx: Option<&tokio::sync::watch::Receiver<bool>>| -> Result<(), FsError> {
+        if let Some(receiver) = rx {
+            if *receiver.borrow() {
+                return Err(FsError::Cancelled);
+            }
+        }
+        Ok(())
+    };
+
+    check_cancelled(rx.as_ref())?;
+
+    // Collect candidates off the main thread
+    let root_clone = root.clone();
+    let candidates = tokio::task::spawn_blocking(move || {
+        let mut list = Vec::new();
+        let walker = walkdir::WalkDir::new(&root_clone)
+            .max_depth(MAX_DEPTH)
+            .follow_links(false)
+            .into_iter()
+            .filter_entry(|entry| {
+                if entry.depth() == 0 {
+                    return true;
+                }
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if entry.file_type().is_dir() {
+                    if name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str()) {
+                        return false;
+                    }
+                }
+                true
+            });
+
+        for entry_res in walker {
+            if list.len() >= MAX_SCAN_FILES {
+                break;
+            }
+            let entry = match entry_res {
+                Ok(e) => e,
+                Err(_) => continue,
+            };
+
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            let file_path = entry.path();
+            let ext = match file_path.extension() {
+                Some(e) => e.to_string_lossy().to_lowercase(),
+                None => continue,
+            };
+
+            if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                continue;
+            }
+
+            let metadata = match entry.metadata() {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
+            let rel_path = match file_path.strip_prefix(&root_clone) {
+                Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                Err(_) => continue,
+            };
+
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                .map(|d| d.as_millis() as f64)
+                .unwrap_or(0.0);
+
+            list.push(CandidateEntry {
+                rel_path,
+                abs_path: file_path.to_path_buf(),
+                size: metadata.len(),
+                modified,
+            });
+        }
+        list
+    })
+    .await
+    .map_err(|e| FsError::Io(e.to_string()))?;
+
+    check_cancelled(rx.as_ref())?;
+
+    let total_files = candidates.len();
+    let _ = app.emit(
+        "scan-progress",
+        ScanProgressPayload {
+            scan_id: scan_id.clone(),
+            done: 0,
+            total: total_files,
+        },
+    );
+
+    if total_files == 0 {
+        return Ok(LibraryDiscovery {
+            root_path: root.to_string_lossy().to_string(),
+            titles: Vec::new(),
+            total_files: 0,
+        });
+    }
+
+    let has_nested_titles = candidates.iter().any(|c| c.rel_path.split('/').count() >= 3);
+    let root_folder_name = root
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "Library".to_string());
+
+    let mut measured_candidates: Vec<(CandidateEntry, Option<u32>, Option<u32>)> =
+        Vec::with_capacity(total_files);
+    let mut done = 0;
+
+    for chunk in candidates.chunks(SCAN_BATCH_SIZE) {
+        check_cancelled(rx.as_ref())?;
+
+        let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
+        let batch: Vec<(CandidateEntry, Option<u32>, Option<u32>)> =
+            tokio::task::spawn_blocking(move || {
+                chunk_vec
+                    .into_par_iter()
+                    .map(|entry| {
+                        let (w, h) = parse_image_dimensions(&entry.abs_path);
+                        (entry, w, h)
+                    })
+                    .collect()
+            })
+            .await
+            .map_err(|e| FsError::Io(e.to_string()))?;
+
+        done += batch.len();
+        measured_candidates.extend(batch);
+
+        let _ = app.emit(
+            "scan-progress",
+            ScanProgressPayload {
+                scan_id: scan_id.clone(),
+                done,
+                total: total_files,
+            },
+        );
+
+        tokio::task::yield_now().await;
+    }
+
+    check_cancelled(rx.as_ref())?;
+
+    use std::collections::BTreeMap;
+    let mut title_map: BTreeMap<String, BTreeMap<String, Vec<DiscoveredPage>>> = BTreeMap::new();
+    let mut title_covers: BTreeMap<String, Option<String>> = BTreeMap::new();
+
+    for (entry, width, height) in measured_candidates {
+        let parts: Vec<&str> = entry.rel_path.split('/').collect();
+        let (title_name, rel_to_title) = if has_nested_titles {
+            if parts.len() > 1 {
+                (parts[0].to_string(), parts[1..].join("/"))
+            } else {
+                (
+                    format!("{} — root pages", root_folder_name),
+                    parts[0].to_string(),
+                )
+            }
+        } else {
+            (root_folder_name.clone(), entry.rel_path.clone())
+        };
+
+        let title_parts: Vec<&str> = rel_to_title.split('/').collect();
+        let page_file_name = title_parts
+            .last()
+            .copied()
+            .unwrap_or(&rel_to_title)
+            .to_string();
+
+        let is_root_file = title_parts.len() == 1;
+        let is_cover_name = is_root_file
+            && (page_file_name.to_lowercase().starts_with("cover.")
+                || page_file_name.to_lowercase().starts_with("thumbnail."));
+
+        if is_cover_name {
+            title_covers.insert(
+                title_name.clone(),
+                Some(entry.abs_path.to_string_lossy().to_string()),
+            );
+        }
+
+        let chapter_name = if is_root_file {
+            "Root pages".to_string()
+        } else {
+            title_parts[..title_parts.len() - 1].join(" / ")
+        };
+
+        let page = DiscoveredPage {
+            name: page_file_name,
+            relative_path: rel_to_title,
+            absolute_path: entry.abs_path.to_string_lossy().to_string(),
+            width,
+            height,
+            size: entry.size,
+            modified: entry.modified,
+        };
+
+        title_map
+            .entry(title_name.clone())
+            .or_default()
+            .entry(chapter_name)
+            .or_default()
+            .push(page);
+    }
+
+    let mut titles = Vec::new();
+    for (title_name, chapters_map) in title_map {
+        let mut chapters = Vec::new();
+        let mut title_images = 0;
+
+        for (chapter_name, mut pages) in chapters_map {
+            pages.sort_by(|a, b| natural_order(&a.name, &b.name));
+            title_images += pages.len();
+            chapters.push(DiscoveredChapter {
+                name: chapter_name,
+                pages,
+            });
+        }
+
+        chapters.sort_by(|a, b| natural_order(&a.name, &b.name));
+
+        let cover_path = title_covers
+            .get(&title_name)
+            .cloned()
+            .flatten()
+            .or_else(|| {
+                chapters
+                    .first()
+                    .and_then(|c| c.pages.first())
+                    .map(|p| p.absolute_path.clone())
+            });
+
+        let title_root = if has_nested_titles {
+            root.join(&title_name).to_string_lossy().to_string()
+        } else {
+            root.to_string_lossy().to_string()
+        };
+
+        titles.push(DiscoveredTitle {
+            title: title_name,
+            root_path: title_root,
+            chapters,
+            total_images: title_images,
+            cover_path,
+        });
+    }
+
+    titles.sort_by(|a, b| natural_order(&a.title, &b.title));
+
+    Ok(LibraryDiscovery {
+        root_path: root.to_string_lossy().to_string(),
+        titles,
+        total_files,
+    })
+}
+
+#[tauri::command]
+pub async fn read_file(
+    app: AppHandle,
+    absolute_path: String,
+) -> Result<tauri::ipc::Response, FsError> {
     let trimmed = absolute_path.trim();
     if trimmed.is_empty() {
-        return Err("Path cannot be empty".into());
+        return Err(FsError::NotFound("Path cannot be empty".into()));
     }
 
     let path = std::path::Path::new(trimmed);
-    let resolved = dunce::canonicalize(path).map_err(|e| format!("Failed to resolve path: {e}"))?;
+    let resolved = dunce::canonicalize(path)
+        .map_err(|e| FsError::NotFound(format!("Failed to resolve path: {e}")))?;
+
+    let allowed = app.state::<AllowedRoots>();
+    if !allowed.is_allowed(&resolved) {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path '{}' is not under an allowed library root",
+            resolved.display()
+        )));
+    }
 
     let ext = resolved
         .extension()
         .and_then(|s| s.to_str())
         .map(|s| s.to_lowercase())
-        .ok_or_else(|| "Missing file extension".to_string())?;
+        .ok_or_else(|| FsError::ForbiddenExt("Missing file extension".to_string()))?;
 
     if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-        return Err(format!("File extension '.{ext}' is not an allowed image format"));
+        return Err(FsError::ForbiddenExt(format!(
+            "File extension '.{ext}' is not an allowed image format"
+        )));
     }
 
     let metadata = tokio::fs::metadata(&resolved)
         .await
-        .map_err(|e| format!("Failed to read metadata: {e}"))?;
+        .map_err(|e| FsError::Io(format!("Failed to read metadata: {e}")))?;
 
     if !metadata.is_file() {
-        return Err("Target path is not a regular file".into());
+        return Err(FsError::NotFound("Target path is not a regular file".into()));
     }
 
     if metadata.len() > MAX_FILE_READ_BYTES {
-        return Err(format!(
+        return Err(FsError::TooLarge(format!(
             "File size ({} bytes) exceeds safety cap of {} bytes",
             metadata.len(),
             MAX_FILE_READ_BYTES
-        ));
+        )));
     }
 
     let bytes = tokio::fs::read(&resolved)
         .await
-        .map_err(|e| format!("Failed to read file bytes: {e}"))?;
+        .map_err(|e| FsError::Io(format!("Failed to read file bytes: {e}")))?;
 
     Ok(tauri::ipc::Response::new(bytes))
 }

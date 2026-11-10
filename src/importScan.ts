@@ -443,12 +443,80 @@ export async function fromDesktopFolder(
   if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
   const folderName = folderPath.split(/[\\/]/).at(-1) ?? folderPath;
   const source: Source = { title: folderName, localPath: folderPath, files: new Map(), issues: [] };
+
+  // 1. Prefer native Rust library discovery when available
+  if (desktopAPI.discoverLibrary) {
+    try {
+      const discovery = await withinTime(
+        desktopAPI.discoverLibrary(folderPath, {
+          signal: options.signal,
+          onProgress: (prog) => {
+            if (prog.total > 0) {
+              desktopAPI.setProgressBar(prog.done / prog.total);
+            }
+          },
+        }),
+        limits.ioTimeoutMs * 5,
+        'Discovering library',
+        options.signal,
+      );
+
+      if (discovery && discovery.titles.length > 0) {
+        let discovered = 0;
+        for (const title of discovery.titles) {
+          for (const ch of title.chapters) {
+            for (const p of ch.pages) {
+              alive(options.signal);
+              const relPath =
+                discovery.titles.length > 1 ? `${title.title}/${p.relativePath}` : p.relativePath;
+              assertPathLimits(relPath);
+              assertAtMost(++discovered, limits.discoveryEntries, 'Discovered entries');
+              assertAtMost(
+                source.files.size + 1,
+                limits.pagesPerTitle,
+                'Image candidates per title',
+              );
+              source.files.set(
+                relPath,
+                new DesktopHandle(
+                  p.name,
+                  p.absolutePath,
+                  p.size,
+                  p.modified,
+                  p.width,
+                  p.height,
+                ) as unknown as FileSystemFileHandle,
+              );
+            }
+          }
+        }
+        return source;
+      }
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        throw e;
+      }
+      if (e instanceof LimitError) {
+        throw e;
+      }
+    }
+  }
+
+  // 2. Fallback to listFolder
   let entries: FolderEntry[];
   try {
     entries = await withinTime(
-      desktopAPI.listFolder(folderPath),
+      desktopAPI.listFolder(folderPath, {
+        signal: options.signal,
+        onProgress: (prog) => {
+          if (prog.total > 0) {
+            desktopAPI.setProgressBar(prog.done / prog.total);
+          }
+        },
+      }),
       limits.ioTimeoutMs * 5,
       'Listing folder',
+      options.signal,
     );
   } catch (e) {
     throw new Error(errorMessage(e));

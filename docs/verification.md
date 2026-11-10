@@ -1649,3 +1649,78 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (Vite production bundle built in 2.64s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Binary Thumbnail IPC Optimization — 2026-11-11
+
+- **Zero-Copy Typed Array Thumbnail IPC (`src/tauriBridge.ts`)**:
+  - Eliminated `Array.from(buffer)` in `saveThumbnail(id, buffer)`: passes `bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)` directly into Tauri v2 `invoke('save_thumbnail', { id, bytes })`.
+  - Prevents allocating 50,000–200,000 boxed JavaScript numbers per cover during library scanning and backup restoration, eliminating severe heap bloat and GC pauses.
+  - In `getThumbnail` and `readFile`: typed return payloads as `Uint8Array | ArrayBuffer`, eliminating `number[]` array materialization on the TypeScript side while preserving binary `tauri::ipc::Response` consumption.
+  - Retained `Vec<u8>` on the Rust side (`src-tauri/src/commands/cache.rs`), allowing direct binary deserialization.
+- **Verification**:
+  - Added unit test in `tests/storage-modular.spec.ts` asserting `saveThumbnail` dispatches typed `Uint8Array` rather than JS arrays across IPC and `getThumbnail` processes binary responses cleanly.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **80/80 unit tests PASS** (1.4s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.63s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Hardened & Streamlined Native FS Commands — 2026-11-11
+
+- **Async Directory Scanning with Progress Events (`src-tauri/src/commands/fs.rs` & `src/tauriBridge.ts`)**:
+  - Upgraded `list_folder` to an asynchronous command:
+    - Moves candidate file traversal off the UI thread via `tokio::task::spawn_blocking`.
+    - Batches parallel dimension parsing via Rayon in 128-candidate chunks with `tokio::task::yield_now()` cooperative yielding.
+    - Emits `"scan-progress"` (`{ scanId, done, total }`) events via `app.emit(...)` to provide real-time scanning feedback.
+  - Connected `onProgress` in `fromDesktopFolder` (`src/importScan.ts`) to drive taskbar and UI progress bars during folder discovery.
+- **Cancellation with Watch Channels (`src-tauri/src/commands/fs.rs` & `src/tauriBridge.ts`)**:
+  - Introduced `ScanManager` in Rust tracking active scan IDs with `tokio::sync::watch::channel(false)`.
+  - Added `cancel_scan(scan_id)` Tauri command.
+  - In `TauriDesktopBridge.listFolder`: registers `options.signal` abort listener that triggers `cancel_scan`, terminating in-flight Rust thread traversal and chunk loops immediately and throwing standard DOM `AbortError`.
+- **Allowed Library Root Confinement (`src-tauri/src/commands/fs.rs` & `src/storage.ts`)**:
+  - Introduced `AllowedRoots` in Tauri app state, persisted across app sessions in `allowed_roots.json`.
+  - Automatically records canonical roots upon `select_folder` and `list_folder`, and added `register_allowed_roots` command.
+  - Enforces that all `read_file` and `get_image_dimensions` queries target paths strictly inside an allowed library root after `dunce::canonicalize`, preventing arbitrary file reads outside user-selected folders.
+  - Registered stored manga roots automatically in `listLibrary` and `fileFor`.
+- **Structured Error Typings with `thiserror` (`src-tauri/src/commands/fs.rs` & `src/tauriBridge.ts`)**:
+  - Replaced unstructured `Result<_, String>` with `FsError`:
+    - `NotFound(String)`
+    - `TooLarge(String)`
+    - `ForbiddenExt(String)`
+    - `PathNotAllowed(String)`
+    - `Cancelled`
+    - `Io(String)`
+  - Added `parseFsError` in TypeScript to map structured error payloads from rejected IPC calls and handle cancellations seamlessly.
+- **Verification**:
+  - Added unit tests in `tests/storage-modular.spec.ts` asserting `parseFsError` parsing, `listFolder` scan ID and cancellation via `AbortSignal`, and `registerAllowedRoots` dispatch.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **82/82 unit tests PASS** (1.6s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.66s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Native Rust Discovery, Natural Sorting & Chapter Preparation — 2026-11-11
+
+- **Structured Library Discovery Engine (`src-tauri/src/commands/fs.rs` & `src/importScan.ts`)**:
+  - Implemented `discover_library(folder_path, scan_id)` Tauri command:
+    - Traverses root directory, skips hidden/ignored folders, allowlists image formats.
+    - Groups files into provisional titles and chapters using canonical JS heuristics (`splitSource` for multi-title collections, `chapterGroups` for subfolder vs root-page structures, and `cover.*`/`thumbnail.*` detection).
+    - Rayon-parallelized dimension extraction across 128-entry chunks with periodic `scan-progress` event emission and watch channel cancellation checks.
+    - Returns structured `LibraryDiscovery` with pre-grouped, pre-dimensioned `DiscoveredTitle`, `DiscoveredChapter`, and `DiscoveredPage` records.
+  - Integrated with `fromDesktopFolder` in `src/importScan.ts`: populates `source.files` with pre-dimensioned `DesktopHandle`s, turning subsequent chapter indexing and warming passes into zero-IO operations.
+  - Storage transactions and IndexedDB commits remain strictly in React/TypeScript, maintaining database schema and revision invariants.
+- **Native Natural Sort (`src-tauri/src/commands/fs.rs` & `src/tauriBridge.ts`)**:
+  - Implemented `natural_sort_paths(paths)` command in Rust:
+    - Implements natural tokenization matching JavaScript's `naturalOrder` (numeric parsing, category ranking for prologue/extra/bonus, case-insensitivity).
+    - Exposes `desktopAPI.naturalSortPaths` for single-pass natural sorting shared across discovery and re-linking.
+- **Batch Chapter Header Preparation (`src-tauri/src/commands/fs.rs` & `src/tauriBridge.ts`)**:
+  - Implemented `prepare_chapter_headers(paths)` command in Rust:
+    - Validates file paths against `AllowedRoots` in parallel Rayon worker threads.
+    - Returns `Vec<PageHeader>` containing `width`, `height`, `size`, `modified`, and lightweight 64-bit sampling checksum without transferring full pixel buffers across IPC.
+- **Verification**:
+  - Added unit tests in `tests/storage-modular.spec.ts` asserting `naturalSortPaths`, `prepareChapterHeaders`, and `discoverLibrary` dispatch and response handling.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **83/83 unit tests PASS** (1.5s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.69s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
