@@ -33,7 +33,7 @@ export interface Manga {
   title: string;
   chapters: Chapter[];
   handle?: Directory;
-  localPath?: string; // Electron only: absolute path to the manga folder on disk.
+  localPath?: string; // Desktop: absolute path to the manga folder on disk.
   cover?: Blob;
   lastChapter: number;
   addedAt: number;

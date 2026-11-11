@@ -7,7 +7,7 @@ import App from './App';
 import './updates';
 import { isDesktop } from './tauriBridge';
 
-// On desktop (Tauri or Electron) with HashRouter, ensure the app always starts at root route if no hash exists.
+// On desktop (Tauri) with HashRouter, ensure the app always starts at root route if no hash exists.
 if (isDesktop && (!location.hash || location.hash === '')) {
   location.hash = '#/';
 }

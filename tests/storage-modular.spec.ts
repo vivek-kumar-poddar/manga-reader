@@ -25,7 +25,15 @@ import {
 import { clearCoverUrlPool } from '../src/App';
 import { desktopAPI, TauriDesktopBridge, parseFsError } from '../src/tauriBridge';
 import { imageFile } from '../src/images';
-import { fromFiles, DesktopHandle, chapterGroups, splitSource } from '../src/importScan';
+import {
+  fromFiles,
+  DesktopHandle,
+  chapterGroups,
+  splitSource,
+  naturalSortPaths,
+  prepareChapter,
+} from '../src/importScan';
+import { normalizePath } from '../src/paths';
 import { LimitError } from '../src/limits';
 import { ValidationError } from '../src/validation';
 import { defaults, type Manga } from '../src/model';
@@ -689,6 +697,93 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     }
   });
 
+  test('TauriDesktopBridge supports app config, preferences, and opened roots persistence', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+
+    const mockConfig = {
+      lastOpenedRoots: ['C:/manga/library'],
+      windowPreferences: {
+        minimizeToTray: false,
+        closeToTray: true,
+        startMaximized: false,
+        highDpiScaling: true,
+        theme: 'dark',
+      },
+      customPreferences: {
+        lastZoom: 1.0,
+      },
+    };
+
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'get_app_config') {
+          return mockConfig;
+        }
+        if (cmd === 'save_app_config') {
+          return null;
+        }
+        if (cmd === 'set_app_preference') {
+          return null;
+        }
+        if (cmd === 'get_app_preference') {
+          return args.key === 'lastZoom' ? 1.0 : null;
+        }
+        if (cmd === 'record_opened_root') {
+          return [args.rootPath, ...mockConfig.lastOpenedRoots];
+        }
+        if (cmd === 'get_last_opened_roots') {
+          return mockConfig.lastOpenedRoots;
+        }
+        return null;
+      },
+    };
+
+    try {
+      // 1. getAppConfig
+      const config = await bridge.getAppConfig();
+      expect(config).toEqual(mockConfig);
+
+      // 2. saveAppConfig
+      const saved = await bridge.saveAppConfig(mockConfig);
+      expect(saved).toBe(true);
+
+      // 3. setAppPreference & getAppPreference
+      const prefSaved = await bridge.setAppPreference('lastZoom', 1.0);
+      expect(prefSaved).toBe(true);
+      const prefValue = await bridge.getAppPreference('lastZoom');
+      expect(prefValue).toBe(1.0);
+
+      // 4. recordOpenedRoot & getLastOpenedRoots
+      const updatedRoots = await bridge.recordOpenedRoot('C:/manga/new-folder');
+      expect(updatedRoots).toEqual(['C:/manga/new-folder', 'C:/manga/library']);
+      const roots = await bridge.getLastOpenedRoots();
+      expect(roots).toEqual(['C:/manga/library']);
+
+      // 5. Verify recorded commands
+      expect(calls.map((c) => c.cmd)).toEqual([
+        'get_app_config',
+        'save_app_config',
+        'set_app_preference',
+        'get_app_preference',
+        'record_opened_root',
+        'get_last_opened_roots',
+      ]);
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
   test('queuedFlush deduplication coalesces follow-up writes during in-flight operations', async () => {
     let inFlight: Promise<SaveProgressResult> | null = null;
     let queuedFlush: Promise<SaveProgressResult> | null = null;
@@ -929,5 +1024,271 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     // 6. clearDirHandleCache also clears access cache
     clearDirHandleCache('manga-access-throttle');
     expect(accessCache.has('manga-access-throttle')).toBe(false);
+  });
+
+  test('normalizePath normalizes backslashes, removes redundant slashes and trims trailing slashes', () => {
+    expect(normalizePath('folder\\subfolder\\file.png')).toBe('folder/subfolder/file.png');
+    expect(normalizePath('folder//subfolder///file.png/')).toBe('folder/subfolder/file.png');
+    expect(normalizePath('C:\\manga\\chapter 1\\01.webp/')).toBe('C:/manga/chapter 1/01.webp');
+  });
+
+  test('naturalSortPaths routes to desktopAPI.naturalSortPaths on desktop and falls back on web', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalNaturalSortPaths = desktopAPI.naturalSortPaths;
+
+    try {
+      // 1. On desktop with naturalSortPaths
+      let called = false;
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).naturalSortPaths = async (paths: string[]) => {
+        called = true;
+        return ['ch 1', 'ch 2', 'ch 10'];
+      };
+
+      const sorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
+      expect(called).toBe(true);
+      expect(sorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
+
+      // 2. On web (isDesktop = false)
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: false, configurable: true });
+      const webSorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
+      expect(webSorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).naturalSortPaths = originalNaturalSortPaths;
+    }
+  });
+
+  test('DesktopHandle exposes absPath and loads file content via desktopAPI.readFile', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalReadFile = desktopAPI.readFile;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      const dummyBuffer = new Uint8Array([1, 2, 3, 4]).buffer;
+      let requestedPath = '';
+      (desktopAPI as any).readFile = async (path: string) => {
+        requestedPath = path;
+        return dummyBuffer;
+      };
+
+      const handle = new DesktopHandle('01.jpg', 'C:/manga/ch1/01.jpg', 1234, 5678, 800, 1200);
+      expect(handle.absPath).toBe('C:/manga/ch1/01.jpg');
+      expect(handle.name).toBe('01.jpg');
+      expect(handle.width).toBe(800);
+      expect(handle.height).toBe(1200);
+
+      const file = await handle.getFile();
+      expect(requestedPath).toBe('C:/manga/ch1/01.jpg');
+      expect(file.name).toBe('01.jpg');
+      expect(file.lastModified).toBe(5678);
+      expect(file.size).toBe(4);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).readFile = originalReadFile;
+    }
+  });
+
+  test('prepareChapter prefers batch desktopAPI.prepareChapterHeaders on desktop', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalPrepareHeaders = desktopAPI.prepareChapterHeaders;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      let queriedPaths: string[] = [];
+      (desktopAPI as any).prepareChapterHeaders = async (paths: string[]) => {
+        queriedPaths = paths;
+        return paths.map((p) => ({
+          path: p,
+          width: 1080,
+          height: 1920,
+          size: 9999,
+          modified: 1234567,
+          checksum: 'abc123hash',
+        }));
+      };
+
+      const manga: Manga = {
+        id: 'test-batch-prep-manga',
+        title: 'Batch Prep Manga',
+        localPath: 'C:/manga/batch-title',
+        lastChapter: 0,
+        addedAt: Date.now(),
+        updatedAt: Date.now(),
+        chapters: [
+          {
+            name: 'Chapter 1',
+            read: false,
+            pages: [
+              {
+                name: '01.jpg',
+                path: 'ch1/01.jpg',
+                width: 800,
+                height: 1200,
+                dimensionsPending: true,
+              },
+              {
+                name: '02.jpg',
+                path: 'ch1/02.jpg',
+                width: 800,
+                height: 1200,
+                dimensionsPending: true,
+              },
+            ],
+          },
+        ],
+      };
+
+      const issues = await prepareChapter(manga, 0);
+      expect(issues).toEqual([]);
+      expect(queriedPaths).toEqual([
+        'C:/manga/batch-title/ch1/01.jpg',
+        'C:/manga/batch-title/ch1/02.jpg',
+      ]);
+      expect(manga.chapters[0].pages[0].width).toBe(1080);
+      expect(manga.chapters[0].pages[0].height).toBe(1920);
+      expect(manga.chapters[0].pages[0].dimensionsPending).toBe(false);
+      expect(manga.chapters[0].pages[1].width).toBe(1080);
+      expect(manga.chapters[0].pages[1].dimensionsPending).toBe(false);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).prepareChapterHeaders = originalPrepareHeaders;
+    }
+  });
+
+  test('normalizePath normalizes backslashes, removes redundant slashes and trims trailing slashes', () => {
+    expect(normalizePath('folder\\subfolder\\file.png')).toBe('folder/subfolder/file.png');
+    expect(normalizePath('folder//subfolder///file.png/')).toBe('folder/subfolder/file.png');
+    expect(normalizePath('C:\\manga\\chapter 1\\01.webp/')).toBe('C:/manga/chapter 1/01.webp');
+  });
+
+  test('naturalSortPaths routes to desktopAPI.naturalSortPaths on desktop and falls back on web', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalNaturalSortPaths = desktopAPI.naturalSortPaths;
+
+    try {
+      // 1. On desktop with naturalSortPaths
+      let called = false;
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).naturalSortPaths = async (paths: string[]) => {
+        called = true;
+        return ['ch 1', 'ch 2', 'ch 10'];
+      };
+
+      const sorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
+      expect(called).toBe(true);
+      expect(sorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
+
+      // 2. On web (isDesktop = false)
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: false, configurable: true });
+      const webSorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
+      expect(webSorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).naturalSortPaths = originalNaturalSortPaths;
+    }
+  });
+
+  test('DesktopHandle exposes absPath and loads file content via desktopAPI.readFile', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalReadFile = desktopAPI.readFile;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      const dummyBuffer = new Uint8Array([1, 2, 3, 4]).buffer;
+      let requestedPath = '';
+      (desktopAPI as any).readFile = async (path: string) => {
+        requestedPath = path;
+        return dummyBuffer;
+      };
+
+      const handle = new DesktopHandle('01.jpg', 'C:/manga/ch1/01.jpg', 1234, 5678, 800, 1200);
+      expect(handle.absPath).toBe('C:/manga/ch1/01.jpg');
+      expect(handle.name).toBe('01.jpg');
+      expect(handle.width).toBe(800);
+      expect(handle.height).toBe(1200);
+
+      const file = await handle.getFile();
+      expect(requestedPath).toBe('C:/manga/ch1/01.jpg');
+      expect(file.name).toBe('01.jpg');
+      expect(file.lastModified).toBe(5678);
+      expect(file.size).toBe(4);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).readFile = originalReadFile;
+    }
+  });
+
+  test('prepareChapter prefers batch desktopAPI.prepareChapterHeaders on desktop', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalPrepareHeaders = desktopAPI.prepareChapterHeaders;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      let queriedPaths: string[] = [];
+      (desktopAPI as any).prepareChapterHeaders = async (paths: string[]) => {
+        queriedPaths = paths;
+        return paths.map((p) => ({
+          path: p,
+          width: 1080,
+          height: 1920,
+          size: 9999,
+          modified: 1234567,
+          checksum: 'abc123hash',
+        }));
+      };
+
+      const manga: Manga = {
+        id: 'test-batch-prep-manga',
+        title: 'Batch Prep Manga',
+        localPath: 'C:/manga/batch-title',
+        lastChapter: 0,
+        addedAt: Date.now(),
+        updatedAt: Date.now(),
+        chapters: [
+          {
+            name: 'Chapter 1',
+            read: false,
+            pages: [
+              { name: '01.jpg', path: 'ch1/01.jpg', width: 800, height: 1200, dimensionsPending: true },
+              { name: '02.jpg', path: 'ch1/02.jpg', width: 800, height: 1200, dimensionsPending: true },
+            ],
+          },
+        ],
+      };
+
+      const issues = await prepareChapter(manga, 0);
+      expect(issues).toEqual([]);
+      expect(queriedPaths).toEqual([
+        'C:/manga/batch-title/ch1/01.jpg',
+        'C:/manga/batch-title/ch1/02.jpg',
+      ]);
+      expect(manga.chapters[0].pages[0].width).toBe(1080);
+      expect(manga.chapters[0].pages[0].height).toBe(1920);
+      expect(manga.chapters[0].pages[0].dimensionsPending).toBe(false);
+      expect(manga.chapters[0].pages[1].width).toBe(1080);
+      expect(manga.chapters[0].pages[1].dimensionsPending).toBe(false);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).prepareChapterHeaders = originalPrepareHeaders;
+    }
   });
 });

@@ -239,7 +239,7 @@ test.describe('Step 04 — Input and Backup Validation', () => {
     expect(sanitized?.lastChapter).toBe(0);
   });
 
-  test('parseManga preserves localPath for Electron desktop reads', () => {
+  test('parseManga preserves localPath for native desktop reads', () => {
     const manga = parseManga({
       id: 'desktop-manga',
       title: 'Desktop Manga',

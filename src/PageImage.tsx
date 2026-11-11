@@ -4,6 +4,7 @@ import { limits, assertImageDimensions } from './limits';
 import { enqueueImage, reprioritizeImage, type CancelHandle } from './imageQueue';
 import { downscaleImage } from './images';
 import { getObjectUrl, storeObjectUrl } from './objectUrlPool';
+import { desktopAPI } from './tauriBridge';
 
 const watched = new Map<Element, (visible: boolean) => void>();
 let observer: IntersectionObserver | undefined;
@@ -64,6 +65,31 @@ function PageImage({
     handle: mangaHandle,
     localPath: mangaLocalPath,
   } = m;
+
+  // Auto-resolve pending dimensions via native Rust header parser on desktop
+  useEffect(() => {
+    if (!dimensionsPending) return;
+    let live = true;
+    if (desktopAPI.isDesktop && desktopAPI.getImageDimensions && mangaLocalPath) {
+      const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
+      const absPath = mangaLocalPath + sep + pagePath.split('/').join(sep);
+      void desktopAPI
+        .getImageDimensions(absPath)
+        .then((dim) => {
+          if (!live || !dim || dim.width <= 0 || dim.height <= 0) return;
+          page.width = dim.width;
+          page.height = dim.height;
+          page.dimensionsPending = false;
+          setRetry((r) => r + 1);
+        })
+        .catch(() => {
+          // Fall through to manual retry or background preparation
+        });
+    }
+    return () => {
+      live = false;
+    };
+  }, [dimensionsPending, mangaLocalPath, pagePath, page]);
 
   // Dynamically update priority for waiting tasks as user scrolls near/far
   useEffect(() => {

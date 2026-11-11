@@ -1,5 +1,7 @@
 pub mod commands;
 
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::Manager;
 
 
@@ -31,12 +33,71 @@ pub fn run() {
             commands::cache::read_thumbnail,
             commands::cache::delete_thumbnail,
             commands::cache::clear_thumbnails,
+            commands::config::get_app_config,
+            commands::config::save_app_config,
+            commands::config::set_app_preference,
+            commands::config::get_app_preference,
+            commands::config::record_opened_root,
+            commands::config::get_last_opened_roots,
         ])
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let app = window.app_handle();
+                if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
+                    if config_state.get().window_preferences.close_to_tray {
+                        api.prevent_close();
+                        let _ = window.hide();
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let handle = app.handle();
             let initial_roots = commands::fs::init_allowed_roots(&handle);
             app.manage(initial_roots);
             app.manage(commands::fs::ScanManager::default());
+            app.manage(commands::config::AppConfigState::new(&handle));
+
+            // System tray menu & icon
+            let show_item = MenuItem::with_id(app, "show", "Show Manga Reader", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+
+            let mut tray_builder = TrayIconBuilder::new().menu(&tray_menu).show_menu_on_left_click(false);
+            if let Some(icon) = app.default_window_icon() {
+                tray_builder = tray_builder.icon(icon.clone());
+            }
+
+            let _tray = tray_builder
+                .on_menu_event(|app, event| match event.id.as_ref() {
+                    "show" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "quit" => {
+                        app.exit(0);
+                    }
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.unminimize();
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
 
             if cfg!(debug_assertions) {
                 app.handle().plugin(

@@ -20,6 +20,11 @@ pub const INIT_SCRIPT: &str = r#"
     }
   }, { passive: false });
 
+  // Prevent trackpad / touch gesture zoom on Windows high-DPI displays
+  window.addEventListener('gesturestart', function(e) { e.preventDefault(); }, { passive: false });
+  window.addEventListener('gesturechange', function(e) { e.preventDefault(); }, { passive: false });
+  window.addEventListener('gestureend', function(e) { e.preventDefault(); }, { passive: false });
+
   // Prevent default drag-over and drag-drop navigation away from index.html
   window.addEventListener('dragover', function(e) {
     e.preventDefault();

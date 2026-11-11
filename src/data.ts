@@ -78,13 +78,14 @@ export {
   defaultObjectUrlPool,
 } from './objectUrlPool';
 
+export { normalizePath } from './paths';
+
 export {
   DesktopHandle,
-  ElectronHandle,
   naturalOrder,
+  naturalSortPaths,
   ignored,
   fromDesktopFolder,
-  fromElectronFolder,
   fromFiles,
   fromHandle,
   droppedSources,

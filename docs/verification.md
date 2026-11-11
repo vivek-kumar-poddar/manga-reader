@@ -1724,3 +1724,56 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (Vite production bundle built in 2.69s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Windows-Specific Polish & App Data Persistence — 2026-11-11
+
+- **Windows System Tray & Minimize/Close-to-Tray (`src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/src/commands/config.rs`)**:
+  - Activated Tauri `tray-icon` cargo feature.
+  - Implemented system tray with context menu items ("Show Manga Reader", "Quit"), left-click toggle to unminimize and focus the main window, and app icon loading via `app.default_window_icon()`.
+  - Added window close-requested event listener: when `close_to_tray` window preference is enabled, intercepts window close with `api.prevent_close()` and hides the window to the tray instead of terminating.
+- **Persistent App Configuration & Non-IndexedDB App Data Helper (`src-tauri/src/commands/config.rs`, `src/tauriBridge.ts`, `src/importScan.ts`, `src/App.tsx`)**:
+  - Created `AppConfigState` with thread-safe `RwLock<AppConfig>` persisting to `%APPDATA%\com.mangareader.desktop\app_config.json`.
+  - Added Tauri commands `get_app_config`, `save_app_config`, `set_app_preference`, `get_app_preference`, `record_opened_root`, `get_last_opened_roots`.
+  - Added TypeScript definitions `WindowPreferences`, `AppConfig`, and methods on `DesktopAPI` / `TauriDesktopBridge`.
+  - Stored roots automatically bridge into `AllowedRoots`, ensuring opened roots remain accessible and allowlisted even if local storage / webview data is cleared.
+  - Bound folder selection (`App.tsx`) and folder import (`importScan.ts`) to `record_opened_root`.
+- **Windows Input & High-DPI Containment (`src-tauri/src/commands/window.rs`, `src-tauri/capabilities/default.json`, `src-tauri/tauri.conf.json`)**:
+  - Extended `INIT_SCRIPT` to intercept `gesturestart`, `gesturechange`, and `gestureend` events, preventing unwanted pinch-to-zoom on Windows tablets, 2-in-1 laptops, and high-DPI touchpads.
+  - Retained locked 1:1 visual zoom and monitor-aware geometry validation.
+  - Configured NSIS installer settings (`currentUser` installation mode, standard languages, and clean installer branding) in `tauri.conf.json`.
+- **Verification**:
+  - Added unit tests in `tests/storage-modular.spec.ts` asserting `getAppConfig`, `saveAppConfig`, `setAppPreference`, `getAppPreference`, `recordOpenedRoot`, and `getLastOpenedRoots`.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **84/84 unit tests PASS** (1.6s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.67s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Frontend ↔ Rust Boundary Cleanups & Native Dimensions — 2026-11-11
+
+- **Legacy Electron Fallback Removal (`src/tauriBridge.ts`, `src/vite-env.d.ts`, `src/main.tsx`, `src/data.ts`, `src/importScan.ts`, `src/updates.ts`, `src/model.ts`)**:
+  - Removed `isLegacyElectron` and `LegacyElectronDesktopBridge` entirely from `src/tauriBridge.ts`.
+  - Simplified `isDesktop` to `isTauri`.
+  - Removed `electronAPI` from `interface Window` in `src/vite-env.d.ts`.
+  - Replaced legacy userAgent Electron checks in `src/updates.ts` with `desktopAPI.isDesktop`.
+  - Removed `ElectronHandle` and `fromElectronFolder` aliases from `src/data.ts` and `src/importScan.ts`.
+  - Updated comments in `src/main.tsx`, `src/model.ts`, and test titles in `tests/validation.spec.ts` to reference native desktop.
+- **Single Source of Truth (`src/tauriBridge.ts`, `src/updates.ts`)**:
+  - Confined all `window.__TAURI__` / `window.__TAURI_INTERNALS__` checks strictly within `src/tauriBridge.ts`.
+  - All application code queries `desktopAPI` exclusively as the unified abstraction boundary.
+- **Natural-Sort & Path-Normalization Routing to Rust (`src/paths.ts`, `src/importScan.ts`, `src/data.ts`)**:
+  - Added centralized `normalizePath(path)` in `src/paths.ts` for uniform forward-slash and trailing-slash normalization.
+  - Added async `naturalSortPaths(paths)` helper that routes directly to Rust's `natural_sort_paths` on desktop, falling back to JS `naturalOrder` on web.
+  - Used `naturalSortPaths` in `warmSources` and `indexSource` to naturally sort chapter names and individual chapter pages via Rust.
+  - Exposed `absPath` as `readonly absPath: string` on `DesktopHandle`.
+- **Aggressive Native Dimension Resolution (`src/PageImage.tsx`, `src/importScan.ts`)**:
+  - `PageImage.tsx`: Added an auto-resolve effect that immediately resolves `dimensionsPending` pages using `desktopAPI.getImageDimensions(absPath)` on desktop, unblocking rendering immediately without requiring manual retries.
+  - `importScan.ts` (`indexSource`): Initial warm chapter inspection queries `desktopAPI.getImageDimensions(desktop.absPath)` in Rust before reading the file or invoking the browser decode fallback.
+  - `importScan.ts` (`prepareChapter`): Batch queries all pending page paths in a single Rust Rayon parallel call via `desktopAPI.prepareChapterHeaders(absPaths)`, rendering the browser `new Image()` decoding path a pure fallback.
+- **Verification**:
+  - Added 4 unit tests in `tests/storage-modular.spec.ts` asserting `normalizePath`, `naturalSortPaths`, `DesktopHandle`, and batch `prepareChapterHeaders` integration in `prepareChapter`.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **88/88 unit tests PASS** (1.6s).
+  - `npm run build`: **PASS** (Vite production bundle built in 2.66s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+  - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).

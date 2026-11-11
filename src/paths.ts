@@ -1,3 +1,8 @@
+/** Normalizes path separators to forward slashes and removes redundant slashes. */
+export function normalizePath(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
+}
+
 /** Keep native-script letters while removing emoji, unsafe punctuation and Latin accents. */
 export function folderSlug(name: string) {
   return (

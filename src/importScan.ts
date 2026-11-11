@@ -1,4 +1,4 @@
-import { uniqueSlug } from './paths';
+import { uniqueSlug, normalizePath } from './paths';
 import { type Directory, type Page, type Chapter, type Manga } from './model';
 import { matchingPosition, isRecord } from './validation';
 import {
@@ -65,6 +65,18 @@ export function naturalOrder(a: string, b: string): number {
     if (result) return result;
   }
   return aa.length - bb.length || natural.compare(a, b);
+}
+
+/**
+ * Natural sort a list of paths or names using native Rust command on desktop,
+ * falling back to JavaScript naturalOrder collation on web.
+ */
+export async function naturalSortPaths(paths: string[]): Promise<string[]> {
+  if (paths.length <= 1) return paths;
+  if (desktopAPI.isDesktop && desktopAPI.naturalSortPaths) {
+    return await desktopAPI.naturalSortPaths(paths);
+  }
+  return [...paths].sort(naturalOrder);
 }
 
 export const ignored = (path: string): boolean =>
@@ -134,7 +146,7 @@ function alive(signal?: AbortSignal) {
 export class DesktopHandle {
   constructor(
     readonly name: string,
-    private readonly absPath: string,
+    readonly absPath: string,
     readonly size: number,
     readonly lastModified: number,
     readonly width?: number | null,
@@ -147,7 +159,6 @@ export class DesktopHandle {
     return new File([buf], this.name, { lastModified: this.lastModified });
   }
 }
-export const ElectronHandle = DesktopHandle;
 
 export type { SourceFile };
 
@@ -207,9 +218,14 @@ export async function warmSources(
         : sort === 'reverse'
           ? (a: string, b: string) => naturalOrder(b, a)
           : naturalOrder;
-    const chapters = new Set(
-      [...chapterGroups(source).keys()].sort(compare).slice(0, limits.warmChapters),
-    );
+    let chapterKeys = [...chapterGroups(source).keys()];
+    if (desktopAPI.isDesktop && desktopAPI.naturalSortPaths && sort !== 'name') {
+      chapterKeys = await desktopAPI.naturalSortPaths(chapterKeys);
+      if (sort === 'reverse') chapterKeys.reverse();
+    } else {
+      chapterKeys.sort(compare);
+    }
+    const chapters = new Set(chapterKeys.slice(0, limits.warmChapters));
     const entries = [...source.files].filter(([path, entry]) => {
       if (entry instanceof DesktopHandle && entry.width && entry.height) {
         return false;
@@ -441,6 +457,7 @@ export async function fromDesktopFolder(
   options: ScanOptions = {},
 ): Promise<Source> {
   if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
+  void desktopAPI.recordOpenedRoot?.(folderPath);
   const folderName = folderPath.split(/[\\/]/).at(-1) ?? folderPath;
   const source: Source = { title: folderName, localPath: folderPath, files: new Map(), issues: [] };
 
@@ -524,7 +541,7 @@ export async function fromDesktopFolder(
   let discovered = 0;
   for (const entry of entries) {
     alive(options.signal);
-    const relPath = entry.relativePath.replace(/\\/g, '/');
+    const relPath = normalizePath(entry.relativePath);
     if (ignored(relPath) || !imageFile({ name: relPath, type: '' })) continue;
     try {
       assertPathLimits(relPath);
@@ -558,7 +575,6 @@ export async function fromDesktopFolder(
   await warmSources([source], options);
   return source;
 }
-export const fromElectronFolder = fromDesktopFolder;
 
 interface Entry {
   isFile: boolean;
@@ -802,7 +818,15 @@ export async function indexSource(
     });
     grouped.set(name, pages);
   }
-  const first = [...grouped.keys()].sort(compare).slice(0, limits.warmChapters);
+  const naturalSort = desktopAPI.isDesktop ? desktopAPI.naturalSortPaths : undefined;
+  let chapterNames = [...grouped.keys()];
+  if (naturalSort && sort !== 'name') {
+    chapterNames = await naturalSort(chapterNames);
+    if (sort === 'reverse') chapterNames.reverse();
+  } else {
+    chapterNames.sort(compare);
+  }
+  const first = chapterNames.slice(0, limits.warmChapters);
   const initial = first.flatMap((name) => grouped.get(name)!);
   let done = 0;
   let lastYield = performance.now();
@@ -823,6 +847,21 @@ export async function indexSource(
           assertImageDimensions(desktop.width, desktop.height);
           done++;
           return;
+        }
+        if (desktop && desktopAPI.isDesktop && desktopAPI.getImageDimensions) {
+          const dim = await desktopAPI.getImageDimensions(desktop.absPath);
+          if (dim && dim.width > 0 && dim.height > 0) {
+            assertImageDimensions(dim.width, dim.height);
+            Object.assign(page, {
+              width: dim.width,
+              height: dim.height,
+              size: desktop.size,
+              modified: desktop.lastModified,
+              dimensionsPending: false,
+            });
+            done++;
+            return;
+          }
         }
         const staged = scanned.get(entry);
         const measured = staged ? await staged : undefined;
@@ -874,10 +913,27 @@ export async function indexSource(
     if (kept.length) grouped.set(name, kept);
     else grouped.delete(name);
   }
-  const chapters = [...grouped]
-    .sort(([a], [b]) => compare(a, b))
-    .map(([name, p]) => {
-      const pages = p.sort((a, b) => compare(a.name, b.name));
+  const sortedNames =
+    naturalSort && sort !== 'name'
+      ? await (async () => {
+          const names = await naturalSort([...grouped.keys()]);
+          return sort === 'reverse' ? names.reverse() : names;
+        })()
+      : [...grouped.keys()].sort(compare);
+
+  const chapters = await Promise.all(
+    sortedNames.map(async (name) => {
+      const p = grouped.get(name)!;
+      let pages: Page[];
+      if (naturalSort && sort !== 'name' && p.length > 1) {
+        const pageNames = p.map((pg) => pg.name);
+        const sortedPageNames = await naturalSort(pageNames);
+        if (sort === 'reverse') sortedPageNames.reverse();
+        const pMap = new Map(p.map((pg) => [pg.name, pg]));
+        pages = sortedPageNames.map((n) => pMap.get(n)!).filter(Boolean);
+      } else {
+        pages = p.sort((a, b) => compare(a.name, b.name));
+      }
       const old = chapterMatch(name, pages, previous);
       const oldNames = new Set(old?.pages.map((p) => p.name));
       return {
@@ -889,7 +945,8 @@ export async function indexSource(
           .map((p) => matchingPosition(p, pages, old?.pages)!)
           .filter(Boolean),
       };
-    });
+    }),
+  );
   if (!chapters.length)
     throw new Error(
       issues.length
@@ -950,8 +1007,8 @@ export async function prepareChapter(
 ) {
   const chapter = m.chapters[index];
   if (!chapter) return [];
-  const database = await db;
-  const cached = (await database.get('manga', m.id)) as Manga | undefined;
+  const database = typeof indexedDB !== 'undefined' ? await db : undefined;
+  const cached = database ? ((await database.get('manga', m.id)) as Manga | undefined) : undefined;
   alive(options.signal);
   const savedChapter =
     cached?.updatedAt === m.updatedAt || cached?.chapters[index]?.name === chapter.name
@@ -975,11 +1032,63 @@ export async function prepareChapter(
     m.chapters[index] = { ...chapter, pages };
     return [];
   }
+
+  // Batch dimension extraction via native Rust prepareChapterHeaders on desktop
+  if (desktopAPI.isDesktop && desktopAPI.prepareChapterHeaders && m.localPath) {
+    const sep = m.localPath.includes('\\') ? '\\' : '/';
+    const pathMap = new Map<string, Page>();
+    const absPaths: string[] = [];
+    for (const page of pending) {
+      const absPath = m.localPath + sep + page.path.split('/').join(sep);
+      pathMap.set(absPath, page);
+      absPaths.push(absPath);
+    }
+    try {
+      const headers = await desktopAPI.prepareChapterHeaders(absPaths);
+      for (const h of headers) {
+        const page = pathMap.get(h.path);
+        if (page && h.width > 0 && h.height > 0) {
+          assertImageDimensions(h.width, h.height);
+          page.width = h.width;
+          page.height = h.height;
+          page.size = h.size;
+          page.modified = h.modified;
+          page.dimensionsPending = false;
+          sessionDimensions.set(`${m.id}:${page.path}`, { width: h.width, height: h.height });
+        }
+      }
+    } catch {
+      // Fall through to per-page resolution
+    }
+  }
+
+  const remainingPending = pages.filter((p) => p.dimensionsPending);
+  if (!remainingPending.length) {
+    alive(options.signal);
+    if (database) {
+      const tx = database.transaction('manga', 'readwrite');
+      const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
+      if (
+        stored &&
+        stored.updatedAt === m.updatedAt &&
+        (m.revision === undefined || stored.revision === m.revision) &&
+        stored.chapters[index]?.name === chapter.name
+      ) {
+        stored.chapters[index].pages = pages;
+        await tx.store.put(stored as unknown as Omit<Manga, 'cover'>);
+      }
+      await tx.done;
+    }
+    alive(options.signal);
+    m.chapters[index] = { ...chapter, pages };
+    return [];
+  }
+
   const issues: Issue[] = [];
   let done = 0;
   let lastYield = performance.now();
   await pooled(
-    pending,
+    remainingPending,
     async (page) => {
       try {
         if (desktopAPI.isDesktop && desktopAPI.getImageDimensions && m.localPath) {
@@ -1033,18 +1142,20 @@ export async function prepareChapter(
     options.signal,
   );
   alive(options.signal);
-  const tx = database.transaction('manga', 'readwrite');
-  const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
-  if (
-    stored &&
-    stored.updatedAt === m.updatedAt &&
-    (m.revision === undefined || stored.revision === m.revision) &&
-    stored.chapters[index]?.name === chapter.name
-  ) {
-    stored.chapters[index].pages = pages;
-    await tx.store.put(stored as unknown as Omit<Manga, 'cover'>);
+  if (database) {
+    const tx = database.transaction('manga', 'readwrite');
+    const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
+    if (
+      stored &&
+      stored.updatedAt === m.updatedAt &&
+      (m.revision === undefined || stored.revision === m.revision) &&
+      stored.chapters[index]?.name === chapter.name
+    ) {
+      stored.chapters[index].pages = pages;
+      await tx.store.put(stored as unknown as Omit<Manga, 'cover'>);
+    }
+    await tx.done;
   }
-  await tx.done;
   alive(options.signal);
   m.chapters[index] = { ...chapter, pages };
   return issues;

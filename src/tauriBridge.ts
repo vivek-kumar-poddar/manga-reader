@@ -48,6 +48,20 @@ export interface LibraryDiscovery {
   totalFiles: number;
 }
 
+export interface WindowPreferences {
+  minimizeToTray: boolean;
+  closeToTray: boolean;
+  startMaximized: boolean;
+  highDpiScaling: boolean;
+  theme?: string | null;
+}
+
+export interface AppConfig {
+  lastOpenedRoots: string[];
+  windowPreferences: WindowPreferences;
+  customPreferences: Record<string, unknown>;
+}
+
 export interface ScanProgress {
   scanId?: string;
   done: number;
@@ -104,6 +118,12 @@ export interface DesktopAPI {
   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
   deleteThumbnail?(id: string): Promise<void>;
   clearThumbnails?(): Promise<void>;
+  getAppConfig?(): Promise<AppConfig | null>;
+  saveAppConfig?(config: AppConfig): Promise<boolean>;
+  setAppPreference?(key: string, value: unknown): Promise<boolean>;
+  getAppPreference?(key: string): Promise<unknown>;
+  recordOpenedRoot?(rootPath: string): Promise<string[]>;
+  getLastOpenedRoots?(): Promise<string[]>;
 }
 
 // Detect Tauri runtime presence
@@ -112,14 +132,7 @@ export const isTauri =
   (Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) ||
     Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__));
 
-// Backward compatibility with legacy Electron detection while both are supported
-export const isLegacyElectron =
-  typeof window !== 'undefined' &&
-  Boolean(
-    (window as unknown as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron,
-  );
-
-export const isDesktop = isTauri || isLegacyElectron;
+export const isDesktop = isTauri;
 
 export class TauriDesktopBridge implements DesktopAPI {
   readonly isDesktop = true;
@@ -155,11 +168,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
 
     try {
-      if (
-        options?.onProgress &&
-        typeof window !== 'undefined' &&
-        (window as any).__TAURI_INTERNALS__
-      ) {
+      if (options?.onProgress && isTauri) {
         try {
           unlisten = await listen<ScanProgress>('scan-progress', (event) => {
             if (!scanId || event.payload.scanId === scanId) {
@@ -210,11 +219,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
 
     try {
-      if (
-        options?.onProgress &&
-        typeof window !== 'undefined' &&
-        (window as any).__TAURI_INTERNALS__
-      ) {
+      if (options?.onProgress && isTauri) {
         try {
           unlisten = await listen<ScanProgress>('scan-progress', (event) => {
             if (!scanId || event.payload.scanId === scanId) {
@@ -370,65 +375,62 @@ export class TauriDesktopBridge implements DesktopAPI {
       console.warn('Tauri clearThumbnails failed:', parseFsError(err) ?? err);
     }
   }
-}
 
-class LegacyElectronDesktopBridge implements DesktopAPI {
-  readonly isDesktop = true;
-  readonly isTauri = false;
-
-  private get api() {
-    return (window as unknown as { electronAPI?: DesktopAPI }).electronAPI;
+  async getAppConfig(): Promise<AppConfig | null> {
+    try {
+      return await invoke<AppConfig>('get_app_config');
+    } catch (err) {
+      console.warn('Tauri getAppConfig failed:', err);
+      return null;
+    }
   }
 
-  async selectFolder(): Promise<string | null> {
-    return this.api?.selectFolder() ?? null;
+  async saveAppConfig(config: AppConfig): Promise<boolean> {
+    try {
+      await invoke('save_app_config', { config });
+      return true;
+    } catch (err) {
+      console.warn('Tauri saveAppConfig failed:', err);
+      return false;
+    }
   }
 
-  async listFolder(folderPath: string): Promise<FolderEntry[]> {
-    return this.api?.listFolder(folderPath) ?? [];
+  async setAppPreference(key: string, value: unknown): Promise<boolean> {
+    try {
+      await invoke('set_app_preference', { key, value });
+      return true;
+    } catch (err) {
+      console.warn('Tauri setAppPreference failed:', key, err);
+      return false;
+    }
   }
 
-  async discoverLibrary(): Promise<LibraryDiscovery | null> {
-    return null;
+  async getAppPreference(key: string): Promise<unknown> {
+    try {
+      return await invoke<unknown>('get_app_preference', { key });
+    } catch (err) {
+      console.warn('Tauri getAppPreference failed:', key, err);
+      return null;
+    }
   }
 
-  async naturalSortPaths(paths: string[]): Promise<string[]> {
-    return paths;
+  async recordOpenedRoot(rootPath: string): Promise<string[]> {
+    try {
+      return await invoke<string[]>('record_opened_root', { rootPath });
+    } catch (err) {
+      console.warn('Tauri recordOpenedRoot failed for', rootPath, err);
+      return [];
+    }
   }
 
-  async prepareChapterHeaders(): Promise<PageHeader[]> {
-    return [];
+  async getLastOpenedRoots(): Promise<string[]> {
+    try {
+      return await invoke<string[]>('get_last_opened_roots');
+    } catch (err) {
+      console.warn('Tauri getLastOpenedRoots failed:', err);
+      return [];
+    }
   }
-
-  async cancelScan(): Promise<boolean> {
-    return false;
-  }
-
-  async registerAllowedRoots(): Promise<void> {}
-
-  async readFile(absolutePath: string): Promise<ArrayBuffer | null> {
-    return this.api?.readFile(absolutePath) ?? null;
-  }
-
-  async getImageDimensions(): Promise<{ width: number; height: number } | null> {
-    return null;
-  }
-
-  setProgressBar(progress: number): void {
-    this.api?.setProgressBar(progress);
-  }
-
-  async saveThumbnail(): Promise<boolean> {
-    return false;
-  }
-
-  async getThumbnail(): Promise<ArrayBuffer | null> {
-    return null;
-  }
-
-  async deleteThumbnail(): Promise<void> {}
-
-  async clearThumbnails(): Promise<void> {}
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -482,10 +484,30 @@ class WebDesktopBridge implements DesktopAPI {
   async deleteThumbnail(): Promise<void> {}
 
   async clearThumbnails(): Promise<void> {}
+
+  async getAppConfig(): Promise<AppConfig | null> {
+    return null;
+  }
+
+  async saveAppConfig(): Promise<boolean> {
+    return false;
+  }
+
+  async setAppPreference(): Promise<boolean> {
+    return false;
+  }
+
+  async getAppPreference(): Promise<unknown> {
+    return null;
+  }
+
+  async recordOpenedRoot(): Promise<string[]> {
+    return [];
+  }
+
+  async getLastOpenedRoots(): Promise<string[]> {
+    return [];
+  }
 }
 
-export const desktopAPI: DesktopAPI = isTauri
-  ? new TauriDesktopBridge()
-  : isLegacyElectron
-    ? new LegacyElectronDesktopBridge()
-    : new WebDesktopBridge();
+export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();

@@ -62,8 +62,9 @@ export async function applyUpdate() {
     applying = false;
   }
 }
-const isElectron = typeof navigator !== 'undefined' && navigator.userAgent.includes('Electron');
-if ('serviceWorker' in navigator && import.meta.env.PROD && !isElectron) {
+import { isDesktop } from './tauriBridge';
+
+if ('serviceWorker' in navigator && import.meta.env.PROD && !isDesktop) {
   const appURL = new URL(document.baseURI);
   // Include the bare hosted URL: its server redirect is unavailable offline.
   const scope = appURL.pathname === '/manga-reader/' ? '/manga-reader' : appURL.pathname;

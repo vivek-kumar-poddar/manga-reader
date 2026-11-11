@@ -984,6 +984,7 @@ export default function App() {
         // dialog error — do nothing
       }
       if (!folderPath) return;
+      void desktopAPI.recordOpenedRoot?.(folderPath);
       await discover(async (opts) => [await fromDesktopFolder(folderPath!, opts)], m);
       return;
     }
