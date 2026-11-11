@@ -41,6 +41,7 @@ import {
   onMangaDelete,
   getStoredSettings,
   saveStoredSettings,
+  ensureLibraryMigrated,
   syncChannel,
   getCover,
   defaults,
@@ -912,16 +913,28 @@ export default function App() {
       void refresh();
     };
     syncChannel?.addEventListener('message', onSync);
-    Promise.all([
-      refresh(),
-      getStoredSettings().then((s) => {
-        if (s) {
-          setSettingsState(s);
+
+    const init = async () => {
+      try {
+        if (desktopAPI.isDesktop) {
+          await ensureLibraryMigrated();
         }
-      }),
-    ])
-      .catch((e) => notify(errorMessage(e)))
-      .finally(() => setReady(true));
+        await Promise.all([
+          refresh(),
+          getStoredSettings().then((s) => {
+            if (s) {
+              setSettingsState(s);
+            }
+          }),
+        ]);
+      } catch (e) {
+        notify(errorMessage(e));
+      } finally {
+        setReady(true);
+      }
+    };
+    void init();
+
     return () => {
       window.removeEventListener('reader-storage-blocked', blocked);
       syncChannel?.removeEventListener('message', onSync);

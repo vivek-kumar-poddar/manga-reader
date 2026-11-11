@@ -18,6 +18,7 @@ import {
   withinTime,
 } from './limits';
 import { desktopAPI } from './tauriBridge';
+import { type LibraryRepo, TauriSqliteLibraryRepo, ensureLibraryMigrated } from './repo';
 
 export interface MangaDB extends DBSchema {
   manga: {
@@ -66,7 +67,7 @@ export function onMangaDelete(listener: MangaDeleteListener): () => void {
   };
 }
 
-function notifyDelete(id?: string) {
+export function notifyDelete(id?: string) {
   for (const fn of deleteListeners) {
     try {
       fn(id);
@@ -187,7 +188,7 @@ export const db: Promise<IDBPDatabase<MangaDB>> =
       })
     : (new Promise(() => {}) as unknown as Promise<IDBPDatabase<MangaDB>>);
 
-export const listLibrary = async (): Promise<Summary[]> => {
+export const listLibraryIdb = async (): Promise<Summary[]> => {
   if (cachedSummaries !== null) {
     return cachedSummaries.slice();
   }
@@ -225,18 +226,10 @@ export const listLibrary = async (): Promise<Summary[]> => {
   }
   entries.sort((a, b) => b.updatedAt - a.updatedAt);
   cachedSummaries = entries;
-  if (desktopAPI.isDesktop && desktopAPI.registerAllowedRoots) {
-    const localRoots = entries
-      .map((s) => s.localPath)
-      .filter((p): p is string => typeof p === 'string' && p.length > 0);
-    if (localRoots.length > 0) {
-      void desktopAPI.registerAllowedRoots(localRoots);
-    }
-  }
   return entries.slice();
 };
 
-export async function getCover(id: string): Promise<Blob | undefined> {
+export async function getCoverIdb(id: string): Promise<Blob | undefined> {
   if (desktopAPI.isDesktop && desktopAPI.getThumbnail) {
     try {
       const buf = await desktopAPI.getThumbnail(id);
@@ -271,7 +264,7 @@ export async function getCover(id: string): Promise<Blob | undefined> {
   return undefined;
 }
 
-export async function getManga(id: string): Promise<Manga | undefined> {
+export async function getMangaIdb(id: string): Promise<Manga | undefined> {
   const d = await db;
   const raw = await d.get('manga', id);
   if (!raw) return undefined;
@@ -285,7 +278,7 @@ export async function getManga(id: string): Promise<Manga | undefined> {
   const [entries, s, cover] = await Promise.all([
     d.getAllFromIndex('progress', 'mangaId', id),
     d.get('summaries', id),
-    getCover(id),
+    getCoverIdb(id),
   ]);
   const byName = new Map(
     (entries as Progress[])
@@ -313,13 +306,13 @@ export async function getManga(id: string): Promise<Manga | undefined> {
   };
 }
 
-export async function allManga(): Promise<Manga[]> {
-  return (await Promise.all((await listLibrary()).map((m) => getManga(m.id)))).filter(
+export async function allMangaIdb(): Promise<Manga[]> {
+  return (await Promise.all((await listLibraryIdb()).map((m) => getMangaIdb(m.id)))).filter(
     (m): m is Manga => Boolean(m),
   );
 }
 
-export async function saveManga(m: Manga): Promise<void> {
+export async function saveMangaIdb(m: Manga): Promise<void> {
   assertMangaLimits(m);
   const updatedAt = Date.now();
   const tx = (await db).transaction(['manga', 'summaries', 'progress', 'covers'], 'readwrite');
@@ -382,7 +375,7 @@ export async function saveManga(m: Manga): Promise<void> {
 
 export type SaveProgressResult = 'saved' | 'stale' | 'missing';
 
-export async function saveProgress(
+export async function saveProgressIdb(
   m: Manga,
   index: number,
   position: Position,
@@ -494,17 +487,17 @@ async function ensureBookmarkCaches(): Promise<void> {
   return bookmarkCachePromise;
 }
 
-export async function getBookmarkedMangaIds(): Promise<Set<string>> {
+export async function getBookmarkedMangaIdsIdb(): Promise<Set<string>> {
   await ensureBookmarkCaches();
   return new Set(cachedBookmarkedMangaIds ?? []);
 }
 
-export async function getMangaBookmarkedIds(): Promise<Set<string>> {
+export async function getMangaBookmarkedIdsIdb(): Promise<Set<string>> {
   await ensureBookmarkCaches();
   return new Set(cachedMangaBookmarkedIds ?? []);
 }
 
-export async function addBookmark(
+export async function addBookmarkIdb(
   mangaId: string,
   chapterName: string,
   position: Position,
@@ -540,7 +533,7 @@ export async function addBookmark(
   return marks;
 }
 
-export async function removeBookmark(
+export async function removeBookmarkIdb(
   mangaId: string,
   chapterName: string,
   position: Position,
@@ -572,7 +565,7 @@ export async function removeBookmark(
   return marks;
 }
 
-export async function deleteManga(id: string): Promise<void> {
+export async function deleteMangaIdb(id: string): Promise<void> {
   notifyDelete(id);
   const tx = (await db).transaction(['manga', 'summaries', 'covers', 'progress'], 'readwrite');
   const progressStore = tx.objectStore('progress');
@@ -596,7 +589,7 @@ export async function deleteManga(id: string): Promise<void> {
   broadcastSync({ type: 'library', id });
 }
 
-export async function clearLibrary(): Promise<void> {
+export async function clearLibraryIdb(): Promise<void> {
   notifyDelete(undefined);
   const tx = (await db).transaction(['manga', 'summaries', 'covers', 'progress'], 'readwrite');
   await Promise.all(
@@ -619,7 +612,7 @@ export async function clearLibrary(): Promise<void> {
 
 let isRestoring = false;
 
-export async function restoreBackup(backup: {
+export async function restoreBackupIdb(backup: {
   manga: Manga[];
   settings: Settings;
 }): Promise<Settings> {
@@ -640,7 +633,7 @@ export async function restoreBackup(backup: {
     // Read existing handles, local paths, and covers to preserve them
     const existingManga = new Map<string, Manga>();
     for (const m of backup.manga) {
-      const existing = await getManga(m.id);
+      const existing = await getMangaIdb(m.id);
       if (existing) {
         existingManga.set(m.id, existing);
       }
@@ -760,7 +753,7 @@ export async function restoreBackup(backup: {
   }
 }
 
-export async function resetProgress(): Promise<void> {
+export async function resetProgressIdb(): Promise<void> {
   const database = await db;
   const tx = database.transaction(['progress', 'summaries'], 'readwrite');
   try {
@@ -800,18 +793,150 @@ export async function resetProgress(): Promise<void> {
   }
 }
 
-export async function getStoredSettings(): Promise<Settings | undefined> {
+export async function getStoredSettingsIdb(): Promise<Settings | undefined> {
   const d = await db;
   const raw = await d.get('settings', 'global');
   return raw ? parseSettings(raw) : undefined;
 }
 
-export async function saveStoredSettings(settings: Settings): Promise<Settings> {
+export async function saveStoredSettingsIdb(settings: Settings): Promise<Settings> {
   const validated = parseSettings(settings);
   const d = await db;
   await d.put('settings', validated, 'global');
   return validated;
 }
+
+export class IndexedDBLibraryRepo implements LibraryRepo {
+  listLibrary(): Promise<Summary[]> {
+    return listLibraryIdb();
+  }
+  getManga(id: string): Promise<Manga | undefined> {
+    return getMangaIdb(id);
+  }
+  getCover(id: string): Promise<Blob | undefined> {
+    return getCoverIdb(id);
+  }
+  allManga(): Promise<Manga[]> {
+    return allMangaIdb();
+  }
+  saveManga(m: Manga): Promise<void> {
+    return saveMangaIdb(m);
+  }
+  saveProgress(
+    m: Manga,
+    index: number,
+    position: Position,
+    read: boolean,
+    bookmarks?: Position[],
+    updateLast = true,
+  ): Promise<SaveProgressResult> {
+    return saveProgressIdb(m, index, position, read, bookmarks, updateLast);
+  }
+  getBookmarkedMangaIds(): Promise<Set<string>> {
+    return getBookmarkedMangaIdsIdb();
+  }
+  getMangaBookmarkedIds(): Promise<Set<string>> {
+    return getMangaBookmarkedIdsIdb();
+  }
+  addBookmark(mangaId: string, chapterName: string, position: Position): Promise<Position[]> {
+    return addBookmarkIdb(mangaId, chapterName, position);
+  }
+  removeBookmark(mangaId: string, chapterName: string, position: Position): Promise<Position[]> {
+    return removeBookmarkIdb(mangaId, chapterName, position);
+  }
+  deleteManga(id: string): Promise<void> {
+    return deleteMangaIdb(id);
+  }
+  clearLibrary(): Promise<void> {
+    return clearLibraryIdb();
+  }
+  resetProgress(): Promise<void> {
+    return resetProgressIdb();
+  }
+  getStoredSettings(): Promise<Settings | undefined> {
+    return getStoredSettingsIdb();
+  }
+  saveStoredSettings(settings: Settings): Promise<Settings> {
+    return saveStoredSettingsIdb(settings);
+  }
+  restoreBackup(backup: { manga: Manga[]; settings: Settings }): Promise<Settings> {
+    return restoreBackupIdb(backup);
+  }
+}
+
+let activeRepo: LibraryRepo = desktopAPI.isDesktop
+  ? new TauriSqliteLibraryRepo()
+  : new IndexedDBLibraryRepo();
+
+export function setRepo(newRepo: LibraryRepo): void {
+  activeRepo = newRepo;
+}
+
+export function getRepo(): LibraryRepo {
+  return activeRepo;
+}
+
+export const repo: LibraryRepo = {
+  listLibrary: () => activeRepo.listLibrary(),
+  getManga: (id) => activeRepo.getManga(id),
+  getCover: (id) => activeRepo.getCover(id),
+  allManga: () => activeRepo.allManga(),
+  saveManga: (m) => activeRepo.saveManga(m),
+  saveProgress: (m, index, position, read, bookmarks, updateLast) =>
+    activeRepo.saveProgress(m, index, position, read, bookmarks, updateLast),
+  getBookmarkedMangaIds: () => activeRepo.getBookmarkedMangaIds(),
+  getMangaBookmarkedIds: () => activeRepo.getMangaBookmarkedIds(),
+  addBookmark: (mangaId, chapterName, position) =>
+    activeRepo.addBookmark(mangaId, chapterName, position),
+  removeBookmark: (mangaId, chapterName, position) =>
+    activeRepo.removeBookmark(mangaId, chapterName, position),
+  deleteManga: (id) => activeRepo.deleteManga(id),
+  clearLibrary: () => activeRepo.clearLibrary(),
+  resetProgress: () => activeRepo.resetProgress(),
+  getStoredSettings: () => activeRepo.getStoredSettings(),
+  saveStoredSettings: (s) => activeRepo.saveStoredSettings(s),
+  restoreBackup: (b) => activeRepo.restoreBackup(b),
+};
+
+export const listLibrary = async (): Promise<Summary[]> => repo.listLibrary();
+export const getManga = async (id: string): Promise<Manga | undefined> => repo.getManga(id);
+export const getCover = async (id: string): Promise<Blob | undefined> => repo.getCover(id);
+export const allManga = async (): Promise<Manga[]> => repo.allManga();
+export const saveManga = async (m: Manga): Promise<void> => repo.saveManga(m);
+export const saveProgress = async (
+  m: Manga,
+  index: number,
+  position: Position,
+  read: boolean,
+  bookmarks?: Position[],
+  updateLast = true,
+): Promise<SaveProgressResult> =>
+  repo.saveProgress(m, index, position, read, bookmarks, updateLast);
+export const getBookmarkedMangaIds = async (): Promise<Set<string>> => repo.getBookmarkedMangaIds();
+export const getMangaBookmarkedIds = async (): Promise<Set<string>> => repo.getMangaBookmarkedIds();
+export const addBookmark = async (
+  mangaId: string,
+  chapterName: string,
+  position: Position,
+): Promise<Position[]> => repo.addBookmark(mangaId, chapterName, position);
+export const removeBookmark = async (
+  mangaId: string,
+  chapterName: string,
+  position: Position,
+): Promise<Position[]> => repo.removeBookmark(mangaId, chapterName, position);
+export const deleteManga = async (id: string): Promise<void> => repo.deleteManga(id);
+export const clearLibrary = async (): Promise<void> => repo.clearLibrary();
+export const resetProgress = async (): Promise<void> => repo.resetProgress();
+export const getStoredSettings = async (): Promise<Settings | undefined> =>
+  repo.getStoredSettings();
+export const saveStoredSettings = async (settings: Settings): Promise<Settings> =>
+  repo.saveStoredSettings(settings);
+export const restoreBackup = async (backup: {
+  manga: Manga[];
+  settings: Settings;
+}): Promise<Settings> => repo.restoreBackup(backup);
+
+export { type LibraryRepo, TauriSqliteLibraryRepo, ensureLibraryMigrated } from './repo';
 
 export function errorMessage(e: unknown): string {
   const err = e as { name?: string; message?: string };
@@ -874,9 +999,6 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
   // Desktop: read directly from the filesystem via IPC — works across restarts.
   if (desktopAPI.isDesktop && m.localPath) {
-    if (desktopAPI.registerAllowedRoots) {
-      void desktopAPI.registerAllowedRoots([m.localPath]);
-    }
     const sep = m.localPath.includes('\\') ? '\\' : '/';
     const absPath = m.localPath + sep + p.path.split('/').join(sep);
     const buf = await withinTime(desktopAPI.readFile(absPath), limits.ioTimeoutMs, 'Reading file');

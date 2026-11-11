@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-image-dimensions"
+description = "Enables the get_image_dimensions command without any pre-configured scope."
+commands.allow = ["get_image_dimensions"]
+
+[[permission]]
+identifier = "deny-get-image-dimensions"
+description = "Denies the get_image_dimensions command without any pre-configured scope."
+commands.deny = ["get_image_dimensions"]

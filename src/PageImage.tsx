@@ -145,15 +145,30 @@ function PageImage({
               pageWidth * pageHeight <= limits.imagePixels &&
               Math.max(pageWidth, pageHeight) <= limits.imageSide
             ) {
-              try {
-                blob = await downscaleImage(
-                  blob,
-                  1000,
-                  Math.max(1, Math.round((pageHeight * 1000) / pageWidth)),
-                  signal,
-                );
-              } catch {
-                /* Use original unmodified blob if downscaling is unavailable or fails */
+              const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
+              let handled = false;
+              if (desktopAPI.isDesktop && desktopAPI.generateImageVariant && m.localPath) {
+                try {
+                  const absPath = `${m.localPath.replace(/[/\\]+$/, '')}/${page.path.replace(/^[/\\]+/, '')}`;
+                  const variantBuffer = await desktopAPI.generateImageVariant(
+                    absPath,
+                    1000,
+                    targetHeight,
+                  );
+                  if (variantBuffer && variantBuffer.byteLength > 0) {
+                    blob = new Blob([variantBuffer], { type: 'image/webp' });
+                    handled = true;
+                  }
+                } catch {
+                  /* Fallback to downscaleImage */
+                }
+              }
+              if (!handled) {
+                try {
+                  blob = await downscaleImage(blob, 1000, targetHeight, signal);
+                } catch {
+                  /* Use original unmodified blob if downscaling is unavailable or fails */
+                }
               }
             }
 

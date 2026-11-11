@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import type { Manga, Summary, Position, Settings } from './model';
 
 export interface FolderEntry {
   relativePath: string;
@@ -110,7 +111,6 @@ export interface DesktopAPI {
   naturalSortPaths?(paths: string[]): Promise<string[]>;
   prepareChapterHeaders?(paths: string[]): Promise<PageHeader[]>;
   cancelScan?(scanId: string): Promise<boolean>;
-  registerAllowedRoots?(roots: string[]): Promise<void>;
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
   setProgressBar(progress: number): void;
@@ -118,12 +118,52 @@ export interface DesktopAPI {
   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
   deleteThumbnail?(id: string): Promise<void>;
   clearThumbnails?(): Promise<void>;
+  generateThumbnail?(filePath: string, id: string): Promise<ArrayBuffer | null>;
+  generateImageVariant?(
+    filePath: string,
+    maxWidth: number,
+    maxHeight: number,
+  ): Promise<ArrayBuffer | null>;
   getAppConfig?(): Promise<AppConfig | null>;
   saveAppConfig?(config: AppConfig): Promise<boolean>;
   setAppPreference?(key: string, value: unknown): Promise<boolean>;
   getAppPreference?(key: string): Promise<unknown>;
   recordOpenedRoot?(rootPath: string): Promise<string[]>;
   getLastOpenedRoots?(): Promise<string[]>;
+  isLibraryMigrated?(): Promise<boolean>;
+  importLegacyLibrary?(payload: unknown): Promise<boolean>;
+  sqliteListLibrary?(): Promise<Summary[]>;
+  sqliteGetManga?(id: string): Promise<Manga | undefined>;
+  sqliteSaveManga?(manga: Manga): Promise<void>;
+  sqliteSaveProgress?(params: {
+    mangaId: string;
+    chapterIndex: number;
+    position: Position;
+    read: boolean;
+    bookmarks?: Position[];
+    updateLast: boolean;
+    expectedRevision?: number;
+    expectedUpdatedAt?: number;
+  }): Promise<'saved' | 'stale' | 'missing'>;
+  sqliteAddBookmark?(params: {
+    mangaId: string;
+    chapterName: string;
+    position: Position;
+  }): Promise<Position[]>;
+  sqliteRemoveBookmark?(params: {
+    mangaId: string;
+    chapterName: string;
+    position: Position;
+  }): Promise<Position[]>;
+  sqliteGetBookmarkedMangaIds?(): Promise<{
+    allBookmarkedIds: string[];
+    mangaBookmarkedIds: string[];
+  }>;
+  sqliteDeleteManga?(id: string): Promise<void>;
+  sqliteClearLibrary?(): Promise<void>;
+  sqliteResetProgress?(): Promise<void>;
+  sqliteGetSettings?(): Promise<Settings | undefined>;
+  sqliteSaveSettings?(settings: Settings): Promise<Settings>;
 }
 
 // Detect Tauri runtime presence
@@ -274,14 +314,6 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
-  async registerAllowedRoots(roots: string[]): Promise<void> {
-    try {
-      await invoke('register_allowed_roots', { roots });
-    } catch (err) {
-      console.warn('Tauri registerAllowedRoots failed:', err);
-    }
-  }
-
   async readFile(absolutePath: string): Promise<ArrayBuffer | null> {
     try {
       const response = await invoke<Uint8Array | ArrayBuffer>('read_file', {
@@ -331,11 +363,68 @@ export class TauriDesktopBridge implements DesktopAPI {
   async saveThumbnail(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean> {
     try {
       const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
-      await invoke('save_thumbnail', { id, bytes });
+      await invoke('save_thumbnail', bytes, {
+        headers: {
+          'x-id': encodeURIComponent(id),
+        },
+      });
       return true;
     } catch (err) {
       console.warn('Tauri saveThumbnail failed for', id, parseFsError(err) ?? err);
       return false;
+    }
+  }
+
+  async generateThumbnail(filePath: string, id: string): Promise<ArrayBuffer | null> {
+    try {
+      const response = await invoke<Uint8Array | ArrayBuffer>('generate_thumbnail', {
+        filePath,
+        id,
+      });
+      if (response instanceof ArrayBuffer) {
+        return response.byteLength > 0 ? response : null;
+      }
+      if (response instanceof Uint8Array) {
+        return response.byteLength > 0
+          ? (response.buffer.slice(
+              response.byteOffset,
+              response.byteOffset + response.byteLength,
+            ) as ArrayBuffer)
+          : null;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Tauri generateThumbnail failed for', filePath, id, parseFsError(err) ?? err);
+      return null;
+    }
+  }
+
+  async generateImageVariant(
+    filePath: string,
+    maxWidth: number,
+    maxHeight: number,
+  ): Promise<ArrayBuffer | null> {
+    try {
+      const response = await invoke<Uint8Array | ArrayBuffer>('generate_image_variant', {
+        filePath,
+        maxWidth,
+        maxHeight,
+      });
+      if (response instanceof ArrayBuffer) {
+        return response.byteLength > 0 ? response : null;
+      }
+      if (response instanceof Uint8Array) {
+        return response.byteLength > 0
+          ? (response.buffer.slice(
+              response.byteOffset,
+              response.byteOffset + response.byteLength,
+            ) as ArrayBuffer)
+          : null;
+      }
+      return null;
+    } catch (err) {
+      console.warn('Tauri generateImageVariant failed for', filePath, parseFsError(err) ?? err);
+      return null;
     }
   }
 
@@ -431,6 +520,137 @@ export class TauriDesktopBridge implements DesktopAPI {
       return [];
     }
   }
+
+  async isLibraryMigrated(): Promise<boolean> {
+    try {
+      return await invoke<boolean>('is_library_migrated');
+    } catch (err) {
+      console.warn('Tauri isLibraryMigrated failed:', err);
+      return false;
+    }
+  }
+
+  async importLegacyLibrary(payload: unknown): Promise<boolean> {
+    try {
+      return await invoke<boolean>('import_legacy_library', { payload });
+    } catch (err) {
+      console.warn('Tauri importLegacyLibrary failed:', err);
+      return false;
+    }
+  }
+
+  async sqliteListLibrary(): Promise<Summary[]> {
+    try {
+      const records = await invoke<Summary[]>('sqlite_list_library');
+      return Array.isArray(records) ? records : [];
+    } catch (err) {
+      console.warn('Tauri sqliteListLibrary failed:', err);
+      return [];
+    }
+  }
+
+  async sqliteGetManga(id: string): Promise<Manga | undefined> {
+    try {
+      const record = await invoke<Manga | null>('sqlite_get_manga', { id });
+      return record ?? undefined;
+    } catch (err) {
+      console.warn('Tauri sqliteGetManga failed for', id, err);
+      return undefined;
+    }
+  }
+
+  async sqliteSaveManga(manga: Manga): Promise<void> {
+    await invoke('sqlite_save_manga', { manga });
+  }
+
+  async sqliteSaveProgress(params: {
+    mangaId: string;
+    chapterIndex: number;
+    position: Position;
+    read: boolean;
+    bookmarks?: Position[];
+    updateLast: boolean;
+    expectedRevision?: number;
+    expectedUpdatedAt?: number;
+  }): Promise<'saved' | 'stale' | 'missing'> {
+    const res = await invoke<string>('sqlite_save_progress', {
+      mangaId: params.mangaId,
+      chapterIndex: params.chapterIndex,
+      position: params.position,
+      read: params.read,
+      bookmarks: params.bookmarks,
+      updateLast: params.updateLast,
+      expectedRevision: params.expectedRevision,
+      expectedUpdatedAt: params.expectedUpdatedAt,
+    });
+    return res as 'saved' | 'stale' | 'missing';
+  }
+
+  async sqliteAddBookmark(params: {
+    mangaId: string;
+    chapterName: string;
+    position: Position;
+  }): Promise<Position[]> {
+    return await invoke<Position[]>('sqlite_add_bookmark', {
+      mangaId: params.mangaId,
+      chapterName: params.chapterName,
+      position: params.position,
+    });
+  }
+
+  async sqliteRemoveBookmark(params: {
+    mangaId: string;
+    chapterName: string;
+    position: Position;
+  }): Promise<Position[]> {
+    return await invoke<Position[]>('sqlite_remove_bookmark', {
+      mangaId: params.mangaId,
+      chapterName: params.chapterName,
+      position: params.position,
+    });
+  }
+
+  async sqliteGetBookmarkedMangaIds(): Promise<{
+    allBookmarkedIds: string[];
+    mangaBookmarkedIds: string[];
+  }> {
+    try {
+      return await invoke<{
+        allBookmarkedIds: string[];
+        mangaBookmarkedIds: string[];
+      }>('sqlite_get_bookmarked_manga_ids');
+    } catch (err) {
+      console.warn('Tauri sqliteGetBookmarkedMangaIds failed:', err);
+      return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
+    }
+  }
+
+  async sqliteDeleteManga(id: string): Promise<void> {
+    await invoke('sqlite_delete_manga', { id });
+  }
+
+  async sqliteClearLibrary(): Promise<void> {
+    await invoke('sqlite_clear_library');
+  }
+
+  async sqliteResetProgress(): Promise<void> {
+    await invoke('sqlite_reset_progress');
+  }
+
+  async sqliteGetSettings(): Promise<Settings | undefined> {
+    try {
+      const record = await invoke<Settings | null>('sqlite_get_settings');
+      return record ?? undefined;
+    } catch (err) {
+      console.warn('Tauri sqliteGetSettings failed:', err);
+      return undefined;
+    }
+  }
+
+  async sqliteSaveSettings(settings: Settings): Promise<Settings> {
+    await invoke('sqlite_save_settings', { settings });
+    return settings;
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -461,8 +681,6 @@ class WebDesktopBridge implements DesktopAPI {
     return false;
   }
 
-  async registerAllowedRoots(): Promise<void> {}
-
   async readFile(): Promise<ArrayBuffer | null> {
     return null;
   }
@@ -484,6 +702,14 @@ class WebDesktopBridge implements DesktopAPI {
   async deleteThumbnail(): Promise<void> {}
 
   async clearThumbnails(): Promise<void> {}
+
+  async generateThumbnail(): Promise<ArrayBuffer | null> {
+    return null;
+  }
+
+  async generateImageVariant(): Promise<ArrayBuffer | null> {
+    return null;
+  }
 
   async getAppConfig(): Promise<AppConfig | null> {
     return null;
@@ -507,6 +733,57 @@ class WebDesktopBridge implements DesktopAPI {
 
   async getLastOpenedRoots(): Promise<string[]> {
     return [];
+  }
+
+  async isLibraryMigrated(): Promise<boolean> {
+    return false;
+  }
+
+  async importLegacyLibrary(): Promise<boolean> {
+    return false;
+  }
+
+  async sqliteListLibrary(): Promise<Summary[]> {
+    return [];
+  }
+
+  async sqliteGetManga(): Promise<Manga | undefined> {
+    return undefined;
+  }
+
+  async sqliteSaveManga(): Promise<void> {}
+
+  async sqliteSaveProgress(): Promise<'saved' | 'stale' | 'missing'> {
+    return 'saved';
+  }
+
+  async sqliteAddBookmark(): Promise<Position[]> {
+    return [];
+  }
+
+  async sqliteRemoveBookmark(): Promise<Position[]> {
+    return [];
+  }
+
+  async sqliteGetBookmarkedMangaIds(): Promise<{
+    allBookmarkedIds: string[];
+    mangaBookmarkedIds: string[];
+  }> {
+    return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
+  }
+
+  async sqliteDeleteManga(): Promise<void> {}
+
+  async sqliteClearLibrary(): Promise<void> {}
+
+  async sqliteResetProgress(): Promise<void> {}
+
+  async sqliteGetSettings(): Promise<Settings | undefined> {
+    return undefined;
+  }
+
+  async sqliteSaveSettings(settings: Settings): Promise<Settings> {
+    return settings;
   }
 }
 

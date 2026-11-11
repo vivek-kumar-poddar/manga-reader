@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-natural-sort-paths"
+description = "Enables the natural_sort_paths command without any pre-configured scope."
+commands.allow = ["natural_sort_paths"]
+
+[[permission]]
+identifier = "deny-natural-sort-paths"
+description = "Denies the natural_sort_paths command without any pre-configured scope."
+commands.deny = ["natural_sort_paths"]

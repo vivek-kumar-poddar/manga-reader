@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-prepare-chapter-headers"
+description = "Enables the prepare_chapter_headers command without any pre-configured scope."
+commands.allow = ["prepare_chapter_headers"]
+
+[[permission]]
+identifier = "deny-prepare-chapter-headers"
+description = "Denies the prepare_chapter_headers command without any pre-configured scope."
+commands.deny = ["prepare_chapter_headers"]

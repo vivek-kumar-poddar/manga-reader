@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sqlite-save-settings"
+description = "Enables the sqlite_save_settings command without any pre-configured scope."
+commands.allow = ["sqlite_save_settings"]
+
+[[permission]]
+identifier = "deny-sqlite-save-settings"
+description = "Denies the sqlite_save_settings command without any pre-configured scope."
+commands.deny = ["sqlite_save_settings"]

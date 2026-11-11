@@ -957,15 +957,40 @@ export async function indexSource(
     .sort(([a], [b]) => natural.compare(a, b))
     .find(([p]) => !p.includes('/') && /^(thumbnail|cover)\./i.test(p))?.[1];
   let cover = previous?.cover;
-  try {
-    cover = await thumbnail(
-      await readFile(coverEntry || source.files.get(chapters[0].pages[0].path)!),
-    );
-  } catch {
+  const mangaId = previous?.id || generateUUID();
+
+  // Desktop optimization (C2): Generate thumbnail in Rust via image crate + fast_image_resize directly from disk
+  const targetEntry = coverEntry || source.files.get(chapters[0].pages[0].path);
+  if (
+    !cover &&
+    desktopAPI.isDesktop &&
+    desktopAPI.generateThumbnail &&
+    targetEntry &&
+    'absPath' in targetEntry &&
+    typeof (targetEntry as any).absPath === 'string'
+  ) {
     try {
-      cover = await thumbnail(await readFile(source.files.get(chapters[0].pages[0].path)!));
+      const buffer = await desktopAPI.generateThumbnail((targetEntry as any).absPath, mangaId);
+      if (buffer && buffer.byteLength > 0) {
+        cover = new Blob([buffer], { type: 'image/webp' });
+      }
     } catch {
-      /* A text cover is displayed if no preview can be decoded. */
+      // Fallback to JS canvas thumbnail path
+    }
+  }
+
+  // Web fallback: ImageBitmap and canvas path
+  if (!cover) {
+    try {
+      cover = await thumbnail(
+        await readFile(coverEntry || source.files.get(chapters[0].pages[0].path)!),
+      );
+    } catch {
+      try {
+        cover = await thumbnail(await readFile(source.files.get(chapters[0].pages[0].path)!));
+      } catch {
+        /* A text cover is displayed if no preview can be decoded. */
+      }
     }
   }
   alive(options.signal);
@@ -979,7 +1004,7 @@ export async function indexSource(
         oldChapter.pages.some((p) => p.name === c.position?.path?.split('/').at(-1)),
     );
   const m: Manga = {
-    id: previous?.id || generateUUID(),
+    id: mangaId,
     title: source.title.trim(),
     chapters,
     handle: source.handle,

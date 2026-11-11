@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tauri::{AppHandle, Manager};
 
-use super::fs::AllowedRoots;
+use super::fs::{write_atomic, AllowedRoots};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -77,6 +77,16 @@ pub fn load_persisted_config(app: &AppHandle) -> AppConfig {
                 }
             }
         }
+        // Fallback recovery: check if a valid .tmp file exists from an interrupted rename
+        let tmp = path.with_extension("tmp");
+        if tmp.exists() {
+            if let Ok(content) = fs::read_to_string(&tmp) {
+                if let Ok(config) = serde_json::from_str::<AppConfig>(&content) {
+                    let _ = fs::rename(&tmp, &path);
+                    return config;
+                }
+            }
+        }
     }
     AppConfig::default()
 }
@@ -84,7 +94,7 @@ pub fn load_persisted_config(app: &AppHandle) -> AppConfig {
 pub fn save_persisted_config(app: &AppHandle, config: &AppConfig) {
     if let Ok(path) = get_config_path(app) {
         if let Ok(json) = serde_json::to_string_pretty(config) {
-            let _ = fs::write(path, json);
+            let _ = write_atomic(&path, json.as_bytes());
         }
     }
 }
@@ -157,4 +167,59 @@ pub fn record_opened_root(app: AppHandle, root_path: String) -> Result<Vec<Strin
 pub fn get_last_opened_roots(app: AppHandle) -> Result<Vec<String>, String> {
     let state = app.state::<AppConfigState>();
     Ok(state.get().last_opened_roots)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_preferences_defaults() {
+        let prefs = WindowPreferences::default();
+        assert!(!prefs.minimize_to_tray);
+        assert!(!prefs.close_to_tray);
+        assert!(!prefs.start_maximized);
+        assert!(prefs.high_dpi_scaling);
+        assert_eq!(prefs.theme, None);
+    }
+
+    #[test]
+    fn test_app_config_serde_roundtrip() {
+        let mut config = AppConfig::default();
+        config.last_opened_roots.push("C:\\Manga\\OnePiece".into());
+        config.window_preferences.close_to_tray = true;
+        config.custom_preferences.insert("zoom".into(), serde_json::json!(1.25));
+
+        let json = serde_json::to_string(&config).expect("Must serialize to JSON");
+        assert!(json.contains("\"closeToTray\":true"));
+        assert!(json.contains("\"lastOpenedRoots\":[\"C:\\\\Manga\\\\OnePiece\"]"));
+
+        let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
+        assert_eq!(deserialized.last_opened_roots, vec!["C:\\Manga\\OnePiece"]);
+        assert!(deserialized.window_preferences.close_to_tray);
+        assert_eq!(deserialized.custom_preferences.get("zoom"), Some(&serde_json::json!(1.25)));
+    }
+
+    #[test]
+    fn test_root_capping_and_deduplication() {
+        let mut roots = Vec::new();
+        for i in 0..30 {
+            let root = format!("C:\\Manga\\Title_{}", i);
+            roots.retain(|r| r != &root);
+            roots.insert(0, root);
+            if roots.len() > 25 {
+                roots.truncate(25);
+            }
+        }
+
+        assert_eq!(roots.len(), 25);
+        assert_eq!(roots[0], "C:\\Manga\\Title_29");
+
+        // Re-adding Title_10 should bring it to the front
+        let title_10 = "C:\\Manga\\Title_10".to_string();
+        roots.retain(|r| r != &title_10);
+        roots.insert(0, title_10.clone());
+        assert_eq!(roots[0], title_10);
+        assert_eq!(roots.len(), 25);
+    }
 }

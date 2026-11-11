@@ -1777,3 +1777,80 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (Vite production bundle built in 2.66s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
   - `cargo check --manifest-path src-tauri/Cargo.toml`: **PASS** (exit code 0).
+
+## Window Initialization Script, Opener Plugin, Cargo Cleanup & Rust Unit Tests — 2026-11-11
+
+- **Window `initialization_script` & Native `zoomHotkeysEnabled: false` (`src-tauri/tauri.conf.json`, `src-tauri/src/lib.rs`)**:
+  - Moved `INIT_SCRIPT` out of runtime `window.eval()` in setup.
+  - Configured `"create": false` on `"main"` window in `tauri.conf.json`, enabling `WebviewWindowBuilder::from_config(app, win_cfg)?.initialization_script(commands::window::INIT_SCRIPT).build()?` in `setup`.
+  - Guarantees script runs on document creation (`AddScriptToExecuteOnDocumentCreated`), surviving webview reloads and navigations without losing drag-drop and external link interceptors.
+  - Added `"zoomHotkeysEnabled": false` to `app.windows[0]` in `tauri.conf.json`, leveraging WebView2's native `IsZoomControlEnabled = false` to eliminate keyboard and wheel zoom without relying solely on JS interception.
+- **Upgraded from `tauri-plugin-shell` to `tauri-plugin-opener` (`src-tauri/Cargo.toml`, `src-tauri/src/lib.rs`, `src-tauri/capabilities/default.json`, `src-tauri/src/commands/window.rs`)**:
+  - Replaced deprecated Tauri v2 shell open plugin with `tauri-plugin-opener = "2"`.
+  - Registered `.plugin(tauri_plugin_opener::init())` in `src-tauri/src/lib.rs`.
+  - Dropped `"shell:default"` and `"shell:allow-open"` from `capabilities/default.json` in favor of scoped `"opener:default"`.
+  - Updated `INIT_SCRIPT` link router to invoke `plugin:opener|open_url` with `{ url: href }`.
+- **Cargo Dependencies & Toolchain Cleanup (`src-tauri/Cargo.toml`, `.cargo/config.toml`, `src-tauri/build.rs`)**:
+  - Shrink `tokio` features from `full` to `["rt-multi-thread", "fs", "sync", "macros"]`, eliminating unused sub-crates (net, process, signal, etc.).
+  - Evaluated toolchain environment: machine utilizes WinLibs MinGW 64-bit GCC (`x86_64-pc-windows-gnu`).
+  - Resolved MinGW GNU `ld.exe: .rsrc merge failure: multiple non-default manifests` and `TaskDialogIndirect` symbol entrypoint issues by generating custom gcc specs (`no-default-manifest.specs`) and linking the Common Controls v6 manifest object in `.cargo/config.toml`.
+  - Configured `build.rs` to automatically sync `WebView2Loader.dll` into `target/<profile>/deps/` so `cargo test` executes test harnesses seamlessly.
+- **Comprehensive Rust Unit Test Suite (`src-tauri/src/commands/{fs.rs, cache.rs, config.rs, image.rs}`)**:
+  - Added 15 comprehensive unit tests across Rust modules:
+    - `commands::fs`: `test_natural_order_chapters`, `test_natural_order_categories`, `test_is_image_file`, `test_is_ignored_directory`, `test_write_atomic`, `test_parse_image_dimensions`, `test_allowed_roots`.
+    - `commands::cache`: `test_percent_decode`, `test_sanitize_id`, `test_hash_key`.
+    - `commands::config`: `test_window_preferences_defaults`, `test_app_config_serde_roundtrip`, `test_root_capping_and_deduplication`.
+    - `commands::image`: `test_calculate_fitted_dimensions`, `test_resize_image_fir`.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **15/15 unit tests PASS** (0 failures, 0.01s).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **88/88 unit tests PASS** (1.4s).
+  - `npm run build`: **PASS** (Vite production bundle built in 3.75s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+
+## Step B1 — Replace IndexedDB with SQLite & Multi-Backend LibraryRepo Abstraction — 2026-11-11
+
+- **Relational SQLite Schema & Engine (`src-tauri/Cargo.toml`, `src-tauri/src/db.rs`, `src-tauri/src/lib.rs`)**:
+  - Integrated `rusqlite = { version = "0.33", features = ["bundled"] }`.
+  - Configured WAL mode (`PRAGMA journal_mode = WAL`) and foreign key cascades (`PRAGMA foreign_keys = ON`).
+  - Implemented normalized schema with indexes:
+    - `manga`: `id` (PK), `title`, `slug`, `local_path`, `last_chapter`, `added_at`, `updated_at`, `revision`, `sort`.
+    - `chapters`: `(manga_id, chapter_idx)` (PK), `name`, FK to `manga(id)` with CASCADE delete.
+    - `pages`: `(manga_id, chapter_idx, idx)` (PK), `name`, `path`, `width`, `height`, `size`, `modified`, FK to `chapters`.
+    - `progress`: `(manga_id, chapter_name)` (PK), `read`, `page`, `path`, `fraction`, `updated_at`, FK to `manga`.
+    - `bookmarks`: `id` (PK AUTOINCREMENT), `manga_id`, `chapter_name`, `page`, `path`, `fraction`, `manga_bookmark`, `timestamp`, FK to `manga`.
+    - `settings`: `key` (PK), `value`.
+  - Initialized `library.db` in `src-tauri/src/lib.rs` inside `setup` within app data directory, wrapped in `DbState(Mutex<Connection>)`.
+- **Atomic Rust Transactions & Commands (`src-tauri/src/db.rs`, `src-tauri/build.rs`, `src-tauri/capabilities/default.json`)**:
+  - Registered 14 new Tauri commands in `AppManifest`, capabilities, and handler:
+    - `is_library_migrated`, `import_legacy_library`, `sqlite_list_library`, `sqlite_get_manga`, `sqlite_save_manga`, `sqlite_save_progress`, `sqlite_add_bookmark`, `sqlite_remove_bookmark`, `sqlite_get_bookmarked_manga_ids`, `sqlite_delete_manga`, `sqlite_clear_library`, `sqlite_reset_progress`, `sqlite_get_settings`, `sqlite_save_settings`.
+  - Implemented atomic `import_legacy_library_tx`: inserts all manga, chapters, pages, progress, bookmarks, and global settings in a single transaction. Sets `migrated = 1` only upon successful commit.
+  - Implemented `save_progress` with optimistic locking: verifies `expected_revision` and `expected_updated_at`, returning typed `'saved' | 'stale' | 'missing'`.
+- **Frontend `DesktopAPI` & IPC Bridge (`src/tauriBridge.ts`)**:
+  - Extended `DesktopAPI` interface and implemented all 14 SQLite IPC methods in `TauriDesktopBridge` using `@tauri-apps/api/core` `invoke`.
+  - Provided clean safe fallbacks / no-ops in `WebDesktopBridge`.
+- **`LibraryRepo` Interface & Multi-Backend Repositories (`src/repo.ts`, `src/storage.ts`)**:
+  - Defined unified `LibraryRepo` interface with CRUD, progress, bookmark, and settings contracts.
+  - Implemented `TauriSqliteLibraryRepo`:
+    - Queries SQLite via `desktopAPI.sqlite*`.
+    - Maintains in-memory caches for summaries and bookmarks.
+    - Caches cover thumbnails to disk via `desktopAPI.saveThumbnail`.
+    - Broadcasts changes over `syncChannel` (`manga-reader:sync`).
+  - Implemented `IndexedDBLibraryRepo`:
+    - Encapsulates existing IndexedDB transactions and schema.
+  - Exported dynamic `repo` proxying to `desktopAPI.isDesktop ? new TauriSqliteLibraryRepo() : new IndexedDBLibraryRepo()`.
+  - Refactored `src/storage.ts` to delegate all exported persistence methods to `repo`.
+- **Non-Destructive Safe Migration (`src/repo.ts`, `src/App.tsx`)**:
+  - Implemented `ensureLibraryMigrated(idbRepo?: LibraryRepo)`:
+    - Checks `desktopAPI.isLibraryMigrated()`. If false, dumps existing titles and settings from IndexedDB.
+    - Validates dumped data through `validateBackup({ version: 2, manga, settings })`.
+    - Calls `desktopAPI.importLegacyLibrary` to commit the entire dataset atomically into SQLite.
+    - Leaves the IndexedDB database 100% intact as a read-only safety backup (never wipes or deletes IDB).
+  - Invoked `ensureLibraryMigrated()` in `src/App.tsx` on desktop mount prior to initial library and settings fetch.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **20/20 unit tests PASS** (including 5 SQLite tests: schema init & migration flag, save & get manga, progress & stale detection, bookmarks add/remove, legacy import transaction).
+  - Added 4 unit tests in `tests/storage-modular.spec.ts` asserting `TauriSqliteLibraryRepo` method delegation, `ensureLibraryMigrated` skipping when migrated, non-destructive IDB export & atomic SQLite import, and empty IDB safe init.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run test:validation`: **92/92 unit tests PASS** (1.5s).
+  - `npm run build`: **PASS** (Vite production bundle built in 3.45s).
+  - `npm run format:check`: **PASS** (All matched files use Prettier code style).

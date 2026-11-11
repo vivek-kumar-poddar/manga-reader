@@ -377,3 +377,16 @@ Change: Run unit validation tests: `npm run test:validation`.
 Use: Certify complete functional parity, improved performance, and zero regressions.
 Check: All verification checks PASS; title marked [COMPLETED].
 
+13. [COMPLETED] B1. Replace IndexedDB with SQLite & Multi-Backend LibraryRepo Abstraction
+Changes: src-tauri/Cargo.toml (rusqlite 0.33 bundled); NEW src-tauri/src/db.rs (WAL mode, foreign keys, cascade deletes,
+         manga/chapters/pages/progress/bookmarks/settings schema, 14 Tauri commands); src-tauri/src/lib.rs (initialized db);
+         NEW src/repo.ts (LibraryRepo interface, TauriSqliteLibraryRepo, ensureLibraryMigrated); src/storage.ts (IndexedDBLibraryRepo,
+         delegates exported persistence functions to repo); src/tauriBridge.ts (14 SQLite IPC methods); src/App.tsx (migrates on startup).
+Verified: `cargo test --manifest-path src-tauri/Cargo.toml`: 20/20 PASS (5/5 DB tests); `npm run test:validation`: 92/92 PASS;
+          `npm run typecheck`: PASS (0 errors); `npm run build`: PASS (3.45s); `npm run format:check`: PASS.
+Keep: Non-destructive migration leaves IndexedDB intact as safety fallback; atomic single-transaction SQLite import;
+      transparent LibraryRepo abstraction preserves 100% UI and persistence contracts.
+Path: src-tauri/src/db.rs; NEW src/repo.ts; src/storage.ts; src/tauriBridge.ts; src/App.tsx; tests/storage-modular.spec.ts.
+Function: Relational SQLite storage, LibraryRepo multi-backend abstraction, atomic non-destructive migration.
+
+

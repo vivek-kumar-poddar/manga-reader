@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sqlite-list-library"
+description = "Enables the sqlite_list_library command without any pre-configured scope."
+commands.allow = ["sqlite_list_library"]
+
+[[permission]]
+identifier = "deny-sqlite-list-library"
+description = "Denies the sqlite_list_library command without any pre-configured scope."
+commands.deny = ["sqlite_list_library"]

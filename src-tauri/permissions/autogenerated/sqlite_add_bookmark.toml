@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sqlite-add-bookmark"
+description = "Enables the sqlite_add_bookmark command without any pre-configured scope."
+commands.allow = ["sqlite_add_bookmark"]
+
+[[permission]]
+identifier = "deny-sqlite-add-bookmark"
+description = "Denies the sqlite_add_bookmark command without any pre-configured scope."
+commands.deny = ["sqlite_add_bookmark"]

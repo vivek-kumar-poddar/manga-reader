@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sqlite-delete-manga"
+description = "Enables the sqlite_delete_manga command without any pre-configured scope."
+commands.allow = ["sqlite_delete_manga"]
+
+[[permission]]
+identifier = "deny-sqlite-delete-manga"
+description = "Denies the sqlite_delete_manga command without any pre-configured scope."
+commands.deny = ["sqlite_delete_manga"]

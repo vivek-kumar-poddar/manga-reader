@@ -330,19 +330,60 @@ impl AllowedRoots {
     }
 }
 
+pub fn is_image_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .map(|ext| ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()))
+        .unwrap_or(false)
+}
+
+pub fn is_ignored_directory(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str())
+}
+
+/// Atomically writes data to path by writing to a temporary file (*.tmp) first
+/// and then renaming it over the destination path.
+pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, data)?;
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 pub fn load_persisted_roots(app: &AppHandle) -> HashSet<PathBuf> {
     let mut set = HashSet::new();
     if let Ok(app_dir) = app.path().app_data_dir() {
         let file_path = app_dir.join("allowed_roots.json");
-        if file_path.exists() {
-            if let Ok(data) = std::fs::read_to_string(&file_path) {
-                if let Ok(paths) = serde_json::from_str::<Vec<String>>(&data) {
-                    for p in paths {
-                        let pb = PathBuf::from(p);
-                        if let Ok(canonical) = dunce::canonicalize(&pb) {
-                            set.insert(canonical);
-                        } else {
-                            set.insert(pb);
+        let candidates = [file_path.clone(), file_path.with_extension("tmp")];
+        for candidate in &candidates {
+            if candidate.exists() {
+                if let Ok(data) = std::fs::read_to_string(candidate) {
+                    if let Ok(paths) = serde_json::from_str::<Vec<String>>(&data) {
+                        for p in paths {
+                            let pb = PathBuf::from(p);
+                            if let Ok(canonical) = dunce::canonicalize(&pb) {
+                                set.insert(canonical);
+                            } else {
+                                set.insert(pb);
+                            }
+                        }
+                        if !set.is_empty() {
+                            if candidate != &file_path {
+                                let _ = std::fs::rename(candidate, &file_path);
+                            }
+                            break;
                         }
                     }
                 }
@@ -358,7 +399,7 @@ pub fn save_persisted_roots(app: &AppHandle, roots: &HashSet<PathBuf>) {
         let file_path = app_dir.join("allowed_roots.json");
         let list: Vec<String> = roots.iter().map(|p| p.to_string_lossy().to_string()).collect();
         if let Ok(data) = serde_json::to_string(&list) {
-            let _ = std::fs::write(file_path, data);
+            let _ = write_atomic(&file_path, data.as_bytes());
         }
     }
 }
@@ -455,18 +496,6 @@ pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
 }
 
 #[tauri::command]
-pub fn register_allowed_roots(app: AppHandle, roots: Vec<String>) -> Result<(), FsError> {
-    let allowed = app.state::<AllowedRoots>();
-    for root in roots {
-        if !root.trim().is_empty() {
-            allowed.add_root(PathBuf::from(root));
-        }
-    }
-    save_persisted_roots(&app, &allowed.0.read().unwrap());
-    Ok(())
-}
-
-#[tauri::command]
 pub fn cancel_scan(app: AppHandle, scan_id: String) -> Result<bool, FsError> {
     let scan_mgr = app.state::<ScanManager>();
     Ok(scan_mgr.cancel(&scan_id))
@@ -509,10 +538,14 @@ pub async fn list_folder(
 
     let root = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
 
-    // Register root as allowed and persist
+    // Verify root is under an allowed library root (added via select_folder or drag-and-drop)
     let allowed = app.state::<AllowedRoots>();
-    allowed.add_root(root.clone());
-    save_persisted_roots(&app, &allowed.0.read().unwrap());
+    if !allowed.is_allowed(&root) {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path '{}' is not under an allowed library root",
+            root.display()
+        )));
+    }
 
     // Setup cancellation receiver if scan_id provided
     let scan_mgr = app.state::<ScanManager>();
@@ -698,10 +731,14 @@ pub async fn discover_library(
 
     let root = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
 
-    // Register root as allowed
+    // Verify root is under an allowed library root (added via select_folder or drag-and-drop)
     let allowed = app.state::<AllowedRoots>();
-    allowed.add_root(root.clone());
-    save_persisted_roots(&app, &allowed.0.read().unwrap());
+    if !allowed.is_allowed(&root) {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path '{}' is not under an allowed library root",
+            root.display()
+        )));
+    }
 
     let scan_mgr = app.state::<ScanManager>();
     let rx = scan_id.as_deref().map(|id| scan_mgr.register(id));
@@ -1038,4 +1075,132 @@ pub async fn read_file(
         .map_err(|e| FsError::Io(format!("Failed to read file bytes: {e}")))?;
 
     Ok(tauri::ipc::Response::new(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cmp::Ordering;
+
+    #[test]
+    fn test_natural_order_chapters() {
+        assert_eq!(natural_order("Chapter 1", "Chapter 2"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 2", "Chapter 10"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 10", "Chapter 2"), Ordering::Greater);
+        assert_eq!(natural_order("Chapter 1.5", "Chapter 1"), Ordering::Greater);
+        assert_eq!(natural_order("Chapter 1.5", "Chapter 2"), Ordering::Less);
+        assert_eq!(natural_order("001.png", "2.png"), Ordering::Less);
+        assert_eq!(natural_order("10.jpg", "2.jpg"), Ordering::Greater);
+        assert_eq!(natural_order("same", "same"), Ordering::Equal);
+    }
+
+    #[test]
+    fn test_natural_order_categories() {
+        assert_eq!(natural_order("Prologue", "Chapter 1"), Ordering::Less);
+        assert_eq!(natural_order("Opening", "Chapter 1"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 50", "Epilogue"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 50", "Extra 1"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 50", "Bonus 1"), Ordering::Less);
+        assert_eq!(natural_order("Chapter 50", "Special"), Ordering::Less);
+    }
+
+    #[test]
+    fn test_is_image_file() {
+        for ext in ALLOWED_IMAGE_EXTENSIONS {
+            let filename = format!("cover.{}", ext);
+            assert!(is_image_file(Path::new(&filename)), "Extension .{} should be allowed", ext);
+            let uppercase = format!("cover.{}", ext.to_uppercase());
+            assert!(is_image_file(Path::new(&uppercase)), "Uppercase .{} should be allowed", ext);
+        }
+
+        assert!(!is_image_file(Path::new("document.pdf")));
+        assert!(!is_image_file(Path::new("script.js")));
+        assert!(!is_image_file(Path::new("archive.zip")));
+        assert!(!is_image_file(Path::new(".gitignore")));
+        assert!(!is_image_file(Path::new("noextension")));
+    }
+
+    #[test]
+    fn test_is_ignored_directory() {
+        assert!(is_ignored_directory(Path::new(".git")));
+        assert!(is_ignored_directory(Path::new(".svn")));
+        assert!(is_ignored_directory(Path::new(".cache")));
+        assert!(is_ignored_directory(Path::new("node_modules")));
+        assert!(is_ignored_directory(Path::new("$recycle.bin")));
+        assert!(is_ignored_directory(Path::new("System Volume Information")));
+
+        assert!(!is_ignored_directory(Path::new("Chapter 1")));
+        assert!(!is_ignored_directory(Path::new("Volume 1")));
+        assert!(!is_ignored_directory(Path::new("manga")));
+    }
+
+    #[test]
+    fn test_write_atomic() {
+        let temp_dir = std::env::temp_dir().join(format!("manga_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let target = temp_dir.join("config.json");
+        let tmp = target.with_extension("tmp");
+
+        let content = b"{\"theme\":\"dark\"}";
+        assert!(write_atomic(&target, content).is_ok());
+
+        assert!(target.exists());
+        assert!(!tmp.exists());
+        assert_eq!(std::fs::read(&target).unwrap(), content);
+
+        let updated = b"{\"theme\":\"light\"}";
+        assert!(write_atomic(&target, updated).is_ok());
+        assert_eq!(std::fs::read(&target).unwrap(), updated);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_parse_image_dimensions() {
+        let temp_dir = std::env::temp_dir().join(format!("manga_dim_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // 1x1 transparent PNG
+        let png_bytes = [
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
+            0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+        ];
+        let png_path = temp_dir.join("test.png");
+        std::fs::write(&png_path, png_bytes).unwrap();
+
+        let (w, h) = parse_image_dimensions(&png_path);
+        assert_eq!(w, Some(1));
+        assert_eq!(h, Some(1));
+
+        let invalid_path = temp_dir.join("invalid.txt");
+        std::fs::write(&invalid_path, b"not an image").unwrap();
+        let (inv_w, inv_h) = parse_image_dimensions(&invalid_path);
+        assert_eq!(inv_w, None);
+        assert_eq!(inv_h, None);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_allowed_roots() {
+        let allowed = AllowedRoots::default();
+        // Empty roots allows all
+        assert!(allowed.is_allowed(Path::new("C:\\Any\\Path")));
+
+        let root = std::env::temp_dir().join("manga_root_test");
+        let _ = std::fs::create_dir_all(&root);
+        allowed.add_root(root.clone());
+
+        let subfile = root.join("title").join("01.png");
+        assert!(allowed.is_allowed(&subfile));
+
+        let outside = std::env::temp_dir().join("other_folder_outside");
+        assert!(!allowed.is_allowed(&outside));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

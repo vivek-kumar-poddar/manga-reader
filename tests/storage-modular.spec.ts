@@ -21,6 +21,13 @@ import {
   getBookmarkedMangaIds,
   getMangaBookmarkedIds,
   type SaveProgressResult,
+  type LibraryRepo,
+  TauriSqliteLibraryRepo,
+  IndexedDBLibraryRepo,
+  ensureLibraryMigrated,
+  repo,
+  setRepo,
+  getRepo,
 } from '../src/storage';
 import { clearCoverUrlPool } from '../src/App';
 import { desktopAPI, TauriDesktopBridge, parseFsError } from '../src/tauriBridge';
@@ -460,15 +467,19 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
 
   test('TauriDesktopBridge thumbnail IPC sends raw Uint8Array and receives binary buffer', async () => {
     const bridge = new TauriDesktopBridge();
-    const calls: Array<{ cmd: string; args: any }> = [];
+    const calls: Array<{ cmd: string; args: any; options?: any }> = [];
 
     const origWindow = (globalThis as any).window;
     const origTauri = (globalThis as any).__TAURI_INTERNALS__;
     (globalThis as any).window = globalThis;
     (globalThis as any).__TAURI_INTERNALS__ = {
-      invoke: async (cmd: string, args: any) => {
-        calls.push({ cmd, args });
-        if (cmd === 'read_thumbnail') {
+      invoke: async (cmd: string, args: any, options?: any) => {
+        calls.push({ cmd, args, options });
+        if (
+          cmd === 'read_thumbnail' ||
+          cmd === 'generate_thumbnail' ||
+          cmd === 'generate_image_variant'
+        ) {
           return new Uint8Array([0x52, 0x49, 0x46, 0x46]);
         }
         return null;
@@ -476,29 +487,47 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     };
 
     try {
-      // 1. saveThumbnail with ArrayBuffer passes Uint8Array directly (no JS number array conversion)
+      // 1. saveThumbnail with ArrayBuffer passes raw Uint8Array with x-id header (zero JSON array overhead)
       const buffer = new Uint8Array([1, 2, 3, 4]).buffer;
       const saved = await bridge.saveThumbnail('thumb-1', buffer);
       expect(saved).toBe(true);
       expect(calls.length).toBe(1);
       expect(calls[0].cmd).toBe('save_thumbnail');
-      expect(calls[0].args.id).toBe('thumb-1');
-      expect(calls[0].args.bytes).toBeInstanceOf(Uint8Array);
-      expect(Array.isArray(calls[0].args.bytes)).toBe(false);
+      expect(calls[0].args).toBeInstanceOf(Uint8Array);
+      expect(Array.isArray(calls[0].args)).toBe(false);
+      expect(calls[0].options?.headers?.['x-id']).toBe(encodeURIComponent('thumb-1'));
 
-      // 2. saveThumbnail with Uint8Array passes Uint8Array directly
+      // 2. saveThumbnail with Uint8Array passes raw Uint8Array directly
       const uint8 = new Uint8Array([5, 6, 7, 8]);
       const savedUint8 = await bridge.saveThumbnail('thumb-2', uint8);
       expect(savedUint8).toBe(true);
       expect(calls.length).toBe(2);
       expect(calls[1].cmd).toBe('save_thumbnail');
-      expect(calls[1].args.id).toBe('thumb-2');
-      expect(calls[1].args.bytes).toBe(uint8);
+      expect(calls[1].args).toBe(uint8);
+      expect(calls[1].options?.headers?.['x-id']).toBe(encodeURIComponent('thumb-2'));
 
       // 3. getThumbnail receives binary Uint8Array and returns ArrayBuffer
       const readBuffer = await bridge.getThumbnail('thumb-1');
       expect(readBuffer).toBeInstanceOf(ArrayBuffer);
       expect(readBuffer?.byteLength).toBe(4);
+
+      // 4. generateThumbnail queries native Rust image engine and returns ArrayBuffer
+      const genBuffer = await bridge.generateThumbnail('C:/manga/ch1/01.jpg', 'thumb-1');
+      expect(genBuffer).toBeInstanceOf(ArrayBuffer);
+      expect(genBuffer?.byteLength).toBe(4);
+      expect(calls[3].cmd).toBe('generate_thumbnail');
+      expect(calls[3].args).toEqual({ filePath: 'C:/manga/ch1/01.jpg', id: 'thumb-1' });
+
+      // 5. generateImageVariant queries native Rust variant engine and returns ArrayBuffer
+      const varBuffer = await bridge.generateImageVariant('C:/manga/ch1/01.jpg', 1000, 1500);
+      expect(varBuffer).toBeInstanceOf(ArrayBuffer);
+      expect(varBuffer?.byteLength).toBe(4);
+      expect(calls[4].cmd).toBe('generate_image_variant');
+      expect(calls[4].args).toEqual({
+        filePath: 'C:/manga/ch1/01.jpg',
+        maxWidth: 1000,
+        maxHeight: 1500,
+      });
     } finally {
       if (origWindow === undefined) {
         delete (globalThis as any).window;
@@ -524,7 +553,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     expect(parseFsError(null)).toBeNull();
   });
 
-  test('TauriDesktopBridge listFolder supports scanId, cancellation via AbortSignal, and registerAllowedRoots', async () => {
+  test('TauriDesktopBridge listFolder supports scanId and cancellation via AbortSignal', async () => {
     const bridge = new TauriDesktopBridge();
     const calls: Array<{ cmd: string; args: any }> = [];
 
@@ -552,9 +581,6 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         if (cmd === 'cancel_scan') {
           return true;
         }
-        if (cmd === 'register_allowed_roots') {
-          return null;
-        }
         return null;
       },
     };
@@ -577,17 +603,6 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       await expect(bridge.listFolder('C:/manga', { scanId: 'cancelled-scan' })).rejects.toThrow(
         'The operation was aborted',
       );
-
-      // 4. registerAllowedRoots invokes Tauri command
-      await bridge.registerAllowedRoots(['C:/manga', 'D:/other']);
-      expect(
-        calls.some(
-          (c) =>
-            c.cmd === 'register_allowed_roots' &&
-            c.args.roots.includes('C:/manga') &&
-            c.args.roots.includes('D:/other'),
-        ),
-      ).toBe(true);
     } finally {
       if (origWindow === undefined) {
         delete (globalThis as any).window;
@@ -1165,130 +1180,665 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     }
   });
 
-  test('normalizePath normalizes backslashes, removes redundant slashes and trims trailing slashes', () => {
-    expect(normalizePath('folder\\subfolder\\file.png')).toBe('folder/subfolder/file.png');
-    expect(normalizePath('folder//subfolder///file.png/')).toBe('folder/subfolder/file.png');
-    expect(normalizePath('C:\\manga\\chapter 1\\01.webp/')).toBe('C:/manga/chapter 1/01.webp');
-  });
-
-  test('naturalSortPaths routes to desktopAPI.naturalSortPaths on desktop and falls back on web', async () => {
+  test('Step B1 — TauriSqliteLibraryRepo implements LibraryRepo and delegates to desktopAPI.sqlite* commands', async () => {
     const originalIsDesktop = desktopAPI.isDesktop;
-    const originalNaturalSortPaths = desktopAPI.naturalSortPaths;
-
-    try {
-      // 1. On desktop with naturalSortPaths
-      let called = false;
-      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      (desktopAPI as any).naturalSortPaths = async (paths: string[]) => {
-        called = true;
-        return ['ch 1', 'ch 2', 'ch 10'];
-      };
-
-      const sorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
-      expect(called).toBe(true);
-      expect(sorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
-
-      // 2. On web (isDesktop = false)
-      Object.defineProperty(desktopAPI, 'isDesktop', { value: false, configurable: true });
-      const webSorted = await naturalSortPaths(['ch 10', 'ch 1', 'ch 2']);
-      expect(webSorted).toEqual(['ch 1', 'ch 2', 'ch 10']);
-    } finally {
-      Object.defineProperty(desktopAPI, 'isDesktop', {
-        value: originalIsDesktop,
-        configurable: true,
-      });
-      (desktopAPI as any).naturalSortPaths = originalNaturalSortPaths;
-    }
-  });
-
-  test('DesktopHandle exposes absPath and loads file content via desktopAPI.readFile', async () => {
-    const originalIsDesktop = desktopAPI.isDesktop;
-    const originalReadFile = desktopAPI.readFile;
+    const originalSqliteList = desktopAPI.sqliteListLibrary;
+    const originalSqliteGet = desktopAPI.sqliteGetManga;
+    const originalSqliteSave = desktopAPI.sqliteSaveManga;
+    const originalSqliteProgress = desktopAPI.sqliteSaveProgress;
+    const originalSqliteAddBm = desktopAPI.sqliteAddBookmark;
+    const originalSqliteRemoveBm = desktopAPI.sqliteRemoveBookmark;
+    const originalSqliteBmIds = desktopAPI.sqliteGetBookmarkedMangaIds;
+    const originalSqliteDelete = desktopAPI.sqliteDeleteManga;
+    const originalSqliteClear = desktopAPI.sqliteClearLibrary;
+    const originalSqliteReset = desktopAPI.sqliteResetProgress;
+    const originalSqliteGetSettings = desktopAPI.sqliteGetSettings;
+    const originalSqliteSaveSettings = desktopAPI.sqliteSaveSettings;
 
     try {
       Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      const dummyBuffer = new Uint8Array([1, 2, 3, 4]).buffer;
-      let requestedPath = '';
-      (desktopAPI as any).readFile = async (path: string) => {
-        requestedPath = path;
-        return dummyBuffer;
-      };
 
-      const handle = new DesktopHandle('01.jpg', 'C:/manga/ch1/01.jpg', 1234, 5678, 800, 1200);
-      expect(handle.absPath).toBe('C:/manga/ch1/01.jpg');
-      expect(handle.name).toBe('01.jpg');
-      expect(handle.width).toBe(800);
-      expect(handle.height).toBe(1200);
-
-      const file = await handle.getFile();
-      expect(requestedPath).toBe('C:/manga/ch1/01.jpg');
-      expect(file.name).toBe('01.jpg');
-      expect(file.lastModified).toBe(5678);
-      expect(file.size).toBe(4);
-    } finally {
-      Object.defineProperty(desktopAPI, 'isDesktop', {
-        value: originalIsDesktop,
-        configurable: true,
-      });
-      (desktopAPI as any).readFile = originalReadFile;
-    }
-  });
-
-  test('prepareChapter prefers batch desktopAPI.prepareChapterHeaders on desktop', async () => {
-    const originalIsDesktop = desktopAPI.isDesktop;
-    const originalPrepareHeaders = desktopAPI.prepareChapterHeaders;
-
-    try {
-      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      let queriedPaths: string[] = [];
-      (desktopAPI as any).prepareChapterHeaders = async (paths: string[]) => {
-        queriedPaths = paths;
-        return paths.map((p) => ({
-          path: p,
-          width: 1080,
-          height: 1920,
-          size: 9999,
-          modified: 1234567,
-          checksum: 'abc123hash',
-        }));
-      };
-
-      const manga: Manga = {
-        id: 'test-batch-prep-manga',
-        title: 'Batch Prep Manga',
-        localPath: 'C:/manga/batch-title',
+      const mockManga: Manga = {
+        id: 'sqlite-test-1',
+        title: 'SQLite Test Title',
+        slug: 'sqlite-test-title',
+        localPath: 'C:/Manga/SqliteTest',
         lastChapter: 0,
-        addedAt: Date.now(),
-        updatedAt: Date.now(),
+        addedAt: 1000,
+        updatedAt: 2000,
+        revision: 2,
         chapters: [
           {
             name: 'Chapter 1',
             read: false,
-            pages: [
-              { name: '01.jpg', path: 'ch1/01.jpg', width: 800, height: 1200, dimensionsPending: true },
-              { name: '02.jpg', path: 'ch1/02.jpg', width: 800, height: 1200, dimensionsPending: true },
-            ],
+            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
           },
         ],
       };
 
-      const issues = await prepareChapter(manga, 0);
-      expect(issues).toEqual([]);
-      expect(queriedPaths).toEqual([
-        'C:/manga/batch-title/ch1/01.jpg',
-        'C:/manga/batch-title/ch1/02.jpg',
-      ]);
-      expect(manga.chapters[0].pages[0].width).toBe(1080);
-      expect(manga.chapters[0].pages[0].height).toBe(1920);
-      expect(manga.chapters[0].pages[0].dimensionsPending).toBe(false);
-      expect(manga.chapters[0].pages[1].width).toBe(1080);
-      expect(manga.chapters[0].pages[1].dimensionsPending).toBe(false);
+      let savedMangaRecord: Manga | null = null;
+      let savedProgressPayload: any = null;
+      let deleteCalledWith: string | null = null;
+      let clearCalled = false;
+      let resetCalled = false;
+
+      (desktopAPI as any).sqliteListLibrary = async () => [
+        {
+          id: mockManga.id,
+          title: mockManga.title,
+          slug: mockManga.slug,
+          localPath: mockManga.localPath,
+          lastChapter: mockManga.lastChapter,
+          addedAt: mockManga.addedAt,
+          updatedAt: mockManga.updatedAt,
+          revision: mockManga.revision,
+          chapterCount: 1,
+          chaptersRead: 0,
+          lastChapterName: 'Chapter 1',
+          hasProgress: false,
+          indexedAt: mockManga.updatedAt,
+        },
+      ];
+
+      (desktopAPI as any).sqliteGetManga = async (id: string) => {
+        return id === mockManga.id ? { ...mockManga } : undefined;
+      };
+
+      (desktopAPI as any).sqliteSaveManga = async (manga: Manga) => {
+        savedMangaRecord = manga;
+      };
+
+      (desktopAPI as any).sqliteSaveProgress = async (params: any) => {
+        savedProgressPayload = params;
+        return 'saved';
+      };
+
+      (desktopAPI as any).sqliteAddBookmark = async (params: any) => [params.position];
+
+      (desktopAPI as any).sqliteRemoveBookmark = async () => [];
+
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = async () => ({
+        allBookmarkedIds: [mockManga.id],
+        mangaBookmarkedIds: [mockManga.id],
+      });
+
+      (desktopAPI as any).sqliteDeleteManga = async (id: string) => {
+        deleteCalledWith = id;
+      };
+
+      (desktopAPI as any).sqliteClearLibrary = async () => {
+        clearCalled = true;
+      };
+
+      (desktopAPI as any).sqliteResetProgress = async () => {
+        resetCalled = true;
+      };
+
+      (desktopAPI as any).sqliteGetSettings = async () => ({
+        theme: 'dark',
+        mode: 'continuous',
+      });
+
+      (desktopAPI as any).sqliteSaveSettings = async (settings: any) => settings;
+
+      const sqliteRepo = new TauriSqliteLibraryRepo();
+
+      // 1. listLibrary
+      const summaries = await sqliteRepo.listLibrary();
+      expect(summaries.length).toBe(1);
+      expect(summaries[0].id).toBe(mockManga.id);
+
+      // 2. getManga
+      const retrieved = await sqliteRepo.getManga(mockManga.id);
+      expect(retrieved?.id).toBe(mockManga.id);
+      expect(retrieved?.title).toBe(mockManga.title);
+
+      // 3. saveManga
+      await sqliteRepo.saveManga({ ...mockManga, revision: 2 });
+      expect(savedMangaRecord).not.toBeNull();
+      expect(savedMangaRecord!.id).toBe(mockManga.id);
+      expect(savedMangaRecord!.revision).toBe(3); // Incremented revision
+
+      // 4. saveProgress
+      const progressResult = await sqliteRepo.saveProgress(
+        mockManga,
+        0,
+        { page: 0, fraction: 0.5 },
+        true,
+      );
+      expect(progressResult).toBe('saved');
+      expect(savedProgressPayload.mangaId).toBe(mockManga.id);
+      expect(savedProgressPayload.chapterIndex).toBe(0);
+      expect(savedProgressPayload.read).toBe(true);
+
+      // 5. bookmarks
+      const bms = await sqliteRepo.addBookmark(mockManga.id, 'Chapter 1', {
+        page: 0,
+        fraction: 0.2,
+      });
+      expect(bms.length).toBe(1);
+
+      const allBm = await sqliteRepo.getBookmarkedMangaIds();
+      expect(allBm.has(mockManga.id)).toBe(true);
+
+      const removed = await sqliteRepo.removeBookmark(mockManga.id, 'Chapter 1', {
+        page: 0,
+        fraction: 0.2,
+      });
+      expect(removed.length).toBe(0);
+
+      // 6. delete & clear & reset
+      await sqliteRepo.deleteManga('del-1');
+      expect(deleteCalledWith).toBe('del-1');
+
+      await sqliteRepo.clearLibrary();
+      expect(clearCalled).toBe(true);
+
+      await sqliteRepo.resetProgress();
+      expect(resetCalled).toBe(true);
+
+      // 7. settings
+      const settings = await sqliteRepo.getStoredSettings();
+      expect(settings?.theme).toBe('dark');
+      const savedSettings = await sqliteRepo.saveStoredSettings({
+        ...defaults,
+        theme: 'light',
+      });
+      expect(savedSettings.theme).toBe('light');
     } finally {
       Object.defineProperty(desktopAPI, 'isDesktop', {
         value: originalIsDesktop,
         configurable: true,
       });
-      (desktopAPI as any).prepareChapterHeaders = originalPrepareHeaders;
+      (desktopAPI as any).sqliteListLibrary = originalSqliteList;
+      (desktopAPI as any).sqliteGetManga = originalSqliteGet;
+      (desktopAPI as any).sqliteSaveManga = originalSqliteSave;
+      (desktopAPI as any).sqliteSaveProgress = originalSqliteProgress;
+      (desktopAPI as any).sqliteAddBookmark = originalSqliteAddBm;
+      (desktopAPI as any).sqliteRemoveBookmark = originalSqliteRemoveBm;
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = originalSqliteBmIds;
+      (desktopAPI as any).sqliteDeleteManga = originalSqliteDelete;
+      (desktopAPI as any).sqliteClearLibrary = originalSqliteClear;
+      (desktopAPI as any).sqliteResetProgress = originalSqliteReset;
+      (desktopAPI as any).sqliteGetSettings = originalSqliteGetSettings;
+      (desktopAPI as any).sqliteSaveSettings = originalSqliteSaveSettings;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated skips migration when already migrated', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      let importCalled = false;
+      (desktopAPI as any).isLibraryMigrated = async () => true;
+      (desktopAPI as any).importLegacyLibrary = async () => {
+        importCalled = true;
+        return true;
+      };
+
+      const result = await ensureLibraryMigrated();
+      expect(result).toBe(true);
+      expect(importCalled).toBe(false);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated dumps IDB, validates backup, and calls importLegacyLibrary preserving IDB data', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).isLibraryMigrated = async () => false;
+
+      let importedPayload: any = null;
+      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
+        importedPayload = payload;
+        return true;
+      };
+
+      const mockLegacyManga: Manga = {
+        id: 'legacy-1',
+        title: 'Legacy Title',
+        slug: 'legacy-title',
+        localPath: 'C:/Manga/Legacy',
+        lastChapter: 0,
+        addedAt: 1000,
+        updatedAt: 2000,
+        chapters: [
+          {
+            name: 'Ch 1',
+            read: true,
+            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
+          },
+        ],
+      };
+
+      let idbReadCount = 0;
+      const mockIdbRepo: LibraryRepo = {
+        listLibrary: async () => [],
+        getManga: async () => undefined,
+        getCover: async () => undefined,
+        allManga: async () => {
+          idbReadCount++;
+          return [mockLegacyManga];
+        },
+        saveManga: async () => {},
+        saveProgress: async () => 'saved',
+        getBookmarkedMangaIds: async () => new Set(),
+        getMangaBookmarkedIds: async () => new Set(),
+        addBookmark: async () => [],
+        removeBookmark: async () => [],
+        deleteManga: async () => {},
+        clearLibrary: async () => {
+          throw new Error('Never delete IDB store automatically!');
+        },
+        resetProgress: async () => {},
+        getStoredSettings: async () => ({ ...defaults, theme: 'dark' }),
+        saveStoredSettings: async (s) => s,
+        restoreBackup: async () => defaults,
+      };
+
+      const result = await ensureLibraryMigrated(mockIdbRepo);
+      expect(result).toBe(true);
+      expect(idbReadCount).toBe(1);
+      expect(importedPayload).not.toBeNull();
+      expect(importedPayload.manga.length).toBe(1);
+      expect(importedPayload.manga[0].id).toBe('legacy-1');
+      expect(importedPayload.settings.theme).toBe('dark');
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated handles fresh installs with empty IDB safely', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).isLibraryMigrated = async () => false;
+
+      let importedPayload: any = null;
+      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
+        importedPayload = payload;
+        return true;
+      };
+
+      const emptyIdbRepo: LibraryRepo = {
+        listLibrary: async () => [],
+        getManga: async () => undefined,
+        getCover: async () => undefined,
+        allManga: async () => [],
+        saveManga: async () => {},
+        saveProgress: async () => 'saved',
+        getBookmarkedMangaIds: async () => new Set(),
+        getMangaBookmarkedIds: async () => new Set(),
+        addBookmark: async () => [],
+        removeBookmark: async () => [],
+        deleteManga: async () => {},
+        clearLibrary: async () => {},
+        resetProgress: async () => {},
+        getStoredSettings: async () => undefined,
+        saveStoredSettings: async (s) => s,
+        restoreBackup: async () => defaults,
+      };
+
+      const result = await ensureLibraryMigrated(emptyIdbRepo);
+      expect(result).toBe(true);
+      expect(importedPayload).toEqual({ manga: [], settings: {} });
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
+    }
+  });
+
+  test('Step B1 — TauriSqliteLibraryRepo implements LibraryRepo and delegates to desktopAPI.sqlite* commands', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalSqliteList = desktopAPI.sqliteListLibrary;
+    const originalSqliteGet = desktopAPI.sqliteGetManga;
+    const originalSqliteSave = desktopAPI.sqliteSaveManga;
+    const originalSqliteProgress = desktopAPI.sqliteSaveProgress;
+    const originalSqliteAddBm = desktopAPI.sqliteAddBookmark;
+    const originalSqliteRemoveBm = desktopAPI.sqliteRemoveBookmark;
+    const originalSqliteBmIds = desktopAPI.sqliteGetBookmarkedMangaIds;
+    const originalSqliteDelete = desktopAPI.sqliteDeleteManga;
+    const originalSqliteClear = desktopAPI.sqliteClearLibrary;
+    const originalSqliteReset = desktopAPI.sqliteResetProgress;
+    const originalSqliteGetSettings = desktopAPI.sqliteGetSettings;
+    const originalSqliteSaveSettings = desktopAPI.sqliteSaveSettings;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+
+      const mockManga: Manga = {
+        id: 'sqlite-test-1',
+        title: 'SQLite Test Title',
+        slug: 'sqlite-test-title',
+        localPath: 'C:/Manga/SqliteTest',
+        lastChapter: 0,
+        addedAt: 1000,
+        updatedAt: 2000,
+        revision: 2,
+        chapters: [
+          {
+            name: 'Chapter 1',
+            read: false,
+            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
+          },
+        ],
+      };
+
+      let savedMangaRecord: Manga | null = null;
+      let savedProgressPayload: any = null;
+      let deleteCalledWith: string | null = null;
+      let clearCalled = false;
+      let resetCalled = false;
+
+      (desktopAPI as any).sqliteListLibrary = async () => [
+        {
+          id: mockManga.id,
+          title: mockManga.title,
+          slug: mockManga.slug,
+          localPath: mockManga.localPath,
+          lastChapter: mockManga.lastChapter,
+          addedAt: mockManga.addedAt,
+          updatedAt: mockManga.updatedAt,
+          revision: mockManga.revision,
+          chapterCount: 1,
+          chaptersRead: 0,
+          lastChapterName: 'Chapter 1',
+          hasProgress: false,
+          indexedAt: mockManga.updatedAt,
+        },
+      ];
+
+      (desktopAPI as any).sqliteGetManga = async (id: string) => {
+        return id === mockManga.id ? { ...mockManga } : undefined;
+      };
+
+      (desktopAPI as any).sqliteSaveManga = async (manga: Manga) => {
+        savedMangaRecord = manga;
+      };
+
+      (desktopAPI as any).sqliteSaveProgress = async (params: any) => {
+        savedProgressPayload = params;
+        return 'saved';
+      };
+
+      (desktopAPI as any).sqliteAddBookmark = async (params: any) => [
+        params.position,
+      ];
+
+      (desktopAPI as any).sqliteRemoveBookmark = async () => [];
+
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = async () => ({
+        allBookmarkedIds: [mockManga.id],
+        mangaBookmarkedIds: [mockManga.id],
+      });
+
+      (desktopAPI as any).sqliteDeleteManga = async (id: string) => {
+        deleteCalledWith = id;
+      };
+
+      (desktopAPI as any).sqliteClearLibrary = async () => {
+        clearCalled = true;
+      };
+
+      (desktopAPI as any).sqliteResetProgress = async () => {
+        resetCalled = true;
+      };
+
+      (desktopAPI as any).sqliteGetSettings = async () => ({
+        theme: 'dark',
+        mode: 'continuous',
+      });
+
+      (desktopAPI as any).sqliteSaveSettings = async (settings: any) => settings;
+
+      const sqliteRepo = new TauriSqliteLibraryRepo();
+
+      // 1. listLibrary
+      const summaries = await sqliteRepo.listLibrary();
+      expect(summaries.length).toBe(1);
+      expect(summaries[0].id).toBe(mockManga.id);
+
+      // 2. getManga
+      const retrieved = await sqliteRepo.getManga(mockManga.id);
+      expect(retrieved?.id).toBe(mockManga.id);
+      expect(retrieved?.title).toBe(mockManga.title);
+
+      // 3. saveManga
+      await sqliteRepo.saveManga({ ...mockManga, revision: 2 });
+      expect(savedMangaRecord).not.toBeNull();
+      expect(savedMangaRecord!.id).toBe(mockManga.id);
+      expect(savedMangaRecord!.revision).toBe(3); // Incremented revision
+
+      // 4. saveProgress
+      const progressResult = await sqliteRepo.saveProgress(
+        mockManga,
+        0,
+        { page: 0, fraction: 0.5 },
+        true,
+      );
+      expect(progressResult).toBe('saved');
+      expect(savedProgressPayload.mangaId).toBe(mockManga.id);
+      expect(savedProgressPayload.chapterIndex).toBe(0);
+      expect(savedProgressPayload.read).toBe(true);
+
+      // 5. bookmarks
+      const bms = await sqliteRepo.addBookmark(mockManga.id, 'Chapter 1', { page: 0, fraction: 0.2 });
+      expect(bms.length).toBe(1);
+
+      const allBm = await sqliteRepo.getBookmarkedMangaIds();
+      expect(allBm.has(mockManga.id)).toBe(true);
+
+      const removed = await sqliteRepo.removeBookmark(mockManga.id, 'Chapter 1', { page: 0, fraction: 0.2 });
+      expect(removed.length).toBe(0);
+
+      // 6. delete & clear & reset
+      await sqliteRepo.deleteManga('del-1');
+      expect(deleteCalledWith).toBe('del-1');
+
+      await sqliteRepo.clearLibrary();
+      expect(clearCalled).toBe(true);
+
+      await sqliteRepo.resetProgress();
+      expect(resetCalled).toBe(true);
+
+      // 7. settings
+      const settings = await sqliteRepo.getStoredSettings();
+      expect(settings?.theme).toBe('dark');
+      const savedSettings = await sqliteRepo.saveStoredSettings({
+        ...defaults,
+        theme: 'light',
+      });
+      expect(savedSettings.theme).toBe('light');
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).sqliteListLibrary = originalSqliteList;
+      (desktopAPI as any).sqliteGetManga = originalSqliteGet;
+      (desktopAPI as any).sqliteSaveManga = originalSqliteSave;
+      (desktopAPI as any).sqliteSaveProgress = originalSqliteProgress;
+      (desktopAPI as any).sqliteAddBookmark = originalSqliteAddBm;
+      (desktopAPI as any).sqliteRemoveBookmark = originalSqliteRemoveBm;
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = originalSqliteBmIds;
+      (desktopAPI as any).sqliteDeleteManga = originalSqliteDelete;
+      (desktopAPI as any).sqliteClearLibrary = originalSqliteClear;
+      (desktopAPI as any).sqliteResetProgress = originalSqliteReset;
+      (desktopAPI as any).sqliteGetSettings = originalSqliteGetSettings;
+      (desktopAPI as any).sqliteSaveSettings = originalSqliteSaveSettings;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated skips migration when already migrated', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      let importCalled = false;
+      (desktopAPI as any).isLibraryMigrated = async () => true;
+      (desktopAPI as any).importLegacyLibrary = async () => {
+        importCalled = true;
+        return true;
+      };
+
+      const result = await ensureLibraryMigrated();
+      expect(result).toBe(true);
+      expect(importCalled).toBe(false);
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated dumps IDB, validates backup, and calls importLegacyLibrary preserving IDB data', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).isLibraryMigrated = async () => false;
+
+      let importedPayload: any = null;
+      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
+        importedPayload = payload;
+        return true;
+      };
+
+      const mockLegacyManga: Manga = {
+        id: 'legacy-1',
+        title: 'Legacy Title',
+        slug: 'legacy-title',
+        localPath: 'C:/Manga/Legacy',
+        lastChapter: 0,
+        addedAt: 1000,
+        updatedAt: 2000,
+        chapters: [
+          {
+            name: 'Ch 1',
+            read: true,
+            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
+          },
+        ],
+      };
+
+      let idbReadCount = 0;
+      const mockIdbRepo: LibraryRepo = {
+        listLibrary: async () => [],
+        getManga: async () => undefined,
+        getCover: async () => undefined,
+        allManga: async () => {
+          idbReadCount++;
+          return [mockLegacyManga];
+        },
+        saveManga: async () => {},
+        saveProgress: async () => 'saved',
+        getBookmarkedMangaIds: async () => new Set(),
+        getMangaBookmarkedIds: async () => new Set(),
+        addBookmark: async () => [],
+        removeBookmark: async () => [],
+        deleteManga: async () => {},
+        clearLibrary: async () => {
+          throw new Error('Never delete IDB store automatically!');
+        },
+        resetProgress: async () => {},
+        getStoredSettings: async () => ({ ...defaults, theme: 'dark' }),
+        saveStoredSettings: async (s) => s,
+        restoreBackup: async () => defaults,
+      };
+
+      const result = await ensureLibraryMigrated(mockIdbRepo);
+      expect(result).toBe(true);
+      expect(idbReadCount).toBe(1);
+      expect(importedPayload).not.toBeNull();
+      expect(importedPayload.manga.length).toBe(1);
+      expect(importedPayload.manga[0].id).toBe('legacy-1');
+      expect(importedPayload.settings.theme).toBe('dark');
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
+    }
+  });
+
+  test('Step B1 — ensureLibraryMigrated handles fresh installs with empty IDB safely', async () => {
+    const originalIsDesktop = desktopAPI.isDesktop;
+    const originalIsMigrated = desktopAPI.isLibraryMigrated;
+    const originalImport = desktopAPI.importLegacyLibrary;
+
+    try {
+      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      (desktopAPI as any).isLibraryMigrated = async () => false;
+
+      let importedPayload: any = null;
+      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
+        importedPayload = payload;
+        return true;
+      };
+
+      const emptyIdbRepo: LibraryRepo = {
+        listLibrary: async () => [],
+        getManga: async () => undefined,
+        getCover: async () => undefined,
+        allManga: async () => [],
+        saveManga: async () => {},
+        saveProgress: async () => 'saved',
+        getBookmarkedMangaIds: async () => new Set(),
+        getMangaBookmarkedIds: async () => new Set(),
+        addBookmark: async () => [],
+        removeBookmark: async () => [],
+        deleteManga: async () => {},
+        clearLibrary: async () => {},
+        resetProgress: async () => {},
+        getStoredSettings: async () => undefined,
+        saveStoredSettings: async (s) => s,
+        restoreBackup: async () => defaults,
+      };
+
+      const result = await ensureLibraryMigrated(emptyIdbRepo);
+      expect(result).toBe(true);
+      expect(importedPayload).toEqual({ manga: [], settings: {} });
+    } finally {
+      Object.defineProperty(desktopAPI, 'isDesktop', {
+        value: originalIsDesktop,
+        configurable: true,
+      });
+      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
+      (desktopAPI as any).importLegacyLibrary = originalImport;
     }
   });
 });

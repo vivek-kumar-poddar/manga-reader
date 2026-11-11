@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-generate-image-variant"
+description = "Enables the generate_image_variant command without any pre-configured scope."
+commands.allow = ["generate_image_variant"]
+
+[[permission]]
+identifier = "deny-generate-image-variant"
+description = "Denies the generate_image_variant command without any pre-configured scope."
+commands.deny = ["generate_image_variant"]

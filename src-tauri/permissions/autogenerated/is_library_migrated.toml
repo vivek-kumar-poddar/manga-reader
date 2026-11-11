@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-is-library-migrated"
+description = "Enables the is_library_migrated command without any pre-configured scope."
+commands.allow = ["is_library_migrated"]
+
+[[permission]]
+identifier = "deny-is-library-migrated"
+description = "Denies the is_library_migrated command without any pre-configured scope."
+commands.deny = ["is_library_migrated"]

@@ -48,7 +48,7 @@ pub const INIT_SCRIPT: &str = r#"
         if (!href.startsWith(window.location.origin)) {
           e.preventDefault();
           if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
-            window.__TAURI_INTERNALS__.invoke('plugin:shell|open', { path: href });
+            window.__TAURI_INTERNALS__.invoke('plugin:opener|open_url', { url: href });
           }
         }
       }
