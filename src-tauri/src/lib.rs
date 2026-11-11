@@ -9,7 +9,7 @@ pub mod validation;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Listener, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -19,7 +19,7 @@ pub fn run() {
     tauri::Builder::default()
         .register_asynchronous_uri_scheme_protocol("mangaimg", |ctx, req, responder| {
             let app_handle = ctx.app_handle().clone();
-            tokio::task::spawn_blocking(move || {
+            tauri::async_runtime::spawn_blocking(move || {
                 let res = protocol::handle_mangaimg_request(&app_handle, req);
                 responder.respond(res);
             });
@@ -27,6 +27,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -44,6 +45,7 @@ pub fn run() {
             commands::fs::prepare_chapter_headers,
             commands::fs::discover_library,
             commands::window::set_progress_bar,
+            commands::window::show_main_window,
             commands::cache::save_thumbnail,
             commands::cache::read_thumbnail,
             commands::cache::get_thumbnail_url,
@@ -53,6 +55,7 @@ pub fn run() {
             commands::image::generate_image_variant,
             commands::config::get_app_config,
             commands::config::save_app_config,
+            commands::config::set_window_preferences,
             commands::config::set_app_preference,
             commands::config::get_app_preference,
             commands::config::record_opened_root,
@@ -84,6 +87,16 @@ pub fn run() {
                         if config_state.get().window_preferences.close_to_tray {
                             api.prevent_close();
                             let _ = window.hide();
+                        }
+                    }
+                }
+                tauri::WindowEvent::Resized(_) => {
+                    let app = window.app_handle();
+                    if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
+                        if config_state.get().window_preferences.minimize_to_tray {
+                            if let Ok(true) = window.is_minimized() {
+                                let _ = window.hide();
+                            }
                         }
                     }
                 }
@@ -121,7 +134,7 @@ pub fn run() {
             app.manage(commands::fs::ScanManager::default());
             app.manage(config_state);
 
-            // Initialize SQLite library database
+            // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)
             let db_path = handle
                 .path()
                 .app_data_dir()
@@ -130,11 +143,27 @@ pub fn run() {
             if let Some(parent) = db_path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let conn = rusqlite::Connection::open(&db_path)
-                .map_err(|e| format!("Failed to open SQLite database at {:?}: {e}", db_path))?;
-            db::init_db(&conn)
+            let writer_conn = rusqlite::Connection::open(&db_path)
+                .map_err(|e| format!("Failed to open SQLite database for writing at {:?}: {e}", db_path))?;
+            db::init_db(&writer_conn)
                 .map_err(|e| format!("Failed to initialize SQLite schema: {e}"))?;
-            app.manage(db::DbState(std::sync::Mutex::new(conn)));
+            writer_conn
+                .busy_timeout(std::time::Duration::from_millis(5000))
+                .map_err(|e| format!("Failed to set writer busy timeout: {e}"))?;
+
+            let reader_conn = rusqlite::Connection::open_with_flags(
+                &db_path,
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(|e| format!("Failed to open SQLite database for reading at {:?}: {e}", db_path))?;
+            reader_conn
+                .busy_timeout(std::time::Duration::from_millis(5000))
+                .map_err(|e| format!("Failed to set reader busy timeout: {e}"))?;
+            reader_conn
+                .execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;")
+                .map_err(|e| format!("Failed to configure reader connection: {e}"))?;
+
+            app.manage(db::DbState::new(reader_conn, writer_conn));
 
             // System tray menu & icon
             let show_item = MenuItem::with_id(app, "show", "Show Manga Reader", true, None::<&str>)?;
@@ -197,8 +226,21 @@ pub fn run() {
                 .initialization_script(commands::window::INIT_SCRIPT)
                 .build()?;
 
-            // Show the window now that setup is complete (eliminates cold start white flash)
-            let _ = window.show();
+            // Reveal the window on frontend ready event (eliminates cold start white flash)
+            let w_clone = window.clone();
+            window.listen("app-ready", move |_| {
+                let _ = w_clone.show();
+                let _ = w_clone.set_focus();
+            });
+
+            // Fallback: reveal window after 4s if frontend event is delayed or in headless mode
+            let w_fallback = window.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
+                if let Ok(false) = w_fallback.is_visible() {
+                    let _ = w_fallback.show();
+                }
+            });
 
             Ok(())
         })

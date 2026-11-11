@@ -27,11 +27,12 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' blob: data: mangaimg: http://mangaimg.localhost http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost;"
+      "csp": "default-src 'self'; object-src 'none'; base-uri 'self'; frame-src 'none'; img-src 'self' blob: data: mangaimg: http://mangaimg.localhost http://asset.localhost https://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost;"
     }
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
@@ -42,7 +43,7 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser",
-        "languages": ["en-US"],
+        "languages": ["English"],
         "displayLanguageSelector": false
       }
     }
@@ -51,7 +52,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlGRTUzMzE5REJDNjAwRjMKUldSNkI4ZkQ5K3lYcWJvK0xXSHJvV3Rnd050aW0xNENqQVBWckpndlJvTFF6SjI4K3A1Qk9mUzkK",
       "endpoints": [
-        "https://github.com/manga-reader/manga-reader/releases/latest/download/latest.json"
+        "https://github.com/vivek-kumar-poddar/manga-reader/releases/latest/download/latest.json"
       ]
     }
   }

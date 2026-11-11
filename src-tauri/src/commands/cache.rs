@@ -1,3 +1,4 @@
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
 
@@ -38,12 +39,14 @@ pub fn percent_decode(input: &str) -> String {
     String::from_utf8(bytes).unwrap_or_else(|_| input.to_string())
 }
 
-/// Sanitizes thumbnail ID to prevent path traversal attacks.
-/// Alphanumeric, hyphen, and underscore characters are kept as-is.
-/// Any other character or oversized string is hex-encoded.
+/// Sanitizes thumbnail ID to prevent path traversal attacks and collisions.
+/// Alphanumeric, hyphen, and underscore characters up to 64 bytes are kept as-is.
+/// Any string with special characters or exceeding 64 bytes is hashed with SHA-256.
 pub fn sanitize_id(id: &str) -> String {
-    if !id.is_empty()
-        && id.len() <= 128
+    if id.is_empty() {
+        return String::new();
+    }
+    if id.len() <= 64
         && id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -51,23 +54,16 @@ pub fn sanitize_id(id: &str) -> String {
         return id.to_string();
     }
 
-    let mut hex = String::with_capacity(id.len() * 2);
-    for b in id.as_bytes() {
-        use std::fmt::Write;
-        let _ = write!(&mut hex, "{:02x}", b);
-    }
-    if hex.len() > 128 {
-        hex.truncate(128);
-    }
-    hex
+    let mut hasher = Sha256::new();
+    hasher.update(id.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
+/// Generates a collision-resistant SHA-256 hash for variant cache keys.
 pub fn hash_key(key: &str) -> String {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for b in key.as_bytes() {
-        hash = (hash ^ (*b as u64)).wrapping_mul(0x100000001b3);
-    }
-    format!("{:016x}", hash)
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 pub fn get_thumbnail_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -152,7 +148,7 @@ pub async fn save_thumbnail(
     }
 
     let path = get_thumbnail_path(&app, &id)?;
-    tokio::task::spawn_blocking(move || crate::commands::fs::write_atomic(&path, &bytes))
+    tauri::async_runtime::spawn_blocking(move || crate::commands::fs::write_atomic(&path, &bytes))
         .await
         .map_err(|e| format!("Failed to spawn blocking write: {e}"))?
         .map_err(|e| format!("Failed to write thumbnail to disk: {e}"))?;
@@ -240,16 +236,26 @@ mod tests {
         assert!(!traversal.contains(".."));
         assert!(!traversal.contains('/'));
         assert!(!traversal.contains('\\'));
+        assert_eq!(traversal.len(), 64);
 
-        // Special characters get hex-encoded
+        // Special characters get hashed with SHA-256
         let special = sanitize_id("manga:vol1?foo=bar");
         assert!(!special.contains(':'));
         assert!(!special.contains('?'));
         assert!(!special.contains('='));
+        assert_eq!(special.len(), 64);
+
+        // Long string exceeding 64 characters gets hashed without truncation collision
+        let long_id_1 = "a".repeat(150);
+        let long_id_2 = format!("{}b", "a".repeat(149));
+        let hash_id_1 = sanitize_id(&long_id_1);
+        let hash_id_2 = sanitize_id(&long_id_2);
+        assert_ne!(hash_id_1, hash_id_2);
+        assert_eq!(hash_id_1.len(), 64);
 
         // Empty string
         let empty = sanitize_id("");
-        assert!(empty.is_empty() || empty.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert!(empty.is_empty());
     }
 
     #[test]
@@ -261,7 +267,7 @@ mod tests {
         let hash3 = hash_key("path/to/image2.png");
         assert_ne!(hash1, hash3, "Different inputs must produce different hashes");
 
-        assert_eq!(hash1.len(), 16, "Hash key must be 16-hex-digit string");
+        assert_eq!(hash1.len(), 64, "Hash key must be 64-hex-digit SHA-256 string");
         assert!(hash1.chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

@@ -59,6 +59,9 @@ import {
   type Position,
   type SaveProgressResult,
 } from './data';
+import { useAutoplay } from './useAutoplay';
+import { useReaderKeys } from './useReaderKeys';
+import { useProgressSave } from './useProgressSave';
 
 export interface PageStore {
   getPage: () => number;
@@ -236,7 +239,6 @@ function ReaderView({ manga }: { manga: Manga }) {
     if (location.pathname !== canonical || location.search) navigate(canonical, { replace: true });
   }, [manga.slug, ci, location.pathname, location.search, navigate]);
   const [allowed, setAllowed] = useState<boolean | null>(null),
-    [playing, setPlaying] = useState(false),
     [bars, setBars] = useState({ top: true, bottom: true }),
     [singlePage, setSinglePage] = useState(0),
     [ready, setReady] = useState(false),
@@ -245,7 +247,6 @@ function ReaderView({ manga }: { manga: Manga }) {
     [shortcuts, setShortcuts] = useState(false),
     [bookmarkRevision, setBookmarkRevision] = useState(0),
     [failure, setFailure] = useState(''),
-    [ended, setEnded] = useState(false),
     [readRevision, setReadRevision] = useState(0);
   const pageStoreRef = useRef<PageStore | null>(null);
   if (!pageStoreRef.current) {
@@ -312,19 +313,9 @@ function ReaderView({ manga }: { manga: Manga }) {
   const pendingRestore = useRef<Position | undefined>(undefined);
   const pointer = useRef(-1);
   const held = useRef(new Set<number>());
-  const keysHeld = useRef(new Set<string>());
-  const pauseUntil = useRef(0);
-  const playbackRevision = useRef(0);
-  const dirty = useRef(false);
-  const lastSave = useRef(0);
-  const inFlight = useRef<Promise<SaveProgressResult> | null>(null);
-  const queuedFlush = useRef<Promise<SaveProgressResult> | null>(null);
-  const snapshotRevision = useRef(0);
-  const committedRevision = useRef(0);
   const restoring = useRef(false);
   const chapterRef = useRef(ci);
   const touch = useRef<{ x: number; y: number; multi: boolean } | null>(null);
-  const endHandled = useRef(false);
   const metadata = useRef(manga);
   const latest = useRef({ s, ci, ready, allowed, page: 0, zoom });
   latest.current = {
@@ -375,119 +366,21 @@ function ReaderView({ manga }: { manga: Manga }) {
       live = false;
     };
   }, [manga]);
-  function pause() {
-    playbackRevision.current++;
-    pauseUntil.current = performance.now() + latest.current.s.resumeDelay * 1000;
-  }
-  function flush(): Promise<SaveProgressResult> {
-    if (!latest.current.ready || !latest.current.allowed) {
-      return Promise.resolve('missing');
-    }
-    if (inFlight.current) {
-      if (!queuedFlush.current) {
-        queuedFlush.current = inFlight.current.then(() => {
-          queuedFlush.current = null;
-          if (dirty.current) {
-            return flush();
-          }
-          return 'saved';
-        });
-      }
-      return queuedFlush.current;
-    }
-    if (!dirty.current) {
-      return Promise.resolve('saved');
-    }
-    const index = chapterRef.current;
-    const c = metadata.current.chapters[index];
-    if (!c) {
-      dirty.current = false;
-      return Promise.resolve('missing');
-    }
-    const targetRevision = snapshotRevision.current;
-    const p = { ...position.current };
-    const isRead = Boolean(c.read);
-    const bookmarks = c.bookmarks ? [...c.bookmarks] : undefined;
-
-    dirty.current = false;
-    lastSave.current = performance.now();
-
-    const savePromise = (async (): Promise<SaveProgressResult> => {
-      try {
-        const result = await saveProgress(metadata.current, index, p, isRead, bookmarks);
-        if (result === 'saved') {
-          committedRevision.current = Math.max(committedRevision.current, targetRevision);
-        } else {
-          if (committedRevision.current < targetRevision) {
-            dirty.current = true;
-          }
-        }
-        return result;
-      } catch (err) {
-        if (committedRevision.current < targetRevision) {
-          dirty.current = true;
-        }
-        throw err;
-      }
-    })();
-
-    inFlight.current = savePromise;
-    savePromise.finally(() => {
-      if (inFlight.current === savePromise) {
-        inFlight.current = null;
-      }
-    });
-    return savePromise;
-  }
-  function capture() {
-    if (restoring.current || !latest.current.ready || !offsets.current.length) return;
-    const y = window.scrollY;
-    const list = offsets.current;
-    let index = 0;
-    if (latest.current.s.mode === 'continuous') {
-      let lo = 0,
-        hi = list.length - 1;
-      while (lo < hi) {
-        const mid = Math.ceil((lo + hi) / 2);
-        if (list[mid].top <= y + 1) lo = mid;
-        else hi = mid - 1;
-      }
-      index = lo;
-    } else {
-      index = Math.max(0, Math.min(list.length - 1, latest.current.page));
-    }
-    const o = list[index];
-    position.current = {
-      page: o.page,
-      path: metadata.current.chapters[chapterRef.current].pages[o.page]?.path,
-      fraction: Math.min(1, Math.max(0, (y - o.top) / o.height)),
-    };
-    latest.current.page = o.page;
-    if (latest.current.s.mode === 'continuous') pageStore.setPage(o.page);
-    const c = metadata.current.chapters[chapterRef.current];
-    const final = list[c.pages.length - 1] || list.at(-1);
-    if (final && y + innerHeight >= final.bottom - 2 && !c.read) {
-      c.read = true;
-      setReadRevision((v) => v + 1);
-    }
-    if (edgeProgress.current) {
-      const currentPage = latest.current.s.mode === 'single' ? singlePage : pageStore.getPage();
-      const gIndex = pageToGroupRef.current[currentPage] ?? 0;
-      const currentGroup = groupsRef.current[gIndex] || [currentPage];
-      const progress =
-        latest.current.s.mode === 'single'
-          ? (Math.max(...currentGroup) + 1) / c.pages.length
-          : final && y + innerHeight >= final.bottom - 2
-            ? 1
-            : (position.current.page + position.current.fraction) / c.pages.length;
-      edgeProgress.current.style.transform = `scaleX(${Math.min(1, Math.max(0, progress))})`;
-    }
-    c.position = { ...position.current };
-    dirty.current = true;
-    snapshotRevision.current++;
-    if (performance.now() - lastSave.current >= 1500)
-      void flush().catch((e) => notify(errorMessage(e)));
-  }
+  const { dirty, lastSave, snapshotRevision, flush, capture } = useProgressSave({
+    metadata,
+    chapterRef,
+    position,
+    latest,
+    offsets,
+    pageToGroupRef,
+    groupsRef,
+    edgeProgress,
+    restoring,
+    singlePage,
+    pageStoreRef,
+    setReadRevision,
+    notify,
+  });
   function updateWindow(force = false, targetPage?: number) {
     if (
       latest.current.s.mode !== 'continuous' ||
@@ -650,8 +543,60 @@ function ReaderView({ manga }: { manga: Manga }) {
     const next = list[index + direction];
     if (next) goPage(next[0]);
   }
-  const actions = useRef({ capture, flush, goChapter, goPage, step, pause, updateWindow });
-  actions.current = { capture, flush, goChapter, goPage, step, pause, updateWindow };
+  const actions = useRef({
+    capture,
+    flush,
+    goChapter,
+    goPage,
+    step,
+    pause: () => {},
+    updateWindow,
+    measure,
+  });
+  actions.current = {
+    capture,
+    flush,
+    goChapter,
+    goPage,
+    step,
+    pause: () => {},
+    updateWindow,
+    measure,
+  };
+
+  const {
+    keysHeld,
+    onKeyDown: key,
+    onKeyUp: keyup,
+  } = useReaderKeys({
+    latest,
+    actions,
+    setPlaying: (v) => setPlaying(v),
+    setBars,
+    toggleBookmark: () => toggleBookmark(),
+  });
+
+  const { playing, setPlaying, ended, setEnded, endHandled, pauseUntil, playbackRevision, pause } =
+    useAutoplay({
+      allowed,
+      ready,
+      prepared,
+      ci,
+      manga,
+      settings: s,
+      offsets,
+      groupsRef,
+      pageToGroupRef,
+      chapterRef,
+      restoring,
+      held,
+      keysHeld,
+      latest,
+      actions,
+      setBars,
+      notify,
+    });
+  actions.current.pause = pause;
   useLayoutEffect(() => {
     if (!allowed || prepared !== ci) {
       setReady(false);
@@ -832,39 +777,6 @@ function ReaderView({ manga }: { manga: Manga }) {
       actions.current.pause();
     };
     const wheel = () => actions.current.pause();
-    const key = (e: KeyboardEvent) => {
-      keysHeld.current.add(e.code);
-      actions.current.pause();
-      if (
-        e.defaultPrevented ||
-        document.querySelector('[role="dialog"],[data-reader-dropdown]') ||
-        (e.target as HTMLElement).closest('input,select,button,a,[contenteditable="true"]')
-      )
-        return;
-      if (e.code === 'Space') {
-        e.preventDefault();
-        if (!e.repeat) setPlaying((v) => !v);
-      }
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        const delta = e.key === 'ArrowRight' ? 1 : -1;
-        if (latest.current.s.mode === 'single')
-          actions.current.step(delta * (latest.current.s.direction === 'rtl' ? -1 : 1));
-        else actions.current.goChapter(latest.current.ci + delta);
-      }
-      if (e.key === 'Escape') {
-        setPlaying(false);
-        setBars({ top: true, bottom: true });
-      }
-      if (e.key.toLowerCase() === 'b' && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        toggleBookmark();
-      }
-    };
-    const keyup = (e: KeyboardEvent) => {
-      keysHeld.current.delete(e.code);
-      actions.current.pause();
-    };
     const blur = () => {
       held.current.clear();
       keysHeld.current.clear();
@@ -924,85 +836,6 @@ function ReaderView({ manga }: { manga: Manga }) {
     },
     [],
   );
-  useEffect(() => {
-    if (!playing || !allowed || !ready || prepared !== ci) return;
-    // Each start owns a fresh clock and uses the viewport, never a previous play target.
-    measure();
-    actions.current.capture();
-    let frame = 0,
-      last = 0,
-      elapsed = 0,
-      scrollRemainder = 0,
-      revision = playbackRevision.current;
-    function end() {
-      if (endHandled.current) return;
-      endHandled.current = true;
-      actions.current.capture();
-      void actions.current.flush().catch((e) => notify(errorMessage(e)));
-      const action = latest.current.s.endAction;
-      if (action === 'next' && ci < manga.chapters.length - 1)
-        actions.current.goChapter(ci + 1, true);
-      else if (action === 'replay') actions.current.goChapter(ci, true);
-      else {
-        setPlaying(false);
-        setEnded(true);
-        setBars({ top: true, bottom: true });
-      }
-    }
-    const animate = (now: number) => {
-      const reset = revision !== playbackRevision.current;
-      if (reset) {
-        revision = playbackRevision.current;
-        elapsed = 0;
-        scrollRemainder = 0;
-      }
-      const dt = last && !reset ? Math.min(now - last, 80) / 1000 : 0;
-      last = now;
-      if (
-        !document.hidden &&
-        latest.current.ready &&
-        chapterRef.current === ci &&
-        !restoring.current &&
-        !held.current.size &&
-        !keysHeld.current.size &&
-        now > pauseUntil.current &&
-        !document.querySelector(
-          '[role="dialog"],[data-reader-dropdown],.reader-bar details[open]',
-        ) &&
-        (window.visualViewport?.scale || 1) <= 1.01
-      ) {
-        const state = latest.current;
-        if (state.s.mode === 'single') {
-          elapsed += dt;
-          if (elapsed >= state.s.seconds) {
-            elapsed = 0;
-            const list = groupsRef.current;
-            const i = pageToGroupRef.current[state.page] ?? 0;
-            if (i < list.length - 1) actions.current.goPage(list[i + 1][0], false);
-            else end();
-          }
-        } else {
-          // One visible screen per interval, independent of image height or zoom.
-          // Read each frame so mobile browser chrome and rotation adapt immediately.
-          const viewportHeight = window.visualViewport?.height || innerHeight;
-          const speed = viewportHeight / state.s.seconds;
-          const y = scrollY + speed * dt + scrollRemainder;
-          window.scrollTo({ top: y, behavior: 'instant' });
-          // Preserve subpixel movement at slow speeds / high refresh rates.
-          // Discard clamped movement at document boundaries.
-          scrollRemainder = Math.abs(y - scrollY) < 1 ? y - scrollY : 0;
-          const final = offsets.current.at(-1);
-          if (final && scrollY + innerHeight >= final.bottom - 1) end();
-        }
-      } else {
-        elapsed = 0;
-        scrollRemainder = 0;
-      }
-      frame = requestAnimationFrame(animate);
-    };
-    frame = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(frame);
-  }, [playing, allowed, ready, prepared, ci, s.mode, s.seconds]);
   function markComplete() {
     capture();
     metadata.current.chapters[ci].read = true;

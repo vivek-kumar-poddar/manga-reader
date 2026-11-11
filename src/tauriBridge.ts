@@ -50,11 +50,11 @@ export interface LibraryDiscovery {
 }
 
 export interface WindowPreferences {
-  minimizeToTray: boolean;
   closeToTray: boolean;
-  startMaximized: boolean;
-  highDpiScaling: boolean;
   theme?: string | null;
+  minimizeToTray?: boolean;
+  startMaximized?: boolean;
+  highDpiScaling?: boolean;
 }
 
 export interface AppConfig {
@@ -128,6 +128,42 @@ export interface FsErrorPayload {
   message?: string;
 }
 
+export interface DbErrorPayload {
+  code:
+    | 'Sqlite'
+    | 'Migration'
+    | 'Lock'
+    | 'Validation'
+    | 'NotFound'
+    | 'Conflict'
+    | 'Task'
+    | 'Io'
+    | 'Serialization';
+  message?: string;
+}
+
+export type TauriErrorPayload =
+  FsErrorPayload | DbErrorPayload | { code: 'Unknown'; message: string };
+
+export interface DbErrorPayload {
+  code:
+    | 'Sqlite'
+    | 'Migration'
+    | 'Lock'
+    | 'Validation'
+    | 'NotFound'
+    | 'Conflict'
+    | 'Task'
+    | 'Io'
+    | 'Serialization';
+  message?: string;
+}
+
+export type TauriErrorPayload =
+  | FsErrorPayload
+  | DbErrorPayload
+  | { code: 'Unknown'; message: string };
+
 export function parseFsError(err: unknown): FsErrorPayload | null {
   if (err && typeof err === 'object') {
     if ('code' in err && typeof (err as any).code === 'string') {
@@ -147,6 +183,239 @@ export function parseFsError(err: unknown): FsErrorPayload | null {
   return null;
 }
 
+export function parseTauriError(err: unknown): TauriErrorPayload {
+  const fsErr = parseFsError(err);
+  if (fsErr) return fsErr;
+  if (err && typeof err === 'object' && 'code' in err && typeof (err as any).code === 'string') {
+    return err as DbErrorPayload;
+  }
+  if (typeof err === 'string') {
+    try {
+      const parsed = JSON.parse(err);
+      if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+        return parsed as DbErrorPayload;
+      }
+    } catch {
+      // not JSON
+    }
+    return { code: 'Unknown', message: err };
+  }
+  if (err instanceof Error) {
+    return { code: 'Unknown', message: err.message };
+  }
+  return { code: 'Unknown', message: String(err) };
+}
+
+export interface TauriCommands {
+  select_folder: { args: Record<string, never>; return: string | null };
+  list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
+  read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
+  get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
+  cancel_scan: { args: { scanId: string }; return: boolean };
+  natural_sort_paths: { args: { paths: string[] }; return: string[] };
+  prepare_chapter_headers: { args: { paths: string[] }; return: PageHeader[] };
+  discover_library: {
+    args: { folderPath: string; scanId?: string };
+    return: LibraryDiscovery | null;
+  };
+  set_progress_bar: { args: { progress: number }; return: void };
+  show_main_window: { args: Record<string, never>; return: void };
+  save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
+  read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
+  get_thumbnail_url: { args: { id: string }; return: string | null };
+  delete_thumbnail: { args: { id: string }; return: void };
+  clear_thumbnails: { args: Record<string, never>; return: void };
+  generate_thumbnail: { args: { filePath: string; id: string }; return: CachedImageResult };
+  generate_image_variant: {
+    args: { filePath: string; maxWidth: number; maxHeight: number };
+    return: CachedImageResult;
+  };
+  get_app_config: { args: Record<string, never>; return: AppConfig };
+  save_app_config: { args: { config: AppConfig }; return: void };
+  set_window_preferences: { args: { preferences: WindowPreferences }; return: void };
+  set_app_preference: { args: { key: string; value: unknown }; return: void };
+  get_app_preference: { args: { key: string }; return: unknown };
+  record_opened_root: { args: { rootPath: string }; return: string[] };
+  get_last_opened_roots: { args: Record<string, never>; return: string[] };
+  is_library_migrated: { args: Record<string, never>; return: boolean };
+  import_legacy_library: { args: { payload: unknown }; return: boolean };
+  sqlite_list_library: { args: Record<string, never>; return: Summary[] };
+  sqlite_get_manga: { args: { id: string }; return: Manga | undefined };
+  sqlite_save_manga: { args: { manga: Manga }; return: void };
+  sqlite_save_progress: {
+    args: {
+      mangaId: string;
+      chapterIndex: number;
+      position: Position;
+      read: boolean;
+      bookmarks?: Position[];
+      updateLast: boolean;
+      expectedRevision?: number;
+      expectedUpdatedAt?: number;
+    };
+    return: 'saved' | 'stale' | 'missing';
+  };
+  sqlite_add_bookmark: {
+    args: { mangaId: string; chapterName: string; position: Position };
+    return: Position[];
+  };
+  sqlite_remove_bookmark: {
+    args: { mangaId: string; chapterName: string; position: Position };
+    return: Position[];
+  };
+  sqlite_get_bookmarked_manga_ids: {
+    args: Record<string, never>;
+    return: { allBookmarked: string[]; mangaBookmarked: string[] };
+  };
+  sqlite_delete_manga: { args: { id: string }; return: void };
+  sqlite_clear_library: { args: Record<string, never>; return: void };
+  sqlite_reset_progress: { args: Record<string, never>; return: void };
+  sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
+  sqlite_save_settings: { args: { settings: Settings }; return: void };
+  validate_library_backup: { args: { backupJson: string }; return: unknown };
+  export_library_backup: { args: Record<string, never>; return: string };
+  restore_library_backup: { args: { backupJson: string }; return: void };
+  index_title: {
+    args: {
+      root: string;
+      sort?: string;
+      previous?: Manga;
+      warmChapters?: number;
+      onProgress?: unknown;
+    };
+    return: IndexTitleDto;
+  };
+}
+
+export async function invokeCommand<K extends keyof TauriCommands>(
+  cmd: K,
+  args?: TauriCommands[K]['args'],
+  options?: any,
+): Promise<TauriCommands[K]['return']> {
+  try {
+    return await invoke<TauriCommands[K]['return']>(cmd, args as any, options);
+  } catch (err) {
+    const parsed = parseTauriError(err);
+    console.error(`[invokeCommand] ${cmd} failed:`, parsed);
+    throw parsed;
+  }
+}
+
+export function parseTauriError(err: unknown): TauriErrorPayload {
+  const fsErr = parseFsError(err);
+  if (fsErr) return fsErr;
+  if (err && typeof err === 'object' && 'code' in err && typeof (err as any).code === 'string') {
+    return err as DbErrorPayload;
+  }
+  if (typeof err === 'string') {
+    try {
+      const parsed = JSON.parse(err);
+      if (parsed && typeof parsed === 'object' && 'code' in parsed) {
+        return parsed as DbErrorPayload;
+      }
+    } catch {
+      // not JSON
+    }
+    return { code: 'Unknown', message: err };
+  }
+  if (err instanceof Error) {
+    return { code: 'Unknown', message: err.message };
+  }
+  return { code: 'Unknown', message: String(err) };
+}
+
+export interface TauriCommands {
+  select_folder: { args: Record<string, never>; return: string | null };
+  list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
+  read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
+  get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
+  cancel_scan: { args: { scanId: string }; return: boolean };
+  natural_sort_paths: { args: { paths: string[] }; return: string[] };
+  prepare_chapter_headers: { args: { paths: string[] }; return: PageHeader[] };
+  discover_library: { args: { folderPath: string; scanId?: string }; return: LibraryDiscovery | null };
+  set_progress_bar: { args: { progress: number }; return: void };
+  show_main_window: { args: Record<string, never>; return: void };
+  save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
+  read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
+  get_thumbnail_url: { args: { id: string }; return: string | null };
+  delete_thumbnail: { args: { id: string }; return: void };
+  clear_thumbnails: { args: Record<string, never>; return: void };
+  generate_thumbnail: { args: { filePath: string; id: string }; return: CachedImageResult };
+  generate_image_variant: {
+    args: { filePath: string; maxWidth: number; maxHeight: number };
+    return: CachedImageResult;
+  };
+  get_app_config: { args: Record<string, never>; return: AppConfig };
+  save_app_config: { args: { config: AppConfig }; return: void };
+  set_window_preferences: { args: { preferences: WindowPreferences }; return: void };
+  set_app_preference: { args: { key: string; value: unknown }; return: void };
+  get_app_preference: { args: { key: string }; return: unknown };
+  record_opened_root: { args: { rootPath: string }; return: string[] };
+  get_last_opened_roots: { args: Record<string, never>; return: string[] };
+  is_library_migrated: { args: Record<string, never>; return: boolean };
+  import_legacy_library: { args: { payload: unknown }; return: boolean };
+  sqlite_list_library: { args: Record<string, never>; return: Summary[] };
+  sqlite_get_manga: { args: { id: string }; return: Manga | undefined };
+  sqlite_save_manga: { args: { manga: Manga }; return: void };
+  sqlite_save_progress: {
+    args: {
+      mangaId: string;
+      chapterIndex: number;
+      position: Position;
+      read: boolean;
+      bookmarks?: Position[];
+      updateLast: boolean;
+      expectedRevision?: number;
+      expectedUpdatedAt?: number;
+    };
+    return: 'saved' | 'stale' | 'missing';
+  };
+  sqlite_add_bookmark: {
+    args: { mangaId: string; chapterName: string; position: Position };
+    return: Position[];
+  };
+  sqlite_remove_bookmark: {
+    args: { mangaId: string; chapterName: string; position: Position };
+    return: Position[];
+  };
+  sqlite_get_bookmarked_manga_ids: {
+    args: Record<string, never>;
+    return: { allBookmarked: string[]; mangaBookmarked: string[] };
+  };
+  sqlite_delete_manga: { args: { id: string }; return: void };
+  sqlite_clear_library: { args: Record<string, never>; return: void };
+  sqlite_reset_progress: { args: Record<string, never>; return: void };
+  sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
+  sqlite_save_settings: { args: { settings: Settings }; return: void };
+  validate_library_backup: { args: { backupJson: string }; return: unknown };
+  export_library_backup: { args: Record<string, never>; return: string };
+  restore_library_backup: { args: { backupJson: string }; return: void };
+  index_title: {
+    args: {
+      root: string;
+      sort?: string;
+      previous?: Manga;
+      warmChapters?: number;
+      onProgress?: unknown;
+    };
+    return: IndexTitleDto;
+  };
+}
+
+export async function invokeCommand<K extends keyof TauriCommands>(
+  cmd: K,
+  args?: TauriCommands[K]['args'],
+  options?: any
+): Promise<TauriCommands[K]['return']> {
+  try {
+    return await invoke<TauriCommands[K]['return']>(cmd, args as any, options);
+  } catch (err) {
+    const parsed = parseTauriError(err);
+    console.error(`[invokeCommand] ${cmd} failed:`, parsed);
+    throw parsed;
+  }
+}
+
 export interface DesktopAPI {
   readonly isDesktop: boolean;
   readonly isTauri: boolean;
@@ -162,6 +431,7 @@ export interface DesktopAPI {
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
   setProgressBar(progress: number): void;
+  showMainWindow?(): Promise<boolean>;
   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
   getThumbnailUrl?(id: string): Promise<string | null>;
@@ -175,6 +445,7 @@ export interface DesktopAPI {
   ): Promise<CachedImageResult | null>;
   getAppConfig?(): Promise<AppConfig | null>;
   saveAppConfig?(config: AppConfig): Promise<boolean>;
+  setWindowPreferences?(preferences: WindowPreferences): Promise<boolean>;
   setAppPreference?(key: string, value: unknown): Promise<boolean>;
   getAppPreference?(key: string): Promise<unknown>;
   recordOpenedRoot?(rootPath: string): Promise<string[]>;
@@ -251,7 +522,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async selectFolder(): Promise<string | null> {
     try {
-      const selected = await invoke<string | null>('select_folder');
+      const selected = await invokeCommand('select_folder');
       return selected ?? null;
     } catch (err) {
       console.error('Tauri selectFolder failed:', parseFsError(err) ?? err);
@@ -291,7 +562,7 @@ export class TauriDesktopBridge implements DesktopAPI {
         }
       }
 
-      return await invoke<FolderEntry[]>('list_folder', { folderPath, scanId });
+      return await invokeCommand('list_folder', { folderPath, scanId });
     } catch (err) {
       const fsErr = parseFsError(err);
       if (fsErr?.code === 'Cancelled') {
@@ -342,7 +613,7 @@ export class TauriDesktopBridge implements DesktopAPI {
         }
       }
 
-      return await invoke<LibraryDiscovery>('discover_library', { folderPath, scanId });
+      return await invokeCommand('discover_library', { folderPath, scanId });
     } catch (err) {
       const fsErr = parseFsError(err);
       if (fsErr?.code === 'Cancelled') {
@@ -360,7 +631,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async naturalSortPaths(paths: string[]): Promise<string[]> {
     try {
-      return await invoke<string[]>('natural_sort_paths', { paths });
+      return await invokeCommand('natural_sort_paths', { paths });
     } catch (err) {
       console.warn('Tauri naturalSortPaths failed:', parseFsError(err) ?? err);
       return paths;
@@ -369,7 +640,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async prepareChapterHeaders(paths: string[]): Promise<PageHeader[]> {
     try {
-      return await invoke<PageHeader[]>('prepare_chapter_headers', { paths });
+      return await invokeCommand('prepare_chapter_headers', { paths });
     } catch (err) {
       console.warn('Tauri prepareChapterHeaders failed:', parseFsError(err) ?? err);
       return [];
@@ -378,7 +649,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async cancelScan(scanId: string): Promise<boolean> {
     try {
-      return await invoke<boolean>('cancel_scan', { scanId });
+      return await invokeCommand('cancel_scan', { scanId });
     } catch (err) {
       console.warn('Tauri cancelScan failed for', scanId, err);
       return false;
@@ -387,7 +658,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async readFile(absolutePath: string): Promise<ArrayBuffer | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer>('read_file', {
+      const response = await invokeCommand('read_file', {
         absolutePath,
       });
       if (response instanceof ArrayBuffer) {
@@ -410,7 +681,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     absolutePath: string,
   ): Promise<{ width: number; height: number } | null> {
     try {
-      const dim = await invoke<[number, number] | null>('get_image_dimensions', {
+      const dim = await invokeCommand('get_image_dimensions', {
         absolutePath,
       });
       if (dim && Array.isArray(dim) && dim.length === 2) {
@@ -425,9 +696,21 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   setProgressBar(progress: number): void {
     try {
-      void invoke('set_progress_bar', { progress });
+      void invokeCommand('set_progress_bar', { progress }).catch((err) => {
+        console.warn('Tauri setProgressBar failed:', err);
+      });
     } catch (err) {
       console.warn('Tauri setProgressBar failed:', err);
+    }
+  }
+
+  async showMainWindow(): Promise<boolean> {
+    try {
+      await invokeCommand('show_main_window');
+      return true;
+    } catch (err) {
+      console.warn('Tauri showMainWindow failed:', err);
+      return false;
     }
   }
 
@@ -448,7 +731,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async getThumbnailUrl(id: string): Promise<string | null> {
     try {
-      return await invoke<string | null>('get_thumbnail_url', { id });
+      return await invokeCommand('get_thumbnail_url', { id });
     } catch (err) {
       console.warn('Tauri getThumbnailUrl failed for', id, parseFsError(err) ?? err);
       return null;
@@ -457,7 +740,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async generateThumbnail(filePath: string, id: string): Promise<CachedImageResult | null> {
     try {
-      return await invoke<CachedImageResult>('generate_thumbnail', {
+      return await invokeCommand('generate_thumbnail', {
         filePath,
         id,
       });
@@ -473,7 +756,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     maxHeight: number,
   ): Promise<CachedImageResult | null> {
     try {
-      return await invoke<CachedImageResult>('generate_image_variant', {
+      return await invokeCommand('generate_image_variant', {
         filePath,
         maxWidth,
         maxHeight,
@@ -486,7 +769,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async getThumbnail(id: string): Promise<ArrayBuffer | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer>('read_thumbnail', { id });
+      const response = await invokeCommand('read_thumbnail', { id });
       if (response instanceof ArrayBuffer) {
         return response.byteLength > 0 ? response : null;
       }
@@ -507,7 +790,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async deleteThumbnail(id: string): Promise<void> {
     try {
-      await invoke('delete_thumbnail', { id });
+      await invokeCommand('delete_thumbnail', { id });
     } catch (err) {
       console.warn('Tauri deleteThumbnail failed for', id, parseFsError(err) ?? err);
     }
@@ -515,7 +798,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async clearThumbnails(): Promise<void> {
     try {
-      await invoke('clear_thumbnails');
+      await invokeCommand('clear_thumbnails');
     } catch (err) {
       console.warn('Tauri clearThumbnails failed:', parseFsError(err) ?? err);
     }
@@ -523,7 +806,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async getAppConfig(): Promise<AppConfig | null> {
     try {
-      return await invoke<AppConfig>('get_app_config');
+      return await invokeCommand('get_app_config');
     } catch (err) {
       console.warn('Tauri getAppConfig failed:', err);
       return null;
@@ -532,7 +815,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async saveAppConfig(config: AppConfig): Promise<boolean> {
     try {
-      await invoke('save_app_config', { config });
+      await invokeCommand('save_app_config', { config });
       return true;
     } catch (err) {
       console.warn('Tauri saveAppConfig failed:', err);
@@ -540,9 +823,19 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
+  async setWindowPreferences(preferences: WindowPreferences): Promise<boolean> {
+    try {
+      await invokeCommand('set_window_preferences', { preferences });
+      return true;
+    } catch (err) {
+      console.warn('Tauri setWindowPreferences failed:', err);
+      return false;
+    }
+  }
+
   async setAppPreference(key: string, value: unknown): Promise<boolean> {
     try {
-      await invoke('set_app_preference', { key, value });
+      await invokeCommand('set_app_preference', { key, value });
       return true;
     } catch (err) {
       console.warn('Tauri setAppPreference failed:', key, err);
@@ -552,7 +845,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async getAppPreference(key: string): Promise<unknown> {
     try {
-      return await invoke<unknown>('get_app_preference', { key });
+      return await invokeCommand('get_app_preference', { key });
     } catch (err) {
       console.warn('Tauri getAppPreference failed:', key, err);
       return null;
@@ -561,7 +854,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async recordOpenedRoot(rootPath: string): Promise<string[]> {
     try {
-      return await invoke<string[]>('record_opened_root', { rootPath });
+      return await invokeCommand('record_opened_root', { rootPath });
     } catch (err) {
       console.warn('Tauri recordOpenedRoot failed for', rootPath, err);
       return [];
@@ -570,7 +863,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async getLastOpenedRoots(): Promise<string[]> {
     try {
-      return await invoke<string[]>('get_last_opened_roots');
+      return await invokeCommand('get_last_opened_roots');
     } catch (err) {
       console.warn('Tauri getLastOpenedRoots failed:', err);
       return [];
@@ -579,7 +872,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async isLibraryMigrated(): Promise<boolean> {
     try {
-      return await invoke<boolean>('is_library_migrated');
+      return await invokeCommand('is_library_migrated');
     } catch (err) {
       console.warn('Tauri isLibraryMigrated failed:', err);
       return false;
@@ -588,7 +881,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async importLegacyLibrary(payload: unknown): Promise<boolean> {
     try {
-      return await invoke<boolean>('import_legacy_library', { payload });
+      return await invokeCommand('import_legacy_library', { payload });
     } catch (err) {
       console.warn('Tauri importLegacyLibrary failed:', err);
       return false;
@@ -597,7 +890,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async sqliteListLibrary(): Promise<Summary[]> {
     try {
-      const records = await invoke<Summary[]>('sqlite_list_library');
+      const records = await invokeCommand('sqlite_list_library');
       return Array.isArray(records) ? records : [];
     } catch (err) {
       console.warn('Tauri sqliteListLibrary failed:', err);
@@ -607,7 +900,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   async sqliteGetManga(id: string): Promise<Manga | undefined> {
     try {
-      const record = await invoke<Manga | null>('sqlite_get_manga', { id });
+      const record = await invokeCommand('sqlite_get_manga', { id });
       return record ?? undefined;
     } catch (err) {
       console.warn('Tauri sqliteGetManga failed for', id, err);
@@ -616,7 +909,7 @@ export class TauriDesktopBridge implements DesktopAPI {
   }
 
   async sqliteSaveManga(manga: Manga): Promise<void> {
-    await invoke('sqlite_save_manga', { manga });
+    await invokeCommand('sqlite_save_manga', { manga });
   }
 
   async sqliteSaveProgress(params: {
@@ -629,7 +922,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     expectedRevision?: number;
     expectedUpdatedAt?: number;
   }): Promise<'saved' | 'stale' | 'missing'> {
-    const res = await invoke<string>('sqlite_save_progress', {
+    const res = await invokeCommand('sqlite_save_progress', {
       mangaId: params.mangaId,
       chapterIndex: params.chapterIndex,
       position: params.position,
@@ -647,7 +940,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     chapterName: string;
     position: Position;
   }): Promise<Position[]> {
-    return await invoke<Position[]>('sqlite_add_bookmark', {
+    return await invokeCommand('sqlite_add_bookmark', {
       mangaId: params.mangaId,
       chapterName: params.chapterName,
       position: params.position,
@@ -659,7 +952,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     chapterName: string;
     position: Position;
   }): Promise<Position[]> {
-    return await invoke<Position[]>('sqlite_remove_bookmark', {
+    return await invokeCommand('sqlite_remove_bookmark', {
       mangaId: params.mangaId,
       chapterName: params.chapterName,
       position: params.position,
@@ -671,10 +964,11 @@ export class TauriDesktopBridge implements DesktopAPI {
     mangaBookmarkedIds: string[];
   }> {
     try {
-      return await invoke<{
-        allBookmarkedIds: string[];
-        mangaBookmarkedIds: string[];
-      }>('sqlite_get_bookmarked_manga_ids');
+      const res = await invokeCommand('sqlite_get_bookmarked_manga_ids');
+      return {
+        allBookmarkedIds: (res as any).allBookmarked || (res as any).allBookmarkedIds || [],
+        mangaBookmarkedIds: (res as any).mangaBookmarked || (res as any).mangaBookmarkedIds || [],
+      };
     } catch (err) {
       console.warn('Tauri sqliteGetBookmarkedMangaIds failed:', err);
       return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
@@ -682,20 +976,20 @@ export class TauriDesktopBridge implements DesktopAPI {
   }
 
   async sqliteDeleteManga(id: string): Promise<void> {
-    await invoke('sqlite_delete_manga', { id });
+    await invokeCommand('sqlite_delete_manga', { id });
   }
 
   async sqliteClearLibrary(): Promise<void> {
-    await invoke('sqlite_clear_library');
+    await invokeCommand('sqlite_clear_library');
   }
 
   async sqliteResetProgress(): Promise<void> {
-    await invoke('sqlite_reset_progress');
+    await invokeCommand('sqlite_reset_progress');
   }
 
   async sqliteGetSettings(): Promise<Settings | undefined> {
     try {
-      const record = await invoke<Settings | null>('sqlite_get_settings');
+      const record = await invokeCommand('sqlite_get_settings');
       return record ?? undefined;
     } catch (err) {
       console.warn('Tauri sqliteGetSettings failed:', err);
@@ -704,20 +998,20 @@ export class TauriDesktopBridge implements DesktopAPI {
   }
 
   async sqliteSaveSettings(settings: Settings): Promise<Settings> {
-    await invoke('sqlite_save_settings', { settings });
+    await invokeCommand('sqlite_save_settings', { settings });
     return settings;
   }
 
   async exportBackup(): Promise<string> {
-    return await invoke<string>('export_library_backup');
+    return await invokeCommand('export_library_backup');
   }
 
   async restoreBackup(backupJson: string): Promise<Settings> {
-    return await invoke<Settings>('restore_library_backup', { backupJson });
+    return (await invokeCommand('restore_library_backup', { backupJson })) as any;
   }
 
   async validateBackup(backupJson: string): Promise<unknown> {
-    return await invoke('validate_library_backup', { backupJson });
+    return await invokeCommand('validate_library_backup', { backupJson });
   }
 
   async indexTitle(
@@ -729,7 +1023,7 @@ export class TauriDesktopBridge implements DesktopAPI {
     if (onProgress) {
       channel.onmessage = onProgress;
     }
-    return await invoke<IndexTitleDto>('index_title', {
+    return await invokeCommand('index_title', {
       root,
       options: options
         ? {
@@ -763,7 +1057,7 @@ export class TauriDesktopBridge implements DesktopAPI {
           }
         : undefined,
       onProgress: channel,
-    });
+    } as any);
   }
 
   convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
@@ -845,8 +1139,8 @@ export class TauriDesktopBridge implements DesktopAPI {
     try {
       return await invoke<DesktopUpdateInfo | null>('plugin:updater|check');
     } catch (err) {
-      console.debug('Tauri updater check failed or updater plugin inactive:', err);
-      return null;
+      console.warn('Tauri updater check failed:', err);
+      throw err;
     }
   }
 
@@ -903,6 +1197,10 @@ class WebDesktopBridge implements DesktopAPI {
 
   setProgressBar(): void {}
 
+  async showMainWindow(): Promise<boolean> {
+    return false;
+  }
+
   async saveThumbnail(): Promise<boolean> {
     return false;
   }
@@ -932,6 +1230,10 @@ class WebDesktopBridge implements DesktopAPI {
   }
 
   async saveAppConfig(): Promise<boolean> {
+    return false;
+  }
+
+  async setWindowPreferences(): Promise<boolean> {
     return false;
   }
 

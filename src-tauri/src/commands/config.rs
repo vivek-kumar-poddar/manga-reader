@@ -5,32 +5,18 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 use tauri::{AppHandle, Manager};
 
-use super::fs::{write_atomic, AllowedRoots};
+use super::fs::write_atomic;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
 pub struct WindowPreferences {
-    pub minimize_to_tray: bool,
     pub close_to_tray: bool,
-    pub start_maximized: bool,
-    pub high_dpi_scaling: bool,
+    pub minimize_to_tray: bool,
     pub theme: Option<String>,
 }
 
-impl Default for WindowPreferences {
-    fn default() -> Self {
-        Self {
-            minimize_to_tray: false,
-            close_to_tray: false,
-            start_maximized: false,
-            high_dpi_scaling: true,
-            theme: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(default, rename_all = "camelCase")]
 pub struct AppConfig {
     pub last_opened_roots: Vec<String>,
     pub window_preferences: WindowPreferences,
@@ -99,22 +85,38 @@ pub fn save_persisted_config(app: &AppHandle, config: &AppConfig) {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_app_config(app: AppHandle) -> Result<AppConfig, String> {
     let state = app.state::<AppConfigState>();
     Ok(state.get())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> {
     let state = app.state::<AppConfigState>();
     state.update(&app, |cfg| {
-        *cfg = config;
+        cfg.window_preferences = config.window_preferences;
+        for (k, v) in config.custom_preferences {
+            cfg.custom_preferences.insert(k, v);
+        }
+        // Do not overwrite last_opened_roots to prevent race conditions with record_opened_root
     });
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+pub fn set_window_preferences(
+    app: AppHandle,
+    preferences: WindowPreferences,
+) -> Result<(), String> {
+    let state = app.state::<AppConfigState>();
+    state.update(&app, |cfg| {
+        cfg.window_preferences = preferences;
+    });
+    Ok(())
+}
+
+#[tauri::command(async)]
 pub fn set_app_preference(
     app: AppHandle,
     key: String,
@@ -127,7 +129,7 @@ pub fn set_app_preference(
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_app_preference(
     app: AppHandle,
     key: String,
@@ -136,16 +138,12 @@ pub fn get_app_preference(
     Ok(state.get().custom_preferences.get(&key).cloned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn record_opened_root(app: AppHandle, root_path: String) -> Result<Vec<String>, String> {
     let trimmed = root_path.trim().to_string();
     if trimmed.is_empty() {
         return Ok(Vec::new());
     }
-
-    // Register with AllowedRoots as well
-    let allowed = app.state::<AllowedRoots>();
-    allowed.add_root(PathBuf::from(&trimmed));
 
     let state = app.state::<AppConfigState>();
     let mut updated = Vec::new();
@@ -163,7 +161,7 @@ pub fn record_opened_root(app: AppHandle, root_path: String) -> Result<Vec<Strin
     Ok(updated)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_last_opened_roots(app: AppHandle) -> Result<Vec<String>, String> {
     let state = app.state::<AppConfigState>();
     Ok(state.get().last_opened_roots)
@@ -176,10 +174,7 @@ mod tests {
     #[test]
     fn test_window_preferences_defaults() {
         let prefs = WindowPreferences::default();
-        assert!(!prefs.minimize_to_tray);
         assert!(!prefs.close_to_tray);
-        assert!(!prefs.start_maximized);
-        assert!(prefs.high_dpi_scaling);
         assert_eq!(prefs.theme, None);
     }
 
@@ -198,6 +193,64 @@ mod tests {
         assert_eq!(deserialized.last_opened_roots, vec!["C:\\Manga\\OnePiece"]);
         assert!(deserialized.window_preferences.close_to_tray);
         assert_eq!(deserialized.custom_preferences.get("zoom"), Some(&serde_json::json!(1.25)));
+    }
+
+    #[test]
+    fn test_app_config_serde_default_on_missing_or_partial_fields() {
+        // 1. Completely empty JSON defaults all fields safely without parsing failure
+        let empty_config: AppConfig =
+            serde_json::from_str("{}").expect("Must parse empty object with defaults");
+        assert_eq!(empty_config, AppConfig::default());
+
+        // 2. Partial JSON with only lastOpenedRoots
+        let partial_json = r#"{"lastOpenedRoots": ["D:/Manga/Series"]}"#;
+        let partial_config: AppConfig =
+            serde_json::from_str(partial_json).expect("Must parse partial JSON");
+        assert_eq!(partial_config.last_opened_roots, vec!["D:/Manga/Series"]);
+        assert_eq!(partial_config.window_preferences, WindowPreferences::default());
+        assert!(partial_config.custom_preferences.is_empty());
+
+        // 3. Backward-compatibility: old JSON containing retired fields (minimizeToTray, highDpiScaling)
+        let old_json = r#"{
+            "lastOpenedRoots": ["D:/Manga/Old"],
+            "windowPreferences": {
+                "minimizeToTray": true,
+                "closeToTray": true,
+                "startMaximized": true,
+                "highDpiScaling": false,
+                "theme": "dark"
+            },
+            "customPreferences": {"zoom": 1.5}
+        }"#;
+        let old_config: AppConfig =
+            serde_json::from_str(old_json).expect("Must parse old config with retired fields");
+        assert_eq!(old_config.last_opened_roots, vec!["D:/Manga/Old"]);
+        assert!(old_config.window_preferences.close_to_tray);
+        assert!(old_config.window_preferences.minimize_to_tray);
+        assert_eq!(old_config.window_preferences.theme, Some("dark".into()));
+        assert_eq!(
+            old_config.custom_preferences.get("zoom"),
+            Some(&serde_json::json!(1.5))
+        );
+    }
+
+    #[test]
+    fn test_per_field_setters_and_no_clobber() {
+        let mut config = AppConfig::default();
+        config.last_opened_roots = vec!["C:/RootA".into(), "C:/RootB".into()];
+        config.window_preferences.close_to_tray = false;
+
+        // Updating window preferences does not clobber last_opened_roots
+        let new_prefs = WindowPreferences {
+            close_to_tray: true,
+            minimize_to_tray: true,
+            theme: Some("light".into()),
+        };
+        config.window_preferences = new_prefs;
+        assert_eq!(config.last_opened_roots, vec!["C:/RootA", "C:/RootB"]);
+        assert!(config.window_preferences.close_to_tray);
+        assert!(config.window_preferences.minimize_to_tray);
+        assert_eq!(config.window_preferences.theme, Some("light".into()));
     }
 
     #[test]

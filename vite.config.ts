@@ -2,10 +2,14 @@ import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const isElectron = Boolean(process.env.ELECTRON_BUILD);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const isTauri = Boolean(process.env.TAURI_ENV_PLATFORM);
-const isDesktop = process.env.VITE_TARGET === 'desktop' || isTauri || isElectron;
+const isDesktop = process.env.VITE_TARGET === 'desktop' || isTauri;
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
@@ -13,6 +17,24 @@ export default defineConfig({
   clearScreen: false,
   define: {
     __DESKTOP_BUILD__: JSON.stringify(isDesktop),
+  },
+  resolve: {
+    alias: isDesktop
+      ? [
+          {
+            find: /^\.\/storage$/,
+            replacement: path.resolve(__dirname, 'src/desktop/storage.ts'),
+          },
+          {
+            find: /^\.\/importScan$/,
+            replacement: path.resolve(__dirname, 'src/desktop/importScan.ts'),
+          },
+          {
+            find: /^\.\/validation$/,
+            replacement: path.resolve(__dirname, 'src/desktop/validation.ts'),
+          },
+        ]
+      : [],
   },
   server: {
     port: 5173,

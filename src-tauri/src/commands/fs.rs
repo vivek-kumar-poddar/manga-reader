@@ -135,7 +135,8 @@ pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
 
     #[derive(Debug, PartialEq)]
     enum Token<'a> {
-        Num(f64),
+        Num(u128, usize),
+        BigNum(&'a str),
         Str(&'a str),
     }
 
@@ -154,10 +155,10 @@ pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
                 if i > start {
                     let slice = &s[start..i];
                     if in_num {
-                        if let Ok(n) = slice.parse::<f64>() {
-                            tokens.push(Token::Num(n));
+                        if let Ok(n) = slice.parse::<u128>() {
+                            tokens.push(Token::Num(n, slice.len()));
                         } else {
-                            tokens.push(Token::Str(slice));
+                            tokens.push(Token::BigNum(slice));
                         }
                     } else {
                         tokens.push(Token::Str(slice));
@@ -172,10 +173,10 @@ pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
         if start < len {
             let slice = &s[start..len];
             if in_num {
-                if let Ok(n) = slice.parse::<f64>() {
-                    tokens.push(Token::Num(n));
+                if let Ok(n) = slice.parse::<u128>() {
+                    tokens.push(Token::Num(n, slice.len()));
                 } else {
-                    tokens.push(Token::Str(slice));
+                    tokens.push(Token::BigNum(slice));
                 }
             } else {
                 tokens.push(Token::Str(slice));
@@ -193,28 +194,67 @@ pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
 
     for (x, y) in tokens_a.iter().zip(tokens_b.iter()) {
         match (x, y) {
-            (Token::Num(nx), Token::Num(ny)) => {
-                if let Some(ord) = nx.partial_cmp(ny) {
+            (Token::Num(nx, lx), Token::Num(ny, ly)) => {
+                let ord = nx.cmp(ny);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+                if lx != ly {
+                    return lx.cmp(ly);
+                }
+            }
+            (Token::BigNum(bx), Token::BigNum(by)) => {
+                let tx = bx.trim_start_matches('0');
+                let ty = by.trim_start_matches('0');
+                let ord = tx.len().cmp(&ty.len()).then_with(|| tx.cmp(ty));
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+                if bx.len() != by.len() {
+                    return bx.len().cmp(&by.len());
+                }
+            }
+            (Token::Num(nx, _), Token::BigNum(by)) => {
+                let ty = by.trim_start_matches('0');
+                if ty.len() > 38 {
+                    return std::cmp::Ordering::Less;
+                }
+                if let Ok(ny) = ty.parse::<u128>() {
+                    let ord = nx.cmp(&ny);
                     if ord != std::cmp::Ordering::Equal {
                         return ord;
                     }
                 }
+                return std::cmp::Ordering::Less;
+            }
+            (Token::BigNum(bx), Token::Num(ny, _)) => {
+                let tx = bx.trim_start_matches('0');
+                if tx.len() > 38 {
+                    return std::cmp::Ordering::Greater;
+                }
+                if let Ok(nx) = tx.parse::<u128>() {
+                    let ord = nx.cmp(ny);
+                    if ord != std::cmp::Ordering::Equal {
+                        return ord;
+                    }
+                }
+                return std::cmp::Ordering::Greater;
             }
             (Token::Str(sx), Token::Str(sy)) => {
-                let ord = sx.cmp(sy);
+                let ord = sx.chars().cmp(sy.chars());
                 if ord != std::cmp::Ordering::Equal {
                     return ord;
                 }
             }
-            (Token::Num(_), Token::Str(_)) => return std::cmp::Ordering::Less,
-            (Token::Str(_), Token::Num(_)) => return std::cmp::Ordering::Greater,
+            (Token::Num(_, _) | Token::BigNum(_), Token::Str(_)) => return std::cmp::Ordering::Less,
+            (Token::Str(_), Token::Num(_, _) | Token::BigNum(_)) => return std::cmp::Ordering::Greater,
         }
     }
 
     tokens_a.len().cmp(&tokens_b.len()).then_with(|| a.cmp(b))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn natural_sort_paths(mut paths: Vec<String>) -> Vec<String> {
     paths.sort_by(|a, b| natural_order(a, b));
     paths
@@ -231,14 +271,14 @@ pub async fn prepare_chapter_headers(
     };
 
     // Parallel extraction with Rayon off main thread
-    let results: Vec<PageHeader> = tokio::task::spawn_blocking(move || {
+    let results: Vec<PageHeader> = tauri::async_runtime::spawn_blocking(move || {
         paths
             .into_par_iter()
             .filter_map(|p_str| {
                 let trimmed = p_str.trim();
                 let path = Path::new(trimmed);
                 let resolved = dunce::canonicalize(path).ok()?;
-                if !allowed_set.is_empty() && !allowed_set.iter().any(|r| resolved.starts_with(r)) {
+                if allowed_set.is_empty() || !allowed_set.iter().any(|r| resolved.starts_with(r)) {
                     return None;
                 }
                 let ext = resolved.extension()?.to_str()?.to_lowercase();
@@ -249,9 +289,10 @@ pub async fn prepare_chapter_headers(
                 if !metadata.is_file() || metadata.len() > MAX_FILE_READ_BYTES {
                     return None;
                 }
-                let (w, h) = parse_image_dimensions(&resolved);
-                let width = w.unwrap_or(800);
-                let height = h.unwrap_or(1200);
+                let (width, height) = match parse_image_dimensions(&resolved) {
+                    (Some(w), Some(h)) => (w, h),
+                    _ => return None,
+                };
 
                 let modified = metadata
                     .modified()
@@ -319,7 +360,7 @@ impl AllowedRoots {
     pub fn is_allowed(&self, path: &Path) -> bool {
         let roots = self.0.read().unwrap();
         if roots.is_empty() {
-            return true;
+            return false;
         }
         let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if canonical.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
@@ -499,7 +540,7 @@ pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
     Ok(folder.map(|p| p.to_string()))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn cancel_scan(app: AppHandle, scan_id: String) -> Result<bool, FsError> {
     let scan_mgr = app.state::<ScanManager>();
     Ok(scan_mgr.cancel(&scan_id))
@@ -584,7 +625,7 @@ pub async fn list_folder(
 
     // Collect candidates off the main thread
     let root_clone = root.clone();
-    let candidates = tokio::task::spawn_blocking(move || {
+    let candidates = tauri::async_runtime::spawn_blocking(move || {
         let mut list = Vec::new();
         let walker = walkdir::WalkDir::new(&root_clone)
             .max_depth(MAX_DEPTH)
@@ -679,7 +720,7 @@ pub async fn list_folder(
         check_cancelled(rx.as_ref())?;
 
         let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
-        let batch_results: Vec<FolderEntry> = tokio::task::spawn_blocking(move || {
+        let batch_results: Vec<FolderEntry> = tauri::async_runtime::spawn_blocking(move || {
             chunk_vec
                 .into_par_iter()
                 .map(|entry| {
@@ -776,7 +817,7 @@ pub async fn discover_library(
 
     // Collect candidates off the main thread
     let root_clone = root.clone();
-    let candidates = tokio::task::spawn_blocking(move || {
+    let candidates = tauri::async_runtime::spawn_blocking(move || {
         let mut list = Vec::new();
         let walker = walkdir::WalkDir::new(&root_clone)
             .max_depth(MAX_DEPTH)
@@ -882,7 +923,7 @@ pub async fn discover_library(
 
         let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
         let batch: Vec<(CandidateEntry, Option<u32>, Option<u32>)> =
-            tokio::task::spawn_blocking(move || {
+            tauri::async_runtime::spawn_blocking(move || {
                 chunk_vec
                     .into_par_iter()
                     .map(|entry| {
@@ -1096,6 +1137,22 @@ mod tests {
         assert_eq!(natural_order("001.png", "2.png"), Ordering::Less);
         assert_eq!(natural_order("10.jpg", "2.jpg"), Ordering::Greater);
         assert_eq!(natural_order("same", "same"), Ordering::Equal);
+
+        // Long digit string precision (> 18 digits)
+        assert_eq!(
+            natural_order(
+                "item_100000000000000000000001",
+                "item_100000000000000000000002"
+            ),
+            Ordering::Less
+        );
+        assert_eq!(
+            natural_order(
+                "item_100000000000000000000002",
+                "item_100000000000000000000001"
+            ),
+            Ordering::Greater
+        );
     }
 
     #[test]
@@ -1192,8 +1249,8 @@ mod tests {
     #[test]
     fn test_allowed_roots() {
         let allowed = AllowedRoots::default();
-        // Empty roots allows all
-        assert!(allowed.is_allowed(Path::new("C:\\Any\\Path")));
+        // Empty roots denies all
+        assert!(!allowed.is_allowed(Path::new("C:\\Any\\Path")));
 
         let root = std::env::temp_dir().join("manga_root_test");
         let _ = std::fs::create_dir_all(&root);

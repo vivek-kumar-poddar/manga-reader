@@ -1,3 +1,0 @@
-[target.x86_64-pc-windows-gnu]
-rustflags = ["-C", "link-arg=-specs=C:/Users/VKPs/Documents/manga-reader/src-tauri/no-default-manifest.specs"]
-

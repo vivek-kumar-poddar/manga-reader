@@ -8,17 +8,35 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     for entry in fs::read_dir(src)? {
         let entry = match entry {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!("Failed to read dir entry in {}: {e}", src.display());
+                continue;
+            }
         };
         let file_type = match entry.file_type() {
             Ok(ft) => ft,
-            Err(_) => continue,
+            Err(e) => {
+                log::warn!("Failed to read file type for {}: {e}", entry.path().display());
+                continue;
+            }
         };
         let dest_path = dst.join(entry.file_name());
         if file_type.is_dir() {
-            let _ = copy_dir_recursive(&entry.path(), &dest_path);
+            if let Err(e) = copy_dir_recursive(&entry.path(), &dest_path) {
+                log::warn!(
+                    "Failed to recursively copy directory {} to {}: {e}",
+                    entry.path().display(),
+                    dest_path.display()
+                );
+            }
         } else if !dest_path.exists() {
-            let _ = fs::copy(entry.path(), dest_path);
+            if let Err(e) = fs::copy(entry.path(), &dest_path) {
+                log::warn!(
+                    "Failed to copy file {} to {}: {e}",
+                    entry.path().display(),
+                    dest_path.display()
+                );
+            }
         }
     }
     Ok(())
@@ -70,14 +88,12 @@ pub fn migrate_legacy_data_if_needed() {
             let new_roaming = roaming_dir.join("com.mangareader.app");
 
             if old_roaming.exists() {
-                let _ = fs::create_dir_all(&new_roaming);
-                if let Ok(entries) = fs::read_dir(&old_roaming) {
-                    for entry in entries.flatten() {
-                        let dest_file = new_roaming.join(entry.file_name());
-                        if !dest_file.exists() {
-                            let _ = fs::copy(entry.path(), dest_file);
-                        }
-                    }
+                if let Err(e) = copy_dir_recursive(&old_roaming, &new_roaming) {
+                    log::warn!(
+                        "Failed to recursively migrate roaming data from {} to {}: {e}",
+                        old_roaming.display(),
+                        new_roaming.display()
+                    );
                 }
             }
         }
@@ -101,6 +117,33 @@ pub fn migrate_legacy_data_if_needed() {
                 let _ = copy_dir_recursive(&linux_old, &linux_new);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_copy_dir_recursive() {
+        let temp_dir = std::env::temp_dir().join(format!("manga_migration_test_{}", uuid::Uuid::new_v4()));
+        let src = temp_dir.join("src");
+        let dst = temp_dir.join("dst");
+
+        let nested_src = src.join("nested/folder");
+        fs::create_dir_all(&nested_src).expect("Failed to create nested test dir");
+        fs::write(src.join("root.txt"), "root content").expect("Failed to write root file");
+        fs::write(nested_src.join("nested.txt"), "nested content").expect("Failed to write nested file");
+
+        copy_dir_recursive(&src, &dst).expect("copy_dir_recursive must succeed");
+
+        assert!(dst.join("root.txt").exists());
+        assert_eq!(fs::read_to_string(dst.join("root.txt")).unwrap(), "root content");
+
+        assert!(dst.join("nested/folder/nested.txt").exists());
+        assert_eq!(fs::read_to_string(dst.join("nested/folder/nested.txt")).unwrap(), "nested content");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
 

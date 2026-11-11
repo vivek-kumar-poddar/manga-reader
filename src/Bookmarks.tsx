@@ -500,7 +500,6 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
           </div>
           {activeMarks.length > 0 && (
             <label className="shelf-sort bookmark-sort">
-              <span>Sort by</span>
               <Dropdown
                 aria-label="Sort bookmarks"
                 value={sortBy}

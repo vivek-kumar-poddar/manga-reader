@@ -276,8 +276,10 @@ pub async fn index_title(
     // Security check: must be under allowed library roots
     let allowed = app.state::<AllowedRoots>();
     if !allowed.is_allowed(&root_path) {
-        // Auto-allow if user explicitly selected this folder
-        allowed.add_root(root_path.clone());
+        return Err(format!(
+            "Path '{}' is not under an allowed library root",
+            root_path.display()
+        ));
     }
 
     let opts = options.unwrap_or_default();
@@ -292,7 +294,7 @@ pub async fn index_title(
     let root_clone = root_path.clone();
 
     // 1. Recursive directory scan
-    let scanned_files = tokio::task::spawn_blocking(move || {
+    let scanned_files = tauri::async_runtime::spawn_blocking(move || {
         let mut files = Vec::new();
         let walker = walkdir::WalkDir::new(&root_clone)
             .max_depth(MAX_DEPTH)
@@ -508,7 +510,7 @@ pub async fn index_title(
         for chunk in pending_warm.chunks(SCAN_BATCH_SIZE) {
             let chunk_vec = chunk.to_vec();
             let parsed_batch: Vec<(String, Option<u32>, Option<u32>)> =
-                tokio::task::spawn_blocking(move || {
+                tauri::async_runtime::spawn_blocking(move || {
                     chunk_vec
                         .into_par_iter()
                         .map(|(rel, abs)| {

@@ -78,6 +78,59 @@ pub fn resize_image_fir(
     Ok(out)
 }
 
+/// Creates a neutral placeholder image in WebP format when decoding is unsupported
+/// (e.g. AVIF, JXL, HEIC, SVG) or when image data is corrupted.
+pub fn create_placeholder_webp(width: u32, height: u32) -> Result<Vec<u8>, String> {
+    let w = width.clamp(1, MAX_IMAGE_SIDE);
+    let h = height.clamp(1, MAX_IMAGE_SIDE);
+    let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
+        w,
+        h,
+        image::Rgba([39, 39, 42, 255]), // #27272a neutral gray
+    ));
+    let mut out = Vec::new();
+    let mut cursor = Cursor::new(&mut out);
+    if img.write_to(&mut cursor, ImageFormat::WebP).is_err() {
+        out.clear();
+        let rgb_img = img.to_rgb8();
+        let mut cursor = Cursor::new(&mut out);
+        DynamicImage::ImageRgb8(rgb_img)
+            .write_to(&mut cursor, ImageFormat::Jpeg)
+            .map_err(|e| format!("Failed to encode placeholder to JPEG: {e}"))?;
+    }
+    Ok(out)
+}
+
+/// Safely decodes an image with strict memory limits and catch_unwind protection
+/// against decoder panics.
+pub fn safe_decode_image(path: &Path) -> Result<DynamicImage, String> {
+    let mut limits = image::Limits::default();
+    limits.max_alloc = Some(64 * 1024 * 1024); // 64 MiB allocation ceiling
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+
+    let mut reader = image::ImageReader::open(path)
+        .map_err(|e| format!("Failed to open image file: {e}"))?
+        .with_guessed_format()
+        .map_err(|e| format!("Failed to determine image format: {e}"))?;
+
+    reader.limits(limits);
+
+    let decode_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader.decode()));
+
+    match decode_result {
+        Ok(Ok(img)) => {
+            let (w, h) = (img.width(), img.height());
+            if w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || (w as u64 * h as u64) > MAX_IMAGE_PIXELS {
+                return Err("Decoded image exceeds size or pixel limits".into());
+            }
+            Ok(img)
+        }
+        Ok(Err(e)) => Err(format!("Failed to decode image: {e}")),
+        Err(_) => Err("Image decoder panicked during decoding".into()),
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CachedImageResult {
@@ -130,33 +183,24 @@ pub async fn generate_thumbnail(
     }
 
     let thumb_path_clone = thumb_path.clone();
-    tokio::task::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-            let reader = image::ImageReader::open(&resolved)
-                .map_err(|e| format!("Failed to open image file: {e}"))?
-                .with_guessed_format()
-                .map_err(|e| format!("Failed to determine image format: {e}"))?;
-
-            let decoded = reader
-                .decode()
-                .map_err(|e| format!("Failed to decode image: {e}"))?;
-
-            let (src_w, src_h) = (decoded.width(), decoded.height());
-            if src_w > MAX_IMAGE_SIDE
-                || src_h > MAX_IMAGE_SIDE
-                || (src_w as u64 * src_h as u64) > MAX_IMAGE_PIXELS
-            {
-                return Err("Decoded image exceeds 16M pixel limit".into());
-            }
-
-            let (target_w, target_h) = calculate_fitted_dimensions(
-                src_w,
-                src_h,
-                THUMBNAIL_MAX_WIDTH,
-                THUMBNAIL_MAX_HEIGHT,
-            );
-
-            let bytes = resize_image_fir(decoded, target_w, target_h)?;
+            let bytes = match safe_decode_image(&resolved) {
+                Ok(decoded) => {
+                    let (src_w, src_h) = (decoded.width(), decoded.height());
+                    let (target_w, target_h) = calculate_fitted_dimensions(
+                        src_w,
+                        src_h,
+                        THUMBNAIL_MAX_WIDTH,
+                        THUMBNAIL_MAX_HEIGHT,
+                    );
+                    resize_image_fir(decoded, target_w, target_h)?
+                }
+                Err(_) => {
+                    // Fall back to clean placeholder for unsupported codecs (avif, jxl, heic) or decode errors
+                    create_placeholder_webp(THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT)?
+                }
+            };
 
             if let Some(parent) = thumb_path_clone.parent() {
                 let _ = std::fs::create_dir_all(parent);
@@ -196,31 +240,21 @@ pub fn generate_thumbnail_direct(
     let thumb_path = crate::commands::cache::get_thumbnail_path(app, id)?;
 
     IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-        let reader = image::ImageReader::open(resolved)
-            .map_err(|e| format!("Failed to open image file: {e}"))?
-            .with_guessed_format()
-            .map_err(|e| format!("Failed to determine image format: {e}"))?;
-
-        let decoded = reader
-            .decode()
-            .map_err(|e| format!("Failed to decode image: {e}"))?;
-
-        let (src_w, src_h) = (decoded.width(), decoded.height());
-        if src_w > MAX_IMAGE_SIDE
-            || src_h > MAX_IMAGE_SIDE
-            || (src_w as u64 * src_h as u64) > MAX_IMAGE_PIXELS
-        {
-            return Err("Decoded image exceeds 16M pixel limit".into());
-        }
-
-        let (target_w, target_h) = calculate_fitted_dimensions(
-            src_w,
-            src_h,
-            THUMBNAIL_MAX_WIDTH,
-            THUMBNAIL_MAX_HEIGHT,
-        );
-
-        let bytes = resize_image_fir(decoded, target_w, target_h)?;
+        let bytes = match safe_decode_image(resolved) {
+            Ok(decoded) => {
+                let (src_w, src_h) = (decoded.width(), decoded.height());
+                let (target_w, target_h) = calculate_fitted_dimensions(
+                    src_w,
+                    src_h,
+                    THUMBNAIL_MAX_WIDTH,
+                    THUMBNAIL_MAX_HEIGHT,
+                );
+                resize_image_fir(decoded, target_w, target_h)?
+            }
+            Err(_) => {
+                create_placeholder_webp(THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT)?
+            }
+        };
 
         if let Some(parent) = thumb_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -283,33 +317,23 @@ pub async fn generate_image_variant(
     }
 
     let variant_cache_path_clone = variant_cache_path.clone();
-    tokio::task::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-            let reader = image::ImageReader::open(&resolved)
-                .map_err(|e| format!("Failed to open image file: {e}"))?
-                .with_guessed_format()
-                .map_err(|e| format!("Failed to determine image format: {e}"))?;
-
-            let decoded = reader
-                .decode()
-                .map_err(|e| format!("Failed to decode image: {e}"))?;
-
-            let (src_w, src_h) = (decoded.width(), decoded.height());
-            if src_w > MAX_IMAGE_SIDE
-                || src_h > MAX_IMAGE_SIDE
-                || (src_w as u64 * src_h as u64) > MAX_IMAGE_PIXELS
-            {
-                return Err("Decoded image exceeds 16M pixel limit".into());
-            }
-
-            let (target_w, target_h) = calculate_fitted_dimensions(
-                src_w,
-                src_h,
-                max_width,
-                max_height,
-            );
-
-            let bytes = resize_image_fir(decoded, target_w, target_h)?;
+            let bytes = match safe_decode_image(&resolved) {
+                Ok(decoded) => {
+                    let (src_w, src_h) = (decoded.width(), decoded.height());
+                    let (target_w, target_h) = calculate_fitted_dimensions(
+                        src_w,
+                        src_h,
+                        max_width,
+                        max_height,
+                    );
+                    resize_image_fir(decoded, target_w, target_h)?
+                }
+                Err(_) => {
+                    create_placeholder_webp(max_width, max_height)?
+                }
+            };
 
             let _ = crate::commands::fs::write_atomic(&variant_cache_path_clone, &bytes);
 
@@ -366,5 +390,21 @@ mod tests {
         let decoded = image::load_from_memory(&resized_bytes).expect("Output bytes must be valid image format");
         assert_eq!(decoded.width(), 100);
         assert_eq!(decoded.height(), 100);
+    }
+
+    #[test]
+    fn test_create_placeholder_webp() {
+        let bytes = create_placeholder_webp(160, 320).expect("Placeholder WebP must encode cleanly");
+        assert!(!bytes.is_empty());
+        let decoded = image::load_from_memory(&bytes).expect("Placeholder must be decodable");
+        assert_eq!(decoded.width(), 160);
+        assert_eq!(decoded.height(), 320);
+    }
+
+    #[test]
+    fn test_safe_decode_image_on_corrupt_or_missing() {
+        let nonexistent = Path::new("nonexistent-image-path-12345.jpg");
+        let result = safe_decode_image(nonexistent);
+        assert!(result.is_err());
     }
 }

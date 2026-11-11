@@ -758,6 +758,9 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         if (cmd === 'save_app_config') {
           return null;
         }
+        if (cmd === 'set_window_preferences') {
+          return null;
+        }
         if (cmd === 'set_app_preference') {
           return null;
         }
@@ -769,6 +772,9 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         }
         if (cmd === 'get_last_opened_roots') {
           return mockConfig.lastOpenedRoots;
+        }
+        if (cmd === 'show_main_window') {
+          return null;
         }
         return null;
       },
@@ -783,6 +789,10 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       const saved = await bridge.saveAppConfig(mockConfig);
       expect(saved).toBe(true);
 
+      // 2b. setWindowPreferences
+      const winSaved = await bridge.setWindowPreferences({ closeToTray: false, theme: 'light' });
+      expect(winSaved).toBe(true);
+
       // 3. setAppPreference & getAppPreference
       const prefSaved = await bridge.setAppPreference('lastZoom', 1.0);
       expect(prefSaved).toBe(true);
@@ -795,14 +805,20 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       const roots = await bridge.getLastOpenedRoots();
       expect(roots).toEqual(['C:/manga/library']);
 
+      // 4b. showMainWindow
+      const shown = await bridge.showMainWindow();
+      expect(shown).toBe(true);
+
       // 5. Verify recorded commands
       expect(calls.map((c) => c.cmd)).toEqual([
         'get_app_config',
         'save_app_config',
+        'set_window_preferences',
         'set_app_preference',
         'get_app_preference',
         'record_opened_root',
         'get_last_opened_roots',
+        'show_main_window',
       ]);
     } finally {
       if (origWindow === undefined) {
@@ -2040,5 +2056,74 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         (globalThis as any).window = origWindow;
       }
     }
+  });
+
+  test('Step 30 — TypeScript Modularization, Hooks, and Typed Invocation', async () => {
+    // 1. Desktop module isolation: importing desktop modules works without idb
+    const desktopStorage = await import('../src/desktop/storage');
+    const desktopImportScan = await import('../src/desktop/importScan');
+    const desktopValidation = await import('../src/desktop/validation');
+
+    expect(typeof desktopStorage.listLibrary).toBe('function');
+    expect(typeof desktopStorage.saveProgress).toBe('function');
+    expect(typeof desktopImportScan.fromDesktopFolder).toBe('function');
+    expect(typeof desktopImportScan.indexSource).toBe('function');
+    expect(typeof desktopValidation.validateBackup).toBe('function');
+    expect(typeof desktopValidation.validateBackupAsync).toBe('function');
+
+    // 2. parseTauriError parses structured DbError and FsError payloads
+    const { parseTauriError, invokeCommand } = await import('../src/tauriBridge');
+    const fsErr = parseTauriError({ code: 'PathNotAllowed', message: 'Restricted' });
+    expect(fsErr.code).toBe('PathNotAllowed');
+
+    const dbErr = parseTauriError(JSON.stringify({ code: 'Conflict', message: 'Lock collision' }));
+    expect(dbErr.code).toBe('Conflict');
+
+    const unknownErr = parseTauriError(new Error('Generic failure'));
+    expect(unknownErr.code).toBe('Unknown');
+    expect(unknownErr.message).toBe('Generic failure');
+
+    // 3. invokeCommand typed invocation routes to Tauri invoke
+    const origWindow = (globalThis as any).window;
+    const calls: Array<{ cmd: string; args: any }> = [];
+    (globalThis as any).window = {
+      __TAURI_INTERNALS__: {
+        invoke: async (cmd: string, args: any) => {
+          calls.push({ cmd, args });
+          if (cmd === 'natural_sort_paths') {
+            return [...args.paths].sort();
+          }
+          if (cmd === 'get_app_preference') {
+            return 'custom-value';
+          }
+          return null;
+        },
+      },
+    };
+
+    try {
+      const sorted = await invokeCommand('natural_sort_paths', { paths: ['ch2', 'ch1'] });
+      expect(sorted).toEqual(['ch1', 'ch2']);
+      expect(calls[0].cmd).toBe('natural_sort_paths');
+
+      const pref = await invokeCommand('get_app_preference', { key: 'testKey' });
+      expect(pref).toBe('custom-value');
+      expect(calls[1].cmd).toBe('get_app_preference');
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+    }
+
+    // 4. Extracted hooks exist and have valid function signatures
+    const { useAutoplay } = await import('../src/useAutoplay');
+    const { useReaderKeys } = await import('../src/useReaderKeys');
+    const { useProgressSave } = await import('../src/useProgressSave');
+
+    expect(typeof useAutoplay).toBe('function');
+    expect(typeof useReaderKeys).toBe('function');
+    expect(typeof useProgressSave).toBe('function');
   });
 });

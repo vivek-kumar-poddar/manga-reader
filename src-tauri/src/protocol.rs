@@ -7,6 +7,30 @@ use tauri::{AppHandle, Manager};
 
 use crate::commands::fs::{AllowedRoots, ALLOWED_IMAGE_EXTENSIONS, MAX_FILE_READ_BYTES};
 
+pub const MAX_RANGE_CHUNK_BYTES: u64 = 8 * 1024 * 1024; // 8 MiB range chunk cap
+
+pub fn matches_if_none_match(header_val: &str, current_etag: &str) -> bool {
+    let clean_current = current_etag
+        .trim()
+        .trim_start_matches("W/")
+        .trim()
+        .trim_matches('"');
+    for tag in header_val.split(',') {
+        let tag = tag.trim();
+        if tag == "*" {
+            return true;
+        }
+        let clean_tag = tag
+            .trim_start_matches("W/")
+            .trim()
+            .trim_matches('"');
+        if clean_tag == clean_current {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn decode_request_path(path_str: &str) -> String {
     let decoded = crate::commands::cache::percent_decode(path_str);
     #[cfg(windows)]
@@ -184,24 +208,27 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
 
     // 4. Conditional GET via ETag (304 Not Modified)
     if let Some(if_none_match) = req.headers().get("if-none-match") {
-        if if_none_match.as_bytes() == etag.as_bytes() {
-            return Response::builder()
-                .status(StatusCode::NOT_MODIFIED)
-                .header("ETag", &etag)
-                .header("Cache-Control", "public, max-age=31536000, immutable")
-                .header("Access-Control-Allow-Origin", "*")
-                .body(Vec::new())
-                .unwrap_or_else(|_| Response::new(Vec::new()));
+        if let Ok(val) = if_none_match.to_str() {
+            if matches_if_none_match(val, &etag) {
+                return Response::builder()
+                    .status(StatusCode::NOT_MODIFIED)
+                    .header("ETag", &etag)
+                    .header("Cache-Control", "public, max-age=86400, must-revalidate")
+                    .header("Access-Control-Allow-Origin", "*")
+                    .body(Vec::new())
+                    .unwrap_or_else(|_| Response::new(Vec::new()));
+            }
         }
     }
 
     let is_head = req.method() == "HEAD";
 
-    // 5. HTTP Range request handling (206 Partial Content)
+    // 5. HTTP Range request handling (206 Partial Content) with 8 MiB chunk capping
     if let Some(range_header) = req.headers().get("range") {
         if let Ok(range_str) = range_header.to_str() {
             if let Some((start, end)) = parse_range(range_str, total_size) {
-                let length = end - start + 1;
+                let capped_end = end.min(start.saturating_add(MAX_RANGE_CHUNK_BYTES - 1));
+                let length = capped_end - start + 1;
                 let body = if is_head {
                     Vec::new()
                 } else {
@@ -236,11 +263,11 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
                     .header("Content-Length", length.to_string())
                     .header(
                         "Content-Range",
-                        format!("bytes {}-{}/{}", start, end, total_size),
+                        format!("bytes {}-{}/{}", start, capped_end, total_size),
                     )
                     .header("Accept-Ranges", "bytes")
                     .header("ETag", &etag)
-                    .header("Cache-Control", "public, max-age=31536000, immutable")
+                    .header("Cache-Control", "public, max-age=86400, must-revalidate")
                     .header("Access-Control-Allow-Origin", "*")
                     .body(body)
                     .unwrap_or_else(|_| Response::new(Vec::new()));
@@ -276,7 +303,7 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
         .header("Content-Length", total_size.to_string())
         .header("Accept-Ranges", "bytes")
         .header("ETag", &etag)
-        .header("Cache-Control", "public, max-age=31536000, immutable")
+        .header("Cache-Control", "public, max-age=86400, must-revalidate")
         .header("Access-Control-Allow-Origin", "*")
         .body(body)
         .unwrap_or_else(|_| Response::new(Vec::new()))
@@ -347,5 +374,28 @@ mod tests {
         let path = PathBuf::from("C:\\Manga\\Title\\01.jpg");
         let url = path_to_mangaimg_url(&path);
         assert_eq!(url, "http://mangaimg.localhost/C%3A/Manga/Title/01.jpg");
+    }
+
+    #[test]
+    fn test_matches_if_none_match() {
+        let current = "\"12345-67890\"";
+
+        // Exact match
+        assert!(matches_if_none_match("\"12345-67890\"", current));
+
+        // Weak validator match
+        assert!(matches_if_none_match("W/\"12345-67890\"", current));
+
+        // List containing matching tag
+        assert!(matches_if_none_match("\"old-tag\", \"12345-67890\", \"other\"", current));
+        assert!(matches_if_none_match("\"old-tag\", W/\"12345-67890\"", current));
+
+        // Wildcard
+        assert!(matches_if_none_match("*", current));
+
+        // Mismatches
+        assert!(!matches_if_none_match("\"different\"", current));
+        assert!(!matches_if_none_match("W/\"different\"", current));
+        assert!(!matches_if_none_match("\"12345-67890-extra\"", current));
     }
 }

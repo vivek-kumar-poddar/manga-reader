@@ -655,7 +655,6 @@ function Library({
           </div>
           {library.length > 1 && (
             <label className="shelf-sort">
-              <span>Sort by</span>
               <Dropdown
                 aria-label="Sort manga shelf"
                 value={shelfSort}

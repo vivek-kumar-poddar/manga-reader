@@ -6,7 +6,6 @@ node_modules/
 # Build Outputs & Bundles
 dist/
 build/
-electron-dist/
 release/
 src-tauri/target/
 target/
@@ -16,6 +15,8 @@ target/
 *.deb
 *.app
 *.rpm
+*.o
+manifest.o
 
 # Testing & Coverage
 test-results/

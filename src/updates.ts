@@ -98,7 +98,7 @@ if (isDesktop && typeof window !== 'undefined') {
         announce();
       }
     } catch (e) {
-      console.debug('Desktop update check error:', e);
+      console.warn('Desktop update check error:', e);
     }
   };
 
