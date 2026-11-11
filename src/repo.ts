@@ -1,4 +1,4 @@
-import { type Manga, type Summary, type Position, type Settings } from './model';
+import { type Manga, type Summary, type Position, type Settings, defaults } from './model';
 import { parseSettings, validateBackup } from './validation';
 import { assertMangaLimits, assertAtMost, limits } from './limits';
 import { uniqueSlug } from './paths';
@@ -36,7 +36,8 @@ export interface LibraryRepo {
   resetProgress(): Promise<void>;
   getStoredSettings(): Promise<Settings | undefined>;
   saveStoredSettings(settings: Settings): Promise<Settings>;
-  restoreBackup(backup: { manga: Manga[]; settings: Settings }): Promise<Settings>;
+  exportBackup?(): Promise<string>;
+  restoreBackup(backup: { manga: Manga[]; settings: Settings } | string): Promise<Settings>;
 }
 
 export class TauriSqliteLibraryRepo implements LibraryRepo {
@@ -297,18 +298,56 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     return validated;
   }
 
-  async restoreBackup(backup: { manga: Manga[]; settings: Settings }): Promise<Settings> {
-    assertAtMost(backup.manga.length, limits.titles, 'Library titles in backup');
-    const validatedSettings = parseSettings(backup.settings);
-    for (const m of backup.manga) {
+  async exportBackup(): Promise<string> {
+    if (desktopAPI.exportBackup) {
+      return await desktopAPI.exportBackup();
+    }
+    const summaries = await this.listLibrary();
+    const results = await Promise.all(summaries.map((s) => this.getManga(s.id)));
+    const manga = results
+      .filter((m): m is Manga => Boolean(m))
+      .map(({ handle, cover, ...rest }) => rest);
+    const settings = (await this.getStoredSettings()) ?? defaults;
+    return JSON.stringify({ version: 2, manga, settings });
+  }
+
+  async restoreBackup(backup: { manga: Manga[]; settings: Settings } | string): Promise<Settings> {
+    if (typeof backup === 'string') {
+      if (desktopAPI.restoreBackup) {
+        const validatedSettings = await desktopAPI.restoreBackup(backup);
+        this.invalidateCaches();
+        notifyDelete();
+        broadcastSync({ type: 'library' });
+        return validatedSettings;
+      }
+      backup = JSON.parse(backup);
+    }
+
+    if (desktopAPI.restoreBackup) {
+      const jsonStr = JSON.stringify({
+        version: 2,
+        manga: (backup as { manga: Manga[]; settings: Settings }).manga,
+        settings: (backup as { manga: Manga[]; settings: Settings }).settings,
+      });
+      const validatedSettings = await desktopAPI.restoreBackup(jsonStr);
+      this.invalidateCaches();
+      notifyDelete();
+      broadcastSync({ type: 'library' });
+      return validatedSettings;
+    }
+
+    const payload = backup as { manga: Manga[]; settings: Settings };
+    assertAtMost(payload.manga.length, limits.titles, 'Library titles in backup');
+    const validatedSettings = parseSettings(payload.settings);
+    for (const m of payload.manga) {
       assertMangaLimits(m);
     }
     const existing = new Map<string, Manga>();
-    for (const m of backup.manga) {
+    for (const m of payload.manga) {
       const ex = await this.getManga(m.id);
       if (ex) existing.set(m.id, ex);
     }
-    const preparedManga: Manga[] = backup.manga.map((m) => {
+    const preparedManga: Manga[] = payload.manga.map((m) => {
       const ex = existing.get(m.id);
       return {
         ...m,
@@ -327,7 +366,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       });
     }
     if (desktopAPI.saveThumbnail) {
-      for (const m of backup.manga) {
+      for (const m of payload.manga) {
         if (m.cover instanceof Blob) {
           try {
             const ab = await m.cover.arrayBuffer();

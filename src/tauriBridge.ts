@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { Manga, Summary, Position, Settings } from './model';
 
@@ -73,6 +73,49 @@ export interface ListFolderOptions {
   scanId?: string;
   signal?: AbortSignal;
   onProgress?: (progress: ScanProgress) => void;
+}
+
+export interface IndexScanProgress {
+  phase: string;
+  done: number;
+  total: number;
+  title: string;
+}
+
+export interface IndexTitleDto {
+  id: string;
+  title: string;
+  slug: string;
+  localPath: string;
+  lastChapter: number;
+  addedAt: number;
+  updatedAt: number;
+  revision: number;
+  sort: string;
+  chapters: Array<{
+    name: string;
+    read: boolean;
+    position?: Position;
+    bookmarks: Position[];
+    pages: Array<{
+      name: string;
+      path: string;
+      width: number;
+      height: number;
+      size?: number;
+      modified?: number;
+      dimensionsPending: boolean;
+    }>;
+  }>;
+  coverPath?: string;
+  issues: Array<{ path: string; reason: string }>;
+  reused: number;
+}
+
+export interface IndexTitleOptions {
+  sort?: 'natural' | 'name' | 'reverse';
+  previous?: Manga;
+  warmChapters?: number;
 }
 
 export interface FsErrorPayload {
@@ -164,6 +207,14 @@ export interface DesktopAPI {
   sqliteResetProgress?(): Promise<void>;
   sqliteGetSettings?(): Promise<Settings | undefined>;
   sqliteSaveSettings?(settings: Settings): Promise<Settings>;
+  exportBackup?(): Promise<string>;
+  restoreBackup?(backupJson: string): Promise<Settings>;
+  validateBackup?(backupJson: string): Promise<unknown>;
+  indexTitle?(
+    root: string,
+    options?: IndexTitleOptions,
+    onProgress?: (progress: IndexScanProgress) => void,
+  ): Promise<IndexTitleDto>;
 }
 
 // Detect Tauri runtime presence
@@ -651,6 +702,64 @@ export class TauriDesktopBridge implements DesktopAPI {
     await invoke('sqlite_save_settings', { settings });
     return settings;
   }
+
+  async exportBackup(): Promise<string> {
+    return await invoke<string>('export_library_backup');
+  }
+
+  async restoreBackup(backupJson: string): Promise<Settings> {
+    return await invoke<Settings>('restore_library_backup', { backupJson });
+  }
+
+  async validateBackup(backupJson: string): Promise<unknown> {
+    return await invoke('validate_library_backup', { backupJson });
+  }
+
+  async indexTitle(
+    root: string,
+    options?: IndexTitleOptions,
+    onProgress?: (progress: IndexScanProgress) => void,
+  ): Promise<IndexTitleDto> {
+    const channel = new Channel<IndexScanProgress>();
+    if (onProgress) {
+      channel.onmessage = onProgress;
+    }
+    return await invoke<IndexTitleDto>('index_title', {
+      root,
+      options: options
+        ? {
+            sort: options.sort,
+            warmChapters: options.warmChapters,
+            previous: options.previous
+              ? {
+                  id: options.previous.id,
+                  title: options.previous.title,
+                  slug: options.previous.slug,
+                  lastChapter: options.previous.lastChapter,
+                  addedAt: options.previous.addedAt,
+                  revision: options.previous.revision,
+                  chapters: options.previous.chapters.map((c) => ({
+                    name: c.name,
+                    read: c.read,
+                    position: c.position,
+                    bookmarks: c.bookmarks,
+                    pages: c.pages.map((p) => ({
+                      name: p.name,
+                      path: p.path,
+                      width: p.width,
+                      height: p.height,
+                      size: p.size,
+                      modified: p.modified,
+                      dimensionsPending: p.dimensionsPending,
+                    })),
+                  })),
+                }
+              : undefined,
+          }
+        : undefined,
+      onProgress: channel,
+    });
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -784,6 +893,22 @@ class WebDesktopBridge implements DesktopAPI {
 
   async sqliteSaveSettings(settings: Settings): Promise<Settings> {
     return settings;
+  }
+
+  async exportBackup(): Promise<string> {
+    return '';
+  }
+
+  async restoreBackup(): Promise<Settings> {
+    return {} as Settings;
+  }
+
+  async validateBackup(): Promise<unknown> {
+    return null;
+  }
+
+  async indexTitle(): Promise<IndexTitleDto> {
+    throw new Error('indexTitle is only available in desktop environment.');
   }
 }
 

@@ -3,6 +3,7 @@ use fast_image_resize::images::Image;
 use fast_image_resize::PixelType;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::io::Cursor;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use tauri::{AppHandle, Manager};
 
@@ -143,6 +144,9 @@ pub async fn generate_thumbnail(
 
             let bytes = resize_image_fir(decoded, target_w, target_h)?;
 
+            if let Some(parent) = thumb_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
             // Save to native thumbnail cache atomically
             let _ = crate::commands::fs::write_atomic(&thumb_path, &bytes);
 
@@ -153,6 +157,63 @@ pub async fn generate_thumbnail(
     .map_err(|e| format!("Task join error: {e}"))??;
 
     Ok(tauri::ipc::Response::new(encoded_bytes))
+}
+
+pub fn generate_thumbnail_direct(
+    app: &AppHandle,
+    resolved: &Path,
+    id: &str,
+) -> Result<PathBuf, String> {
+    let (w, h) = crate::commands::fs::parse_image_dimensions(resolved);
+    if let (Some(width), Some(height)) = (w, h) {
+        if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+            return Err(format!(
+                "Image dimensions ({width}x{height}) exceed maximum allowed side of {MAX_IMAGE_SIDE}"
+            ));
+        }
+        if (width as u64 * height as u64) > MAX_IMAGE_PIXELS {
+            return Err("Image pixel area exceeds 16M pixel limit".into());
+        }
+    }
+
+    let thumb_path = crate::commands::cache::get_thumbnail_path(app, id)?;
+
+    IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
+        let reader = image::ImageReader::open(resolved)
+            .map_err(|e| format!("Failed to open image file: {e}"))?
+            .with_guessed_format()
+            .map_err(|e| format!("Failed to determine image format: {e}"))?;
+
+        let decoded = reader
+            .decode()
+            .map_err(|e| format!("Failed to decode image: {e}"))?;
+
+        let (src_w, src_h) = (decoded.width(), decoded.height());
+        if src_w > MAX_IMAGE_SIDE
+            || src_h > MAX_IMAGE_SIDE
+            || (src_w as u64 * src_h as u64) > MAX_IMAGE_PIXELS
+        {
+            return Err("Decoded image exceeds 16M pixel limit".into());
+        }
+
+        let (target_w, target_h) = calculate_fitted_dimensions(
+            src_w,
+            src_h,
+            THUMBNAIL_MAX_WIDTH,
+            THUMBNAIL_MAX_HEIGHT,
+        );
+
+        let bytes = resize_image_fir(decoded, target_w, target_h)?;
+
+        if let Some(parent) = thumb_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = crate::commands::fs::write_atomic(&thumb_path, &bytes);
+
+        Ok(())
+    })?;
+
+    Ok(thumb_path)
 }
 
 #[tauri::command]

@@ -36,6 +36,10 @@ fn main() {
       "sqlite_reset_progress",
       "sqlite_get_settings",
       "sqlite_save_settings",
+      "validate_library_backup",
+      "export_library_backup",
+      "restore_library_backup",
+      "index_title",
     ]));
   tauri_build::try_build(attributes).expect("failed to run tauri-build");
 

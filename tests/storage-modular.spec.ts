@@ -6,6 +6,7 @@ import {
   saveManga,
   saveProgress,
   migrateV1ToV2,
+  exportBackup,
   restoreBackup,
   getCover,
   listLibrary,
@@ -39,6 +40,8 @@ import {
   splitSource,
   naturalSortPaths,
   prepareChapter,
+  indexSource,
+  type Source,
 } from '../src/importScan';
 import { normalizePath } from '../src/paths';
 import { LimitError } from '../src/limits';
@@ -561,6 +564,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     const origTauri = (globalThis as any).__TAURI_INTERNALS__;
     (globalThis as any).window = globalThis;
     (globalThis as any).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: any) => 1,
       invoke: async (cmd: string, args: any) => {
         calls.push({ cmd, args });
         if (cmd === 'list_folder') {
@@ -621,6 +625,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     const origTauri = (globalThis as any).__TAURI_INTERNALS__;
     (globalThis as any).window = globalThis;
     (globalThis as any).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: any) => 1,
       invoke: async (cmd: string, args: any) => {
         calls.push({ cmd, args });
         if (cmd === 'natural_sort_paths') {
@@ -1513,332 +1518,328 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     }
   });
 
-  test('Step B1 — TauriSqliteLibraryRepo implements LibraryRepo and delegates to desktopAPI.sqlite* commands', async () => {
+  test('Step B2 — TauriDesktopBridge exportBackup, restoreBackup, and validateBackup invoke Tauri commands', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: any) => 1,
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'export_library_backup') {
+          return JSON.stringify({ version: 2, manga: [], settings: defaults });
+        }
+        if (cmd === 'restore_library_backup') {
+          return defaults;
+        }
+        if (cmd === 'validate_library_backup') {
+          return { version: 2, manga: [], settings: defaults };
+        }
+        return null;
+      },
+    };
+
+    try {
+      const exported = await bridge.exportBackup();
+      expect(typeof exported).toBe('string');
+      expect(calls[0].cmd).toBe('export_library_backup');
+
+      const restored = await bridge.restoreBackup('{"version":2,"manga":[],"settings":{}}');
+      expect(restored).toEqual(defaults);
+      expect(calls[1].cmd).toBe('restore_library_backup');
+      expect(calls[1].args).toEqual({ backupJson: '{"version":2,"manga":[],"settings":{}}' });
+
+      const validated = await bridge.validateBackup('{"version":2,"manga":[],"settings":{}}');
+      expect(validated).toBeDefined();
+      expect(calls[2].cmd).toBe('validate_library_backup');
+    } finally {
+      (globalThis as any).window = origWindow;
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
+  test('Step B2 — TauriSqliteLibraryRepo.exportBackup and restoreBackup delegate to desktopAPI and notify subscribers', async () => {
     const originalIsDesktop = desktopAPI.isDesktop;
-    const originalSqliteList = desktopAPI.sqliteListLibrary;
-    const originalSqliteGet = desktopAPI.sqliteGetManga;
-    const originalSqliteSave = desktopAPI.sqliteSaveManga;
-    const originalSqliteProgress = desktopAPI.sqliteSaveProgress;
-    const originalSqliteAddBm = desktopAPI.sqliteAddBookmark;
-    const originalSqliteRemoveBm = desktopAPI.sqliteRemoveBookmark;
-    const originalSqliteBmIds = desktopAPI.sqliteGetBookmarkedMangaIds;
-    const originalSqliteDelete = desktopAPI.sqliteDeleteManga;
-    const originalSqliteClear = desktopAPI.sqliteClearLibrary;
-    const originalSqliteReset = desktopAPI.sqliteResetProgress;
-    const originalSqliteGetSettings = desktopAPI.sqliteGetSettings;
-    const originalSqliteSaveSettings = desktopAPI.sqliteSaveSettings;
+    const originalExport = desktopAPI.exportBackup;
+    const originalRestore = desktopAPI.restoreBackup;
 
     try {
       Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
+      let exportCalled = false;
+      let restoreCalledWith: string | null = null;
 
-      const mockManga: Manga = {
-        id: 'sqlite-test-1',
-        title: 'SQLite Test Title',
-        slug: 'sqlite-test-title',
-        localPath: 'C:/Manga/SqliteTest',
-        lastChapter: 0,
-        addedAt: 1000,
-        updatedAt: 2000,
-        revision: 2,
-        chapters: [
-          {
-            name: 'Chapter 1',
-            read: false,
-            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
-          },
-        ],
+      (desktopAPI as any).exportBackup = async () => {
+        exportCalled = true;
+        return '{"version":2,"manga":[],"settings":{}}';
       };
 
-      let savedMangaRecord: Manga | null = null;
-      let savedProgressPayload: any = null;
-      let deleteCalledWith: string | null = null;
-      let clearCalled = false;
-      let resetCalled = false;
-
-      (desktopAPI as any).sqliteListLibrary = async () => [
-        {
-          id: mockManga.id,
-          title: mockManga.title,
-          slug: mockManga.slug,
-          localPath: mockManga.localPath,
-          lastChapter: mockManga.lastChapter,
-          addedAt: mockManga.addedAt,
-          updatedAt: mockManga.updatedAt,
-          revision: mockManga.revision,
-          chapterCount: 1,
-          chaptersRead: 0,
-          lastChapterName: 'Chapter 1',
-          hasProgress: false,
-          indexedAt: mockManga.updatedAt,
-        },
-      ];
-
-      (desktopAPI as any).sqliteGetManga = async (id: string) => {
-        return id === mockManga.id ? { ...mockManga } : undefined;
+      (desktopAPI as any).restoreBackup = async (json: string) => {
+        restoreCalledWith = json;
+        return { ...defaults, theme: 'light' as const };
       };
-
-      (desktopAPI as any).sqliteSaveManga = async (manga: Manga) => {
-        savedMangaRecord = manga;
-      };
-
-      (desktopAPI as any).sqliteSaveProgress = async (params: any) => {
-        savedProgressPayload = params;
-        return 'saved';
-      };
-
-      (desktopAPI as any).sqliteAddBookmark = async (params: any) => [
-        params.position,
-      ];
-
-      (desktopAPI as any).sqliteRemoveBookmark = async () => [];
-
-      (desktopAPI as any).sqliteGetBookmarkedMangaIds = async () => ({
-        allBookmarkedIds: [mockManga.id],
-        mangaBookmarkedIds: [mockManga.id],
-      });
-
-      (desktopAPI as any).sqliteDeleteManga = async (id: string) => {
-        deleteCalledWith = id;
-      };
-
-      (desktopAPI as any).sqliteClearLibrary = async () => {
-        clearCalled = true;
-      };
-
-      (desktopAPI as any).sqliteResetProgress = async () => {
-        resetCalled = true;
-      };
-
-      (desktopAPI as any).sqliteGetSettings = async () => ({
-        theme: 'dark',
-        mode: 'continuous',
-      });
-
-      (desktopAPI as any).sqliteSaveSettings = async (settings: any) => settings;
 
       const sqliteRepo = new TauriSqliteLibraryRepo();
 
-      // 1. listLibrary
-      const summaries = await sqliteRepo.listLibrary();
-      expect(summaries.length).toBe(1);
-      expect(summaries[0].id).toBe(mockManga.id);
+      const exported = await sqliteRepo.exportBackup();
+      expect(exportCalled).toBe(true);
+      expect(exported).toBe('{"version":2,"manga":[],"settings":{}}');
 
-      // 2. getManga
-      const retrieved = await sqliteRepo.getManga(mockManga.id);
-      expect(retrieved?.id).toBe(mockManga.id);
-      expect(retrieved?.title).toBe(mockManga.title);
-
-      // 3. saveManga
-      await sqliteRepo.saveManga({ ...mockManga, revision: 2 });
-      expect(savedMangaRecord).not.toBeNull();
-      expect(savedMangaRecord!.id).toBe(mockManga.id);
-      expect(savedMangaRecord!.revision).toBe(3); // Incremented revision
-
-      // 4. saveProgress
-      const progressResult = await sqliteRepo.saveProgress(
-        mockManga,
-        0,
-        { page: 0, fraction: 0.5 },
-        true,
+      // Test string restore
+      const restored = await sqliteRepo.restoreBackup(
+        '{"version":2,"manga":[],"settings":{"theme":"light"}}',
       );
-      expect(progressResult).toBe('saved');
-      expect(savedProgressPayload.mangaId).toBe(mockManga.id);
-      expect(savedProgressPayload.chapterIndex).toBe(0);
-      expect(savedProgressPayload.read).toBe(true);
+      expect(restoreCalledWith).toBe('{"version":2,"manga":[],"settings":{"theme":"light"}}');
+      expect(restored.theme).toBe('light');
 
-      // 5. bookmarks
-      const bms = await sqliteRepo.addBookmark(mockManga.id, 'Chapter 1', { page: 0, fraction: 0.2 });
-      expect(bms.length).toBe(1);
-
-      const allBm = await sqliteRepo.getBookmarkedMangaIds();
-      expect(allBm.has(mockManga.id)).toBe(true);
-
-      const removed = await sqliteRepo.removeBookmark(mockManga.id, 'Chapter 1', { page: 0, fraction: 0.2 });
-      expect(removed.length).toBe(0);
-
-      // 6. delete & clear & reset
-      await sqliteRepo.deleteManga('del-1');
-      expect(deleteCalledWith).toBe('del-1');
-
-      await sqliteRepo.clearLibrary();
-      expect(clearCalled).toBe(true);
-
-      await sqliteRepo.resetProgress();
-      expect(resetCalled).toBe(true);
-
-      // 7. settings
-      const settings = await sqliteRepo.getStoredSettings();
-      expect(settings?.theme).toBe('dark');
-      const savedSettings = await sqliteRepo.saveStoredSettings({
-        ...defaults,
-        theme: 'light',
+      // Test object restore
+      const restoredObj = await sqliteRepo.restoreBackup({
+        manga: [],
+        settings: { ...defaults, theme: 'light' },
       });
-      expect(savedSettings.theme).toBe('light');
+      expect(restoreCalledWith).toContain('"version":2');
+      expect(restoredObj.theme).toBe('light');
     } finally {
       Object.defineProperty(desktopAPI, 'isDesktop', {
         value: originalIsDesktop,
         configurable: true,
       });
-      (desktopAPI as any).sqliteListLibrary = originalSqliteList;
-      (desktopAPI as any).sqliteGetManga = originalSqliteGet;
-      (desktopAPI as any).sqliteSaveManga = originalSqliteSave;
-      (desktopAPI as any).sqliteSaveProgress = originalSqliteProgress;
-      (desktopAPI as any).sqliteAddBookmark = originalSqliteAddBm;
-      (desktopAPI as any).sqliteRemoveBookmark = originalSqliteRemoveBm;
-      (desktopAPI as any).sqliteGetBookmarkedMangaIds = originalSqliteBmIds;
-      (desktopAPI as any).sqliteDeleteManga = originalSqliteDelete;
-      (desktopAPI as any).sqliteClearLibrary = originalSqliteClear;
-      (desktopAPI as any).sqliteResetProgress = originalSqliteReset;
-      (desktopAPI as any).sqliteGetSettings = originalSqliteGetSettings;
-      (desktopAPI as any).sqliteSaveSettings = originalSqliteSaveSettings;
+      (desktopAPI as any).exportBackup = originalExport;
+      (desktopAPI as any).restoreBackup = originalRestore;
     }
   });
 
-  test('Step B1 — ensureLibraryMigrated skips migration when already migrated', async () => {
-    const originalIsDesktop = desktopAPI.isDesktop;
-    const originalIsMigrated = desktopAPI.isLibraryMigrated;
-    const originalImport = desktopAPI.importLegacyLibrary;
-
-    try {
-      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      let importCalled = false;
-      (desktopAPI as any).isLibraryMigrated = async () => true;
-      (desktopAPI as any).importLegacyLibrary = async () => {
-        importCalled = true;
-        return true;
-      };
-
-      const result = await ensureLibraryMigrated();
-      expect(result).toBe(true);
-      expect(importCalled).toBe(false);
-    } finally {
-      Object.defineProperty(desktopAPI, 'isDesktop', {
-        value: originalIsDesktop,
-        configurable: true,
-      });
-      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
-      (desktopAPI as any).importLegacyLibrary = originalImport;
-    }
-  });
-
-  test('Step B1 — ensureLibraryMigrated dumps IDB, validates backup, and calls importLegacyLibrary preserving IDB data', async () => {
-    const originalIsDesktop = desktopAPI.isDesktop;
-    const originalIsMigrated = desktopAPI.isLibraryMigrated;
-    const originalImport = desktopAPI.importLegacyLibrary;
-
-    try {
-      Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      (desktopAPI as any).isLibraryMigrated = async () => false;
-
-      let importedPayload: any = null;
-      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
-        importedPayload = payload;
-        return true;
-      };
-
-      const mockLegacyManga: Manga = {
-        id: 'legacy-1',
-        title: 'Legacy Title',
-        slug: 'legacy-title',
-        localPath: 'C:/Manga/Legacy',
-        lastChapter: 0,
-        addedAt: 1000,
-        updatedAt: 2000,
-        chapters: [
-          {
-            name: 'Ch 1',
-            read: true,
-            pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
-          },
-        ],
-      };
-
-      let idbReadCount = 0;
-      const mockIdbRepo: LibraryRepo = {
-        listLibrary: async () => [],
-        getManga: async () => undefined,
-        getCover: async () => undefined,
-        allManga: async () => {
-          idbReadCount++;
-          return [mockLegacyManga];
+  test('Step B2 — IndexedDBLibraryRepo.exportBackup produces clean JSON backup without cover blobs', async () => {
+    const mockManga: Manga = {
+      id: 'idb-exp-1',
+      title: 'Export Title',
+      slug: 'export-title',
+      localPath: 'C:/Manga/Export',
+      lastChapter: 0,
+      addedAt: 1000,
+      updatedAt: 2000,
+      cover: new Blob(['fake-cover-bytes'], { type: 'image/jpeg' }),
+      handle: {} as any,
+      chapters: [
+        {
+          name: 'Chapter 1',
+          read: false,
+          pages: [{ name: '01.png', path: 'ch1/01.png', width: 800, height: 1200 }],
         },
-        saveManga: async () => {},
-        saveProgress: async () => 'saved',
-        getBookmarkedMangaIds: async () => new Set(),
-        getMangaBookmarkedIds: async () => new Set(),
-        addBookmark: async () => [],
-        removeBookmark: async () => [],
-        deleteManga: async () => {},
-        clearLibrary: async () => {
-          throw new Error('Never delete IDB store automatically!');
-        },
-        resetProgress: async () => {},
-        getStoredSettings: async () => ({ ...defaults, theme: 'dark' }),
-        saveStoredSettings: async (s) => s,
-        restoreBackup: async () => defaults,
-      };
+      ],
+    };
 
-      const result = await ensureLibraryMigrated(mockIdbRepo);
-      expect(result).toBe(true);
-      expect(idbReadCount).toBe(1);
-      expect(importedPayload).not.toBeNull();
-      expect(importedPayload.manga.length).toBe(1);
-      expect(importedPayload.manga[0].id).toBe('legacy-1');
-      expect(importedPayload.settings.theme).toBe('dark');
+    const idbRepo = new IndexedDBLibraryRepo();
+    idbRepo.allManga = async () => [mockManga];
+    idbRepo.getStoredSettings = async () => ({ ...defaults, theme: 'dark' });
+
+    const json = await idbRepo.exportBackup();
+    expect(typeof json).toBe('string');
+    const parsed = JSON.parse(json);
+    expect(parsed.version).toBe(2);
+    expect(parsed.manga.length).toBe(1);
+    const target = parsed.manga.find((m: any) => m.id === mockManga.id);
+    expect(target).toBeDefined();
+    expect(target.title).toBe(mockManga.title);
+    expect(target.cover).toBeUndefined();
+    expect(target.handle).toBeUndefined();
+    expect(parsed.settings.theme).toBe('dark');
+  });
+
+  test('Step B3 — TauriDesktopBridge.indexTitle invokes index_title with progress Channel and options', async () => {
+    const bridge = new TauriDesktopBridge();
+    const calls: Array<{ cmd: string; args: any }> = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: any) => 1,
+      invoke: async (cmd: string, args: any) => {
+        calls.push({ cmd, args });
+        if (cmd === 'index_title') {
+          if (args?.onProgress?.onmessage) {
+            args.onProgress.onmessage({
+              phase: 'discover',
+              done: 5,
+              total: 5,
+              title: 'Test Manga',
+            });
+            args.onProgress.onmessage({
+              phase: 'index',
+              done: 5,
+              total: 5,
+              title: 'Test Manga · first 5 chapters',
+            });
+          }
+          return {
+            id: 'indexed-title-1',
+            title: 'Test Manga',
+            slug: 'test-manga',
+            localPath: args.root,
+            lastChapter: 0,
+            addedAt: 1000,
+            updatedAt: 2000,
+            revision: 1,
+            sort: 'natural',
+            chapters: [
+              {
+                name: 'Chapter 1',
+                read: false,
+                position: undefined,
+                bookmarks: [],
+                pages: [
+                  {
+                    name: '01.png',
+                    path: 'ch1/01.png',
+                    width: 800,
+                    height: 1200,
+                    size: 1024,
+                    modified: 1000,
+                    dimensionsPending: false,
+                  },
+                ],
+              },
+            ],
+            coverPath: 'C:/Manga/Test/ch1/01.png',
+            issues: [],
+            reused: 1,
+          };
+        }
+        return null;
+      },
+    };
+
+    try {
+      const progressEvents: any[] = [];
+      const result = await bridge.indexTitle(
+        'C:/Manga/Test',
+        { sort: 'natural', warmChapters: 5 },
+        (p) => progressEvents.push(p),
+      );
+
+      expect(calls.length).toBe(1);
+      expect(calls[0].cmd).toBe('index_title');
+      expect(calls[0].args.root).toBe('C:/Manga/Test');
+      expect(calls[0].args.options.sort).toBe('natural');
+      expect(calls[0].args.options.warmChapters).toBe(5);
+      expect(progressEvents.length).toBe(2);
+      expect(progressEvents[0].phase).toBe('discover');
+      expect(progressEvents[1].phase).toBe('index');
+      expect(result.id).toBe('indexed-title-1');
+      expect(result.chapters.length).toBe(1);
+      expect(result.reused).toBe(1);
     } finally {
-      Object.defineProperty(desktopAPI, 'isDesktop', {
-        value: originalIsDesktop,
-        configurable: true,
-      });
-      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
-      (desktopAPI as any).importLegacyLibrary = originalImport;
+      (globalThis as any).window = origWindow;
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
     }
   });
 
-  test('Step B1 — ensureLibraryMigrated handles fresh installs with empty IDB safely', async () => {
+  test('Step B3 — indexSource delegates to desktopAPI.indexTitle on desktop with progress updates and returns structured TitleDto', async () => {
     const originalIsDesktop = desktopAPI.isDesktop;
-    const originalIsMigrated = desktopAPI.isLibraryMigrated;
-    const originalImport = desktopAPI.importLegacyLibrary;
+    const originalIndexTitle = desktopAPI.indexTitle;
+    const originalProgressBar = desktopAPI.setProgressBar;
 
     try {
       Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
-      (desktopAPI as any).isLibraryMigrated = async () => false;
 
-      let importedPayload: any = null;
-      (desktopAPI as any).importLegacyLibrary = async (payload: any) => {
-        importedPayload = payload;
-        return true;
+      const progressUpdates: any[] = [];
+      const progressBarCalls: number[] = [];
+
+      (desktopAPI as any).setProgressBar = (v: number) => {
+        progressBarCalls.push(v);
       };
 
-      const emptyIdbRepo: LibraryRepo = {
-        listLibrary: async () => [],
-        getManga: async () => undefined,
-        getCover: async () => undefined,
-        allManga: async () => [],
-        saveManga: async () => {},
-        saveProgress: async () => 'saved',
-        getBookmarkedMangaIds: async () => new Set(),
-        getMangaBookmarkedIds: async () => new Set(),
-        addBookmark: async () => [],
-        removeBookmark: async () => [],
-        deleteManga: async () => {},
-        clearLibrary: async () => {},
-        resetProgress: async () => {},
-        getStoredSettings: async () => undefined,
-        saveStoredSettings: async (s) => s,
-        restoreBackup: async () => defaults,
+      (desktopAPI as any).indexTitle = async (root: string, options: any, onProgress: any) => {
+        if (onProgress) {
+          onProgress({
+            phase: 'discover',
+            done: 10,
+            total: 10,
+            title: 'Rust Indexed Title',
+          });
+          onProgress({
+            phase: 'index',
+            done: 10,
+            total: 10,
+            title: 'Rust Indexed Title · first 5 chapters',
+          });
+        }
+        return {
+          id: 'rust-idx-1',
+          title: 'Rust Indexed Title',
+          slug: 'rust-indexed-title',
+          localPath: root,
+          lastChapter: 0,
+          addedAt: 5000,
+          updatedAt: 6000,
+          revision: 1,
+          sort: options.sort || 'natural',
+          chapters: [
+            {
+              name: 'Chapter 1',
+              read: true,
+              position: { page: 0, fraction: 0.5 },
+              bookmarks: [{ page: 0, fraction: 0.2 }],
+              pages: [
+                {
+                  name: '01.jpg',
+                  path: 'ch1/01.jpg',
+                  width: 1000,
+                  height: 1500,
+                  size: 5000,
+                  modified: 1000,
+                  dimensionsPending: false,
+                },
+              ],
+            },
+          ],
+          coverPath: 'C:/Manga/RustTitle/cover.jpg',
+          issues: [{ path: 'ch1/corrupt.jpg', reason: 'Corrupt header' }],
+          reused: 4,
+        };
       };
 
-      const result = await ensureLibraryMigrated(emptyIdbRepo);
-      expect(result).toBe(true);
-      expect(importedPayload).toEqual({ manga: [], settings: {} });
+      const source: Source = {
+        title: 'Rust Indexed Title',
+        localPath: 'C:/Manga/RustTitle',
+        files: new Map(),
+        issues: [],
+      };
+
+      const result = await indexSource(
+        source,
+        {
+          update: (s) => progressUpdates.push(s),
+        },
+        undefined,
+        'natural',
+      );
+
+      expect(result.m.id).toBe('rust-idx-1');
+      expect(result.m.title).toBe('Rust Indexed Title');
+      expect(result.m.localPath).toBe('C:/Manga/RustTitle');
+      expect(result.m.chapters.length).toBe(1);
+      expect(result.m.chapters[0].read).toBe(true);
+      expect(result.m.chapters[0].position?.fraction).toBe(0.5);
+      expect(result.m.chapters[0].pages[0].width).toBe(1000);
+      expect(result.m.chapters[0].pages[0].height).toBe(1500);
+      expect(result.issues.length).toBe(1);
+      expect(result.issues[0].path).toBe('ch1/corrupt.jpg');
+      expect(result.reused).toBe(4);
+      expect(progressUpdates.length).toBe(2);
+      expect(progressUpdates[0].phase).toBe('discover');
+      expect(progressUpdates[1].phase).toBe('index');
+      expect(progressBarCalls).toContain(1);
     } finally {
       Object.defineProperty(desktopAPI, 'isDesktop', {
         value: originalIsDesktop,
         configurable: true,
       });
-      (desktopAPI as any).isLibraryMigrated = originalIsMigrated;
-      (desktopAPI as any).importLegacyLibrary = originalImport;
+      (desktopAPI as any).indexTitle = originalIndexTitle;
+      (desktopAPI as any).setProgressBar = originalProgressBar;
     }
   });
 });

@@ -1854,3 +1854,116 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run test:validation`: **92/92 unit tests PASS** (1.5s).
   - `npm run build`: **PASS** (Vite production bundle built in 3.45s).
   - `npm run format:check`: **PASS** (All matched files use Prettier code style).
+
+## Step B2 & Step 16 — Validation and Backup in Rust & Zero Cover Overhead Export — 2026-11-11
+
+- **Rust Serde Validation Engine (`src-tauri/src/validation.rs`)**:
+  - Implemented strict allowlisted deserialization structs with `#[serde(deny_unknown_fields)]`: `ValidatedPage`, `ValidatedPosition`, `ValidatedChapter`, `ValidatedManga`, `ValidatedSettings`, and `BackupPayload`.
+  - Added `validate_relative_path` preventing path traversal (`..`, absolute paths, leading/trailing slashes, null bytes, control characters, depth > 64, path length > 4096).
+  - Added duplicate page path and duplicate manga ID checks.
+  - Enforced operational hard caps (`limits::titles`, `limits::chapters`, `limits::pages`, `MAX_IMAGE_DIMENSION = 32768`, `MAX_IMAGE_AREA = 16_777_216`).
+  - Added 6 unit tests in `validation::tests`: traversal rejection, valid backup roundtrip, unknown field rejection (`deny_unknown_fields`), invalid version rejection, duplicate page rejection, duplicate ID rejection.
+- **Relational Backup Export & Atomic Restore in SQLite (`src-tauri/src/db.rs`, `src-tauri/build.rs`, `src-tauri/capabilities/default.json`)**:
+  - Implemented `export_backup_json(conn)`: queries relational tables in SQLite (`manga`, `chapters`, `pages`, `progress`, `bookmarks`, `settings`) and serializes directly to a version 2 JSON backup payload. Cover blobs are NOT loaded into memory, resolving `re-code.txt` Step 16.
+  - Implemented `restore_backup_tx(conn, backup_json)`: validates JSON with `validate_backup_json`, preserves existing `local_path` and `slug` on collisions, writes all records in a single atomic transaction, and updates settings.
+  - Registered 3 Tauri commands in `build.rs`, `capabilities/default.json`, `lib.rs`, and `db.rs`:
+    - `validate_library_backup`, `export_library_backup`, `restore_library_backup`.
+- **Frontend Integration & Multi-Backend Backup (`src/tauriBridge.ts`, `src/repo.ts`, `src/storage.ts`, `src/SettingsPanel.tsx`)**:
+  - Extended `DesktopAPI` with `exportBackup()`, `restoreBackup(backupJson)`, and `validateBackup(backupJson)`.
+  - Added `exportBackup()` to `LibraryRepo`, implemented in `TauriSqliteLibraryRepo` and `IndexedDBLibraryRepo`.
+  - In `SettingsPanel.tsx`, updated `exportData()` and `importData()` to invoke native Rust commands when running on desktop (`desktopAPI.isDesktop`), falling back to `LibraryRepo` on web.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **27/27 unit tests PASS** (including 7 new validation and export/restore tests).
+  - `npm run test:validation`: **95/95 unit tests PASS** (including 3 new Step B2 tests in `tests/storage-modular.spec.ts`).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.52s).
+  - `npm run format:check`: **PASS**.
+
+## Step B3 — Put Indexing Fully in Rust (`importScan.ts`) — 2026-11-11
+
+- **Native Parallel Indexing Engine (`src-tauri/src/commands/indexing.rs`, `src-tauri/src/commands/image.rs`)**:
+  - Implemented `index_title(app, root, options, on_progress: Channel<ScanProgress>) -> Result<TitleDto, String>`.
+  - Recursive folder scanning respecting security bounds (`MAX_DEPTH = 64`, `MAX_SCAN_FILES = 100,000`, `AllowedRoots`, allowlisted image extensions, ignored junk directories).
+  - Streaming progress updates via `tauri::ipc::Channel<ScanProgress>` (no global event listeners or `scanId` tracking).
+  - Chapter grouping: maps subdirectories into chapters (`"Subfolder / Subfolder"`) and root files into `"Root pages"`. Automatically detects root cover/thumbnail files.
+  - Dimension reuse from `previous` manga record: checks matching `path`, `size`, and `modified` (mtime ms). When unchanged, dimensions are reused instantly without disk re-reads (`reused` counter tracked).
+  - Warm chapter batch dimension parsing: runs parallel header parsing across the Rayon thread pool (`parse_image_dimensions`) for the first 5 chapters (default).
+  - Re-link matching:
+    - Matches chapters by exact name.
+    - Matches renamed chapters by comparing page signature sets (`name\0size\0modified`).
+    - Maps saved reading positions and bookmarks using `matching_position` (path-first with filename fallback and clamping).
+    - Preserves chapter `read` state when all page names match.
+  - Cover & thumbnail generation: detects cover image or first page, invokes `generate_thumbnail_direct` to encode WebP thumbnail atomically on disk (`cache/thumbnails/{manga_id}.webp`).
+  - URL slug generation: deterministic ASCII/Unicode hyphenated slugs (`generate_slug`).
+  - Unit tests in `commands::indexing::tests`:
+    - `test_generate_slug`: alphanumeric hyphenation, trailing trim, default fallback.
+    - `test_matching_position_exact_path`: exact path matching with fraction and bookmark preservation.
+    - `test_matching_position_leaf_fallback`: fallback to leaf filename across renamed directory paths.
+    - `test_chapter_match_exact_and_renamed`: exact name match and signature-based renamed chapter matching.
+- **Frontend Bridge & Integration (`src/tauriBridge.ts`, `src/importScan.ts`)**:
+  - Defined `IndexScanProgress`, `IndexTitleDto`, and `IndexTitleOptions`.
+  - Added `indexTitle(root, options, onProgress)` to `DesktopAPI` and implemented in `TauriDesktopBridge` utilizing `@tauri-apps/api/core` `Channel`.
+  - Updated `indexSource` in `src/importScan.ts`: when on desktop with `source.localPath`, delegates directly to `desktopAPI.indexTitle`, updates taskbar and scan progress via Channel callback, and maps returned `TitleDto` to `Manga`.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **31/31 unit tests PASS** (including 4 new indexing tests, 0.01s).
+  - `npm run test:validation`: **97/97 unit tests PASS** (including 2 new Step B3 unit tests in `tests/storage-modular.spec.ts`).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.59s).
+  - `npm run format:check`: **PASS**.
+
+## Step B2 & Step 16 — Validation and Backup in Rust & Zero Cover Overhead Export — 2026-11-11
+
+- **Rust Serde Validation Engine (`src-tauri/src/validation.rs`)**:
+  - Implemented strict allowlisted deserialization structs with `#[serde(deny_unknown_fields)]`: `ValidatedPage`, `ValidatedPosition`, `ValidatedChapter`, `ValidatedManga`, `ValidatedSettings`, and `BackupPayload`.
+  - Added `validate_relative_path` preventing path traversal (`..`, absolute paths, leading/trailing slashes, null bytes, control characters, depth > 64, path length > 4096).
+  - Added duplicate page path and duplicate manga ID checks.
+  - Enforced operational hard caps (`limits::titles`, `limits::chapters`, `limits::pages`, `MAX_IMAGE_DIMENSION = 32768`, `MAX_IMAGE_AREA = 16_777_216`).
+  - Added 6 unit tests in `validation::tests`: traversal rejection, valid backup roundtrip, unknown field rejection (`deny_unknown_fields`), invalid version rejection, duplicate page rejection, duplicate ID rejection.
+- **Relational Backup Export & Atomic Restore in SQLite (`src-tauri/src/db.rs`, `src-tauri/build.rs`, `src-tauri/capabilities/default.json`)**:
+  - Implemented `export_backup_json(conn)`: queries relational tables in SQLite (`manga`, `chapters`, `pages`, `progress`, `bookmarks`, `settings`) and serializes directly to a version 2 JSON backup payload. Cover blobs are NOT loaded into memory, resolving `re-code.txt` Step 16.
+  - Implemented `restore_backup_tx(conn, backup_json)`: validates JSON with `validate_backup_json`, preserves existing `local_path` and `slug` on collisions, writes all records in a single atomic transaction, and updates settings.
+  - Registered 3 Tauri commands in `build.rs`, `capabilities/default.json`, `lib.rs`, and `db.rs`:
+    - `validate_library_backup`, `export_library_backup`, `restore_library_backup`.
+- **Frontend Integration & Multi-Backend Backup (`src/tauriBridge.ts`, `src/repo.ts`, `src/storage.ts`, `src/SettingsPanel.tsx`)**:
+  - Extended `DesktopAPI` with `exportBackup()`, `restoreBackup(backupJson)`, and `validateBackup(backupJson)`.
+  - Added `exportBackup()` to `LibraryRepo`, implemented in `TauriSqliteLibraryRepo` and `IndexedDBLibraryRepo`.
+  - In `SettingsPanel.tsx`, updated `exportData()` and `importData()` to invoke native Rust commands when running on desktop (`desktopAPI.isDesktop`), falling back to `LibraryRepo` on web.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **27/27 unit tests PASS** (including 7 new validation and export/restore tests).
+  - `npm run test:validation`: **95/95 unit tests PASS** (including 3 new Step B2 tests in `tests/storage-modular.spec.ts`).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.52s).
+  - `npm run format:check`: **PASS**.
+
+## Step B3 — Put Indexing Fully in Rust (`importScan.ts`) — 2026-11-11
+
+- **Native Parallel Indexing Engine (`src-tauri/src/commands/indexing.rs`, `src-tauri/src/commands/image.rs`)**:
+  - Implemented `index_title(app, root, options, on_progress: Channel<ScanProgress>) -> Result<TitleDto, String>`.
+  - Recursive folder scanning respecting security bounds (`MAX_DEPTH = 64`, `MAX_SCAN_FILES = 100,000`, `AllowedRoots`, allowlisted image extensions, ignored junk directories).
+  - Streaming progress updates via `tauri::ipc::Channel<ScanProgress>` (no global event listeners or `scanId` tracking).
+  - Chapter grouping: maps subdirectories into chapters (`"Subfolder / Subfolder"`) and root files into `"Root pages"`. Automatically detects root cover/thumbnail files.
+  - Dimension reuse from `previous` manga record: checks matching `path`, `size`, and `modified` (mtime ms). When unchanged, dimensions are reused instantly without disk re-reads (`reused` counter tracked).
+  - Warm chapter batch dimension parsing: runs parallel header parsing across the Rayon thread pool (`parse_image_dimensions`) for the first 5 chapters (default).
+  - Re-link matching:
+    - Matches chapters by exact name.
+    - Matches renamed chapters by comparing page signature sets (`name\0size\0modified`).
+    - Maps saved reading positions and bookmarks using `matching_position` (path-first with filename fallback and clamping).
+    - Preserves chapter `read` state when all page names match.
+  - Cover & thumbnail generation: detects cover image or first page, invokes `generate_thumbnail_direct` to encode WebP thumbnail atomically on disk (`cache/thumbnails/{manga_id}.webp`).
+  - URL slug generation: deterministic ASCII/Unicode hyphenated slugs (`generate_slug`).
+  - Unit tests in `commands::indexing::tests`:
+    - `test_generate_slug`: alphanumeric hyphenation, trailing trim, default fallback.
+    - `test_matching_position_exact_path`: exact path matching with fraction and bookmark preservation.
+    - `test_matching_position_leaf_fallback`: fallback to leaf filename across renamed directory paths.
+    - `test_chapter_match_exact_and_renamed`: exact name match and signature-based renamed chapter matching.
+- **Frontend Bridge & Integration (`src/tauriBridge.ts`, `src/importScan.ts`)**:
+  - Defined `IndexScanProgress`, `IndexTitleDto`, and `IndexTitleOptions`.
+  - Added `indexTitle(root, options, onProgress)` to `DesktopAPI` and implemented in `TauriDesktopBridge` utilizing `@tauri-apps/api/core` `Channel`.
+  - Updated `indexSource` in `src/importScan.ts`: when on desktop with `source.localPath`, delegates directly to `desktopAPI.indexTitle`, updates taskbar and scan progress via Channel callback, and maps returned `TitleDto` to `Manga`.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **31/31 unit tests PASS** (including 4 new indexing tests, 0.01s).
+  - `npm run test:validation`: **97/97 unit tests PASS** (including 2 new Step B3 unit tests in `tests/storage-modular.spec.ts`).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.59s).
+  - `npm run format:check`: **PASS**.
+

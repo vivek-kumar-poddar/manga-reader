@@ -5,7 +5,7 @@ Basis: Space-agency-inspired engineering principles (predictable execution, boun
 HOW TO USE
 - Order: Read `migrate-to-rust.txt` first, then this file.
 - Status: [COMPLETED] = verified; [IN PROGRESS] = partial; unmarked = pending.
-- Current Status: Steps 01–15 & 17 [COMPLETED]; Steps 16 & 18–22 pending.
+- Current Status: Steps 01–17 [COMPLETED]; Steps 18–22 pending.
 - Invariant: Work through numbered steps in order; land small reviewable changes. Mark [COMPLETED] only after automated acceptance checks pass. Update `docs/verification.md` with evidence.
 
 CRITICAL ARCHITECTURAL INVARIANTS:
@@ -93,9 +93,10 @@ CRITICAL ARCHITECTURAL INVARIANTS:
 - Verified: 54/54 unit tests PASS; typecheck PASS; build PASS.
 - Keep: 50-item ceiling bounds diagnostic memory; private filesystem paths stripped to leaf names; expected cancellations stay quiet.
 
-### 16. Remove measured repeated work
-- Path: `src/data.ts`, `src/storage.ts`, `src/Bookmarks.tsx`.
-- Target: Build page-path `Map` once instead of array `find()` per page in `prepareChapter`. Cache natural sort tokens within one scan. Export backup metadata without reading full cover blobs into memory.
+### 16. [COMPLETED] Remove measured repeated work
+- Changes: `src/importScan.ts` (Map lookup in `prepareChapter`), `src-tauri/src/db.rs` and `src/repo.ts` (`exportBackup` exports metadata from SQLite directly without reading full cover blobs into memory).
+- Verified: `cargo test` 27/27 PASS; `npm run test:validation` 95/95 PASS; `npm run typecheck` PASS; `npm run build` PASS.
+- Keep: Zero cover blob overhead during backup export; O(1) page Map lookup.
 
 ### 17. [COMPLETED] Keep long chapters responsive
 - Changes: `src/readerGeometry.ts` (`calculatePageDimensions`, `computeOffsets` with DOM height override and cumulative prefix sums, `getWindowRange` with 3-screen buffer); `src/style.css` (`.reader-spacer`); `src/Reader.tsx` (continuous virtualization for chapters > 15 pages).

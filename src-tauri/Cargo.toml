@@ -33,6 +33,7 @@ imagesize = "0.13"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "bmp"] }
 fast_image_resize = "5"
 rusqlite = { version = "0.33", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
 
 [profile.release]
 lto = true

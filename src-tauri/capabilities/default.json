@@ -45,6 +45,10 @@
     "allow-sqlite-clear-library",
     "allow-sqlite-reset-progress",
     "allow-sqlite-get-settings",
-    "allow-sqlite-save-settings"
+    "allow-sqlite-save-settings",
+    "allow-validate-library-backup",
+    "allow-export-library-backup",
+    "allow-restore-library-backup",
+    "allow-index-title"
   ]
 }

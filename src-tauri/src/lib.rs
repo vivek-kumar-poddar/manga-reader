@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod migration;
+pub mod validation;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -58,6 +59,10 @@ pub fn run() {
             db::sqlite_reset_progress,
             db::sqlite_get_settings,
             db::sqlite_save_settings,
+            db::validate_library_backup,
+            db::export_library_backup,
+            db::restore_library_backup,
+            commands::indexing::index_title,
         ])
         .on_window_event(|window, event| {
             match event {

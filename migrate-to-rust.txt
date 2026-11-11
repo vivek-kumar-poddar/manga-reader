@@ -389,4 +389,37 @@ Keep: Non-destructive migration leaves IndexedDB intact as safety fallback; atom
 Path: src-tauri/src/db.rs; NEW src/repo.ts; src/storage.ts; src/tauriBridge.ts; src/App.tsx; tests/storage-modular.spec.ts.
 Function: Relational SQLite storage, LibraryRepo multi-backend abstraction, atomic non-destructive migration.
 
+14. [COMPLETED] B2. Move Validation and Backup into Rust
+Changes: NEW src-tauri/src/validation.rs (ValidatedPage, ValidatedPosition, ValidatedChapter,
+         ValidatedManga, ValidatedSettings, BackupPayload with #[serde(deny_unknown_fields)],
+         validate_relative_path traversal protection, duplicate ID checks, limits assertion);
+         src-tauri/src/db.rs (export_backup_json, restore_backup_tx, Tauri commands validate_library_backup,
+         export_library_backup, restore_library_backup); src-tauri/build.rs & capabilities/default.json;
+         src/tauriBridge.ts (exportBackup, restoreBackup, validateBackup); src/repo.ts & src/storage.ts
+         (LibraryRepo.exportBackup, restoreBackup supports string / JSON); src/SettingsPanel.tsx
+         (exportData and importData delegate to desktopAPI).
+Verified: `cargo test` 27/27 PASS; `npm run test:validation` 95/95 PASS; `npm run typecheck` PASS;
+          `npm run build` PASS; `npm run format:check` PASS.
+Keep: Atomic restore in single SQLite transaction; zero cover blob RAM loading during export;
+      strict serde deny_unknown_fields at ingestion boundary.
+Path: src-tauri/src/validation.rs; src-tauri/src/db.rs; src/tauriBridge.ts; src/repo.ts;
+      src/storage.ts; src/SettingsPanel.tsx; tests/storage-modular.spec.ts.
+Function: Serde deny_unknown_fields validation, SQLite backup export/restore, atomic transactions.
+
+15. [COMPLETED] B3. Put Indexing Fully in Rust (importScan.ts)
+Changes: NEW src-tauri/src/commands/indexing.rs (index_title command with tauri::ipc::Channel streaming,
+         chapter grouping, re-link matching, dimension reuse by path/size/mtime, warm chapter batching,
+         native thumbnail generation); src-tauri/src/commands/image.rs (generate_thumbnail_direct);
+         src-tauri/src/commands/mod.rs (pub mod indexing); src-tauri/build.rs & capabilities/default.json;
+         src-tauri/src/lib.rs; src/tauriBridge.ts (IndexScanProgress, IndexTitleDto, IndexTitleOptions,
+         indexTitle over IPC Channel); src/importScan.ts (indexSource delegates to desktopAPI.indexTitle on desktop).
+Verified: `cargo test` 31/31 PASS (4 new indexing unit tests); `npm run test:validation` 97/97 PASS
+          (2 new B3 unit tests); `npm run typecheck` PASS; `npm run build` PASS; `npm run format:check` PASS.
+Keep: Fast multi-threaded recursive scan; streaming channel cleanup with the call; zero blob transfer over IPC.
+Path: src-tauri/src/commands/indexing.rs; src-tauri/src/commands/image.rs; src/tauriBridge.ts;
+      src/importScan.ts; tests/storage-modular.spec.ts.
+Function: Native parallel folder indexing, streaming progress channel, chapter grouping & re-link matching.
+
+
+
 

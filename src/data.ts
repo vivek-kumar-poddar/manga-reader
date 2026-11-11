@@ -43,6 +43,7 @@ export {
   onMangaDelete,
   clearLibrary,
   migrateV1ToV2,
+  exportBackup,
   restoreBackup,
   resetProgress,
   getStoredSettings,

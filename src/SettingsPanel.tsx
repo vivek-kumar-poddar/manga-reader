@@ -6,9 +6,11 @@ import { useApp } from './App';
 import { APP_VERSION } from './updates';
 import { limits, assertAtMost, withinTime } from './limits';
 import { getDiagnostics } from './diagnostics';
+import { desktopAPI } from './tauriBridge';
 import {
   allManga,
   defaults,
+  exportBackup,
   restoreBackup,
   resetProgress,
   clearLibrary,
@@ -51,10 +53,13 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings({ ...s, [key]: value });
   async function exportData() {
-    const manga = (await allManga()).map(({ handle, cover, ...m }) => m);
-    const url = URL.createObjectURL(
-      new Blob([JSON.stringify({ version: 2, manga, settings: s })], { type: 'application/json' }),
-    );
+    let jsonStr: string;
+    if (desktopAPI.isDesktop && desktopAPI.exportBackup) {
+      jsonStr = await desktopAPI.exportBackup();
+    } else {
+      jsonStr = await exportBackup();
+    }
+    const url = URL.createObjectURL(new Blob([jsonStr], { type: 'application/json' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = 'manga-reader-backup.json';
@@ -65,10 +70,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     if (!file) return;
     try {
       assertAtMost(file.size, limits.backupBytes, 'Backup size (bytes)');
-      const value = validateBackup(
-        JSON.parse(await withinTime(file.text(), limits.ioTimeoutMs, 'Reading backup')),
-      );
-      const appliedSettings = await restoreBackup(value);
+      const text = await withinTime(file.text(), limits.ioTimeoutMs, 'Reading backup');
+      let appliedSettings: Settings;
+      if (desktopAPI.isDesktop && desktopAPI.restoreBackup) {
+        appliedSettings = await desktopAPI.restoreBackup(text);
+      } else {
+        const value = validateBackup(JSON.parse(text));
+        appliedSettings = await restoreBackup(value);
+      }
       setSettings(appliedSettings);
       await refresh();
       notify('Backup imported. Re-link folders when requested.');

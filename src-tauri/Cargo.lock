@@ -2153,6 +2153,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
  "walkdir",
 ]
 

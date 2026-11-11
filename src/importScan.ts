@@ -776,6 +776,114 @@ export async function indexSource(
 ) {
   assertSourceLimits(source);
   if (previous) stopBackground(previous.id);
+
+  // High-performance native Rust indexing on desktop
+  if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
+    alive(options.signal);
+    const dto = await desktopAPI.indexTitle(source.localPath, { sort, previous }, (progress) => {
+      alive(options.signal);
+      options.update?.({
+        phase: progress.phase as 'discover' | 'index',
+        done: progress.done,
+        total: progress.total,
+        title: progress.title,
+      });
+      if (progress.total > 0) {
+        desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+      }
+    });
+    alive(options.signal);
+
+    const m: Manga = {
+      id: dto.id,
+      title: dto.title,
+      slug: dto.slug,
+      localPath: dto.localPath,
+      lastChapter: dto.lastChapter,
+      addedAt: dto.addedAt,
+      updatedAt: dto.updatedAt,
+      revision: dto.revision,
+      sort: dto.sort as 'natural' | 'name' | 'reverse',
+      chapters: dto.chapters.map((c) => ({
+        name: c.name,
+        read: c.read,
+        position: c.position,
+        bookmarks: c.bookmarks,
+        pages: c.pages.map((p) => ({
+          name: p.name,
+          path: p.path,
+          width: p.width,
+          height: p.height,
+          size: p.size,
+          modified: p.modified,
+          dimensionsPending: p.dimensionsPending,
+        })),
+      })),
+    };
+
+    return {
+      m,
+      issues: [...source.issues, ...dto.issues],
+      reused: dto.reused,
+    };
+  }
+
+
+  // High-performance native Rust indexing on desktop
+  if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
+    alive(options.signal);
+    const dto = await desktopAPI.indexTitle(
+      source.localPath,
+      { sort, previous },
+      (progress) => {
+        alive(options.signal);
+        options.update?.({
+          phase: progress.phase as 'discover' | 'index',
+          done: progress.done,
+          total: progress.total,
+          title: progress.title,
+        });
+        if (progress.total > 0) {
+          desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+        }
+      },
+    );
+    alive(options.signal);
+
+    const m: Manga = {
+      id: dto.id,
+      title: dto.title,
+      slug: dto.slug,
+      localPath: dto.localPath,
+      lastChapter: dto.lastChapter,
+      addedAt: dto.addedAt,
+      updatedAt: dto.updatedAt,
+      revision: dto.revision,
+      sort: dto.sort as 'natural' | 'name' | 'reverse',
+      chapters: dto.chapters.map((c) => ({
+        name: c.name,
+        read: c.read,
+        position: c.position,
+        bookmarks: c.bookmarks,
+        pages: c.pages.map((p) => ({
+          name: p.name,
+          path: p.path,
+          width: p.width,
+          height: p.height,
+          size: p.size,
+          modified: p.modified,
+          dimensionsPending: p.dimensionsPending,
+        })),
+      })),
+    };
+
+    return {
+      m,
+      issues: [...source.issues, ...dto.issues],
+      reused: dto.reused,
+    };
+  }
+
   const issues = [...source.issues];
   const grouped = new Map<string, Page[]>();
   const oldPages = new Map(

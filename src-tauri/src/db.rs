@@ -101,6 +101,61 @@ pub struct LegacyBackupPayload {
     pub settings: serde_json::Value,
 }
 
+impl From<crate::validation::ValidatedPage> for PageRecord {
+    fn from(p: crate::validation::ValidatedPage) -> Self {
+        Self {
+            name: p.name,
+            path: p.path,
+            width: p.width,
+            height: p.height,
+            size: p.size,
+            modified: p.modified,
+            dimensions_pending: p.dimensions_pending,
+        }
+    }
+}
+
+impl From<crate::validation::ValidatedPosition> for PositionRecord {
+    fn from(p: crate::validation::ValidatedPosition) -> Self {
+        Self {
+            page: p.page,
+            path: p.path,
+            fraction: p.fraction,
+            manga_bookmark: p.manga_bookmark,
+            timestamp: p.timestamp,
+        }
+    }
+}
+
+impl From<crate::validation::ValidatedChapter> for ChapterRecord {
+    fn from(c: crate::validation::ValidatedChapter) -> Self {
+        Self {
+            name: c.name,
+            pages: c.pages.into_iter().map(PageRecord::from).collect(),
+            read: c.read.unwrap_or(false),
+            position: c.position.map(PositionRecord::from),
+            bookmarks: c.bookmarks.map(|bms| bms.into_iter().map(PositionRecord::from).collect()),
+        }
+    }
+}
+
+impl From<crate::validation::ValidatedManga> for MangaRecord {
+    fn from(m: crate::validation::ValidatedManga) -> Self {
+        Self {
+            id: m.id,
+            slug: m.slug,
+            title: m.title,
+            chapters: m.chapters.into_iter().map(ChapterRecord::from).collect(),
+            local_path: m.local_path,
+            last_chapter: m.last_chapter.unwrap_or(0),
+            added_at: m.added_at.unwrap_or(0.0),
+            updated_at: m.updated_at.unwrap_or(0.0),
+            revision: m.revision,
+            sort: m.sort,
+        }
+    }
+}
+
 pub fn init_db(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         r#"
@@ -850,6 +905,114 @@ pub fn save_settings(conn: &mut Connection, key: &str, val: &serde_json::Value) 
     Ok(())
 }
 
+pub fn export_backup_json(conn: &Connection) -> std::result::Result<String, String> {
+    let summaries = list_library(conn).map_err(|e| e.to_string())?;
+    let mut manga_list = Vec::with_capacity(summaries.len());
+    for s in summaries {
+        if let Some(m) = get_manga(conn, &s.id).map_err(|e| e.to_string())? {
+            manga_list.push(m);
+        }
+    }
+
+    let settings = get_settings(conn, "global")
+        .map_err(|e| e.to_string())?
+        .unwrap_or_else(|| {
+            serde_json::json!({
+                "theme": "system",
+                "mode": "continuous",
+                "layout": "max",
+                "maxWidth": 920,
+                "seconds": 3.0,
+                "advance": true,
+                "reduced": false,
+                "lowQuality": false,
+                "customSeconds": false,
+                "autoHideBars": true,
+                "resumeDelay": 1.8,
+                "direction": "ltr",
+                "spread": false,
+                "singleCover": true,
+                "endAction": "next",
+                "fontSizeTitle": 15,
+                "fontSizeUi": 15,
+                "fontSizeButton": 15,
+                "confirmDelete": false
+            })
+        });
+
+    let payload = serde_json::json!({
+        "version": 2,
+        "manga": manga_list,
+        "settings": settings,
+    });
+
+    serde_json::to_string(&payload).map_err(|e| format!("Failed to serialize backup JSON: {e}"))
+}
+
+pub fn restore_backup_tx(
+    conn: &mut Connection,
+    payload: &crate::validation::BackupPayload,
+) -> std::result::Result<serde_json::Value, String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+
+    // Load existing local_path and slug for preservation
+    let mut existing_info: std::collections::HashMap<String, (Option<String>, String)> = std::collections::HashMap::new();
+    {
+        let mut stmt = tx.prepare("SELECT id, local_path, slug FROM manga").map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }).map_err(|e| e.to_string())?;
+        for r in rows {
+            if let Ok((id, local_path, slug)) = r {
+                existing_info.insert(id, (local_path, slug));
+            }
+        }
+    }
+
+    // Clear existing library tables
+    tx.execute_batch(
+        r#"
+        DELETE FROM chapters;
+        DELETE FROM progress;
+        DELETE FROM bookmarks;
+        DELETE FROM manga;
+        "#,
+    ).map_err(|e| format!("Failed to clear tables before restore: {e}"))?;
+
+    for valid_m in &payload.manga {
+        let mut m_rec = MangaRecord::from(valid_m.clone());
+        if let Some((existing_path, existing_slug)) = existing_info.get(&m_rec.id) {
+            if m_rec.local_path.is_none() && existing_path.is_some() {
+                m_rec.local_path = existing_path.clone();
+            }
+            if m_rec.slug.is_none() {
+                m_rec.slug = Some(existing_slug.clone());
+            }
+        }
+        insert_or_replace_manga(&tx, &m_rec).map_err(|e| format!("Failed to insert manga during restore: {e}"))?;
+    }
+
+    let norm_settings = crate::validation::normalize_settings(&payload.settings);
+    let settings_str = serde_json::to_string(&norm_settings).unwrap_or_else(|_| "{}".to_string());
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('global', ?1)",
+        params![settings_str],
+    ).map_err(|e| format!("Failed to save settings during restore: {e}"))?;
+
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('migrated', '1')",
+        params![],
+    ).map_err(|e| format!("Failed to set migrated flag during restore: {e}"))?;
+
+    tx.commit().map_err(|e| format!("Failed to commit restore transaction: {e}"))?;
+
+    Ok(norm_settings)
+}
+
 // ==============================================================================
 // Tauri Command Handlers
 // ==============================================================================
@@ -988,6 +1151,27 @@ pub fn sqlite_save_settings(
     let mut conn = state.0.lock().map_err(|e| e.to_string())?;
     save_settings(&mut conn, "global", &settings)
         .map_err(|e| format!("Failed to save settings to SQLite: {e}"))
+}
+
+#[tauri::command]
+pub fn validate_library_backup(backup_json: String) -> std::result::Result<crate::validation::BackupPayload, String> {
+    crate::validation::validate_backup_json(&backup_json)
+}
+
+#[tauri::command]
+pub fn export_library_backup(state: State<'_, DbState>) -> std::result::Result<String, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    export_backup_json(&conn)
+}
+
+#[tauri::command]
+pub fn restore_library_backup(
+    state: State<'_, DbState>,
+    backup_json: String,
+) -> std::result::Result<serde_json::Value, String> {
+    let payload = crate::validation::validate_backup_json(&backup_json)?;
+    let mut conn = state.0.lock().map_err(|e| e.to_string())?;
+    restore_backup_tx(&mut conn, &payload)
 }
 
 #[cfg(test)]
@@ -1224,5 +1408,80 @@ mod tests {
 
         let settings = get_settings(&conn, "global").unwrap().unwrap();
         assert_eq!(settings["theme"], "dark");
+    }
+
+    #[test]
+    fn test_export_backup_json_and_restore_backup_tx() {
+        let mut conn = create_test_conn();
+        let manga = MangaRecord {
+            id: "m-exp".into(),
+            slug: Some("m-exp".into()),
+            title: "Export Title".into(),
+            local_path: Some("C:\\Local\\Path".into()),
+            last_chapter: 0,
+            added_at: 1000.0,
+            updated_at: 2000.0,
+            revision: Some(1),
+            sort: None,
+            chapters: vec![ChapterRecord {
+                name: "Ch 1".into(),
+                pages: vec![PageRecord {
+                    dimensions_pending: None,
+                    name: "1.jpg".into(),
+                    path: "ch1/1.jpg".into(),
+                    width: 800,
+                    height: 1200,
+                    size: Some(1024),
+                    modified: Some(1000.0),
+                }],
+                read: true,
+                position: Some(PositionRecord {
+                    page: 0,
+                    path: Some("ch1/1.jpg".into()),
+                    fraction: 0.5,
+                    manga_bookmark: None,
+                    timestamp: None,
+                }),
+                bookmarks: None,
+            }],
+        };
+        save_manga(&mut conn, &manga).unwrap();
+        save_settings(&mut conn, "global", &serde_json::json!({ "theme": "dark", "maxWidth": 1280 })).unwrap();
+
+        let json = export_backup_json(&conn).unwrap();
+        assert!(json.contains("\"version\":2"));
+        assert!(json.contains("Export Title"));
+        assert!(json.contains("C:\\\\Local\\\\Path"));
+
+        // Now test restore_backup_tx using the exported JSON
+        let payload = crate::validation::validate_backup_json(&json).unwrap();
+        let mut conn2 = create_test_conn();
+        // Insert an existing title with local_path in conn2 to test preservation
+        let existing_manga = MangaRecord {
+            id: "m-exp".into(),
+            slug: Some("m-exp".into()),
+            title: "Old Title".into(),
+            local_path: Some("D:\\Preserved\\Path".into()),
+            last_chapter: 0,
+            added_at: 500.0,
+            updated_at: 600.0,
+            revision: Some(1),
+            sort: None,
+            chapters: vec![],
+        };
+        save_manga(&mut conn2, &existing_manga).unwrap();
+
+        // Restore backup where local_path is None or test preservation
+        let mut payload_no_path = payload.clone();
+        payload_no_path.manga[0].local_path = None;
+        let applied_settings = restore_backup_tx(&mut conn2, &payload_no_path).unwrap();
+        assert_eq!(applied_settings["theme"], "dark");
+        assert_eq!(applied_settings["maxWidth"], 1280);
+
+        let restored_manga = get_manga(&conn2, "m-exp").unwrap().unwrap();
+        assert_eq!(restored_manga.title, "Export Title");
+        assert_eq!(restored_manga.local_path, Some("D:\\Preserved\\Path".into()));
+        assert_eq!(restored_manga.chapters.len(), 1);
+        assert_eq!(restored_manga.chapters[0].pages.len(), 1);
     }
 }

@@ -7,6 +7,7 @@ import {
   type Page,
   type Progress,
   type Settings,
+  defaults,
 } from './model';
 import { parseSummary, parseManga, parsePosition, parseSettings, isRecord } from './validation';
 import {
@@ -859,8 +860,15 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   saveStoredSettings(settings: Settings): Promise<Settings> {
     return saveStoredSettingsIdb(settings);
   }
-  restoreBackup(backup: { manga: Manga[]; settings: Settings }): Promise<Settings> {
-    return restoreBackupIdb(backup);
+  async exportBackup(): Promise<string> {
+    const list = await this.allManga();
+    const manga = list.map(({ handle, cover, ...rest }) => rest);
+    const settings = (await this.getStoredSettings()) ?? defaults;
+    return JSON.stringify({ version: 2, manga, settings });
+  }
+  restoreBackup(backup: { manga: Manga[]; settings: Settings } | string): Promise<Settings> {
+    const payload = typeof backup === 'string' ? JSON.parse(backup) : backup;
+    return restoreBackupIdb(payload);
   }
 }
 
@@ -895,6 +903,7 @@ export const repo: LibraryRepo = {
   resetProgress: () => activeRepo.resetProgress(),
   getStoredSettings: () => activeRepo.getStoredSettings(),
   saveStoredSettings: (s) => activeRepo.saveStoredSettings(s),
+  exportBackup: () => (activeRepo.exportBackup ? activeRepo.exportBackup() : Promise.resolve('')),
   restoreBackup: (b) => activeRepo.restoreBackup(b),
 };
 
@@ -931,10 +940,11 @@ export const getStoredSettings = async (): Promise<Settings | undefined> =>
   repo.getStoredSettings();
 export const saveStoredSettings = async (settings: Settings): Promise<Settings> =>
   repo.saveStoredSettings(settings);
-export const restoreBackup = async (backup: {
-  manga: Manga[];
-  settings: Settings;
-}): Promise<Settings> => repo.restoreBackup(backup);
+export const exportBackup = async (): Promise<string> =>
+  activeRepo.exportBackup ? activeRepo.exportBackup() : '';
+export const restoreBackup = async (
+  backup: { manga: Manga[]; settings: Settings } | string,
+): Promise<Settings> => repo.restoreBackup(backup);
 
 export { type LibraryRepo, TauriSqliteLibraryRepo, ensureLibraryMigrated } from './repo';
 
