@@ -3,13 +3,17 @@ import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-const isElectron = !!process.env.ELECTRON_BUILD;
-const isTauri = !!process.env.TAURI_ENV_PLATFORM;
+const isElectron = Boolean(process.env.ELECTRON_BUILD);
+const isTauri = Boolean(process.env.TAURI_ENV_PLATFORM);
+const isDesktop = process.env.VITE_TARGET === 'desktop' || isTauri || isElectron;
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
   base: './',
   clearScreen: false,
+  define: {
+    __DESKTOP_BUILD__: JSON.stringify(isDesktop),
+  },
   server: {
     port: 5173,
     strictPort: true,
@@ -86,8 +90,7 @@ export default defineConfig({
           },
         } as Plugin)
       : null,
-    !isElectron &&
-      !isTauri &&
+    !isDesktop &&
       VitePWA({
         registerType: 'prompt',
         injectRegister: false,

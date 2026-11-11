@@ -452,4 +452,25 @@ Path: src-tauri/src/commands/image.rs; src-tauri/src/commands/cache.rs; src-taur
       src/tauriBridge.ts; src/App.tsx; src/importScan.ts; src/PageImage.tsx; tests/storage-modular.spec.ts.
 Function: Fast native thumbnail and variant generation, zero-copy cached image URLs, disk caching.
 
+18. [COMPLETED] C3. Native Drag-and-Drop and Root Registration
+Changes: src-tauri/src/lib.rs (in tauri::WindowEvent::DragDrop, registered dropped paths in AllowedRoots, saved persisted roots, emitted native-drag-drop); src-tauri/src/commands/window.rs (INIT_SCRIPT allows native drop events while preventing browser page navigation); src/tauriBridge.ts (DesktopAPI.onDragDrop); src/App.tsx (listens to desktopAPI.onDragDrop and imports dropped paths via fromDesktopFolder, skips browser handle drop on desktop); tests/storage-modular.spec.ts (Step C3 unit test).
+Verified: `cargo test` 38/38 PASS; `npm run test:validation` 102/102 PASS; `npm run typecheck` PASS; `npm run build` PASS; `npm run format:check` PASS.
+Keep: Retain HTML drag-drop fallback for web; automatic AllowedRoots persistence on dropped paths.
+Path: src-tauri/src/lib.rs; src-tauri/src/commands/window.rs; src/tauriBridge.ts; src/App.tsx; tests/storage-modular.spec.ts.
+Function: Native folder drag-drop, path allow-listing, desktop import bypass.
+
+19. [COMPLETED] D. Make the Migration Safe (Rust Tests, Clippy & CI)
+Changes: src-tauri/src/commands/fs.rs (AllowedRoots::is_allowed traversal rejection; test_parse_image_dimensions_corrupted_headers, test_natural_order_fixture_parity); src-tauri/src/commands/indexing.rs (test_indexing_grouping_logic); src-tauri/src/db.rs, validation.rs, lib.rs (clippy fixes); NEW tests/fixtures/sorting-fixtures.json (23 canonical cross-platform sorting fixtures); NEW .github/workflows/ci.yml (automated CI workflow for Rust clippy -D warnings, cargo test, npm typecheck, test:validation, build); tests/storage-modular.spec.ts (cross-language parity test).
+Verified: `cargo test` 38/38 PASS; `cargo clippy -- -D warnings` PASS (0 warnings); `npm run test:validation` 102/102 PASS; `npm run typecheck` PASS; `npm run build` PASS; `npm run format:check` PASS.
+Keep: Cross-language natural order parity between JS Intl.Collator and Rust natural_sort_paths; zero clippy warnings.
+Path: src-tauri/src/commands/fs.rs; src-tauri/src/commands/indexing.rs; tests/fixtures/sorting-fixtures.json; .github/workflows/ci.yml; tests/storage-modular.spec.ts.
+Function: Automated CI verification, clippy enforcement, Rust unit tests, natural sort parity testing.
+
+20. [COMPLETED] E. Cleaning up the TypeScript side
+Changes: vite.config.ts (VITE_TARGET=desktop flag, __DESKTOP_BUILD__ define, conditional VitePWA exclusion); package.json (build:desktop script, cross-env VITE_TARGET=desktop for tauri:dev and tauri:build); src/vite-env.d.ts (__DESKTOP_BUILD__ declaration); src/tauriBridge.ts (DesktopUpdateInfo, DesktopAPI.checkForUpdate, installUpdate); src/updates.ts (desktop update checks and installation via Tauri updater, skips SW on desktop, flushes pending tasks before update); src-tauri/tauri.conf.json (plugins.updater configuration for signed releases); src/importScan.ts & src/storage.ts (conditional dead-code branches for fromFiles, fromHandle, droppedSources, fileFor, access under desktop builds); tests/storage-modular.spec.ts (Step E unit tests).
+Verified: `cargo test` 38/38 PASS; `npm run test:validation` 102/102 PASS; `npm run typecheck` PASS; `npm run build` PASS; `npm run build:desktop` PASS (dist bundle reduced by 8.3 kB with zero PWA overhead); `npm run format:check` PASS.
+Keep: Preserve readerGeometry.ts, autoplay, and continuous scroll virtualization in TypeScript (avoid per-frame IPC latency); maintain complete web build and PWA functionality when VITE_TARGET !== 'desktop'.
+Path: vite.config.ts; package.json; src/vite-env.d.ts; src/tauriBridge.ts; src/updates.ts; src/importScan.ts; src/storage.ts; src-tauri/tauri.conf.json; tests/storage-modular.spec.ts.
+Function: Desktop build target optimization, signed release updater abstraction, dead-code elimination.
+
 

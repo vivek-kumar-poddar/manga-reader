@@ -1,12 +1,19 @@
 import { limits } from './limits';
+import { desktopAPI, isDesktop, type DesktopUpdateInfo } from './tauriBridge';
+
 export const APP_VERSION = '2.0.0';
 let registration: ServiceWorkerRegistration | undefined;
 let applying = false;
 let updateAvailable = false;
+let desktopUpdateInfo: DesktopUpdateInfo | null = null;
+
 export const hasUpdate = () => updateAvailable;
+export const getUpdateInfo = () => desktopUpdateInfo;
+
 function announce() {
   window.dispatchEvent(new Event('reader-update-ready'));
 }
+
 async function withTimeout<T>(task: Promise<T>, message: string) {
   let timer: ReturnType<typeof setTimeout>;
   try {
@@ -20,6 +27,7 @@ async function withTimeout<T>(task: Promise<T>, message: string) {
     clearTimeout(timer!);
   }
 }
+
 export async function applyUpdate() {
   if (applying) return;
   applying = true;
@@ -27,6 +35,15 @@ export async function applyUpdate() {
     const tasks: Promise<unknown>[] = [];
     window.dispatchEvent(new CustomEvent('reader-before-update', { detail: tasks }));
     await withTimeout(Promise.all(tasks), 'Saving took too long. Try again before refreshing.');
+
+    // On Desktop, download and install the signed release via Tauri updater
+    if (isDesktop || desktopAPI.isDesktop) {
+      if (desktopAPI.installUpdate) {
+        await desktopAPI.installUpdate();
+      }
+      return;
+    }
+
     // Another tab may already have activated the worker advertised by this banner.
     const worker = registration?.waiting;
     if (worker && worker.state !== 'activated')
@@ -57,13 +74,41 @@ export async function applyUpdate() {
           finish(e instanceof Error ? e : new Error('Unable to activate the update.'));
         }
       });
-    location.reload();
+    if (typeof location !== 'undefined') {
+      location.reload();
+    }
   } finally {
     applying = false;
   }
 }
-import { isDesktop } from './tauriBridge';
 
+// Desktop updater check initialization
+if (isDesktop && typeof window !== 'undefined') {
+  let lastDesktopCheck = 0;
+  const checkDesktop = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
+    if (Date.now() - lastDesktopCheck < 30000) return;
+    lastDesktopCheck = Date.now();
+    try {
+      const update = await desktopAPI.checkForUpdate?.();
+      if (update) {
+        desktopUpdateInfo = update;
+        updateAvailable = true;
+        announce();
+      }
+    } catch (e) {
+      console.debug('Desktop update check error:', e);
+    }
+  };
+
+  window.setTimeout(() => void checkDesktop(), 3000);
+  document.addEventListener('visibilitychange', () => void checkDesktop());
+  window.addEventListener('online', () => void checkDesktop());
+  window.setInterval(() => void checkDesktop(), 60 * 60 * 1000);
+}
+
+// Web ServiceWorker initialization (only when not desktop)
 if ('serviceWorker' in navigator && import.meta.env.PROD && !isDesktop) {
   const appURL = new URL(document.baseURI);
   // Include the bare hosted URL: its server redirect is unavailable offline.

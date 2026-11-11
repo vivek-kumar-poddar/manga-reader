@@ -1015,6 +1015,9 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
     if (!buf) throw new Error('File not found on disk. The folder may have moved.');
     return new File([buf], p.path.split('/').at(-1) ?? p.path);
   }
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
+    throw new Error('Desktop manga is missing localPath');
+  }
   if (m.handle) {
     const parts = p.path.split('/');
     const dirParts = parts.slice(0, -1);
@@ -1078,6 +1081,10 @@ export async function access(
     if (sessionFiles.has(m.id)) return true;
     const full = await getManga(m.id);
     return Boolean(full?.localPath || sessionFiles.has(m.id));
+  }
+
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
+    return false;
   }
 
   // In-memory session files are always accessible without querying handle permissions.

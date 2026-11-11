@@ -321,7 +321,11 @@ impl AllowedRoots {
         if roots.is_empty() {
             return true;
         }
-        roots.iter().any(|root| path.starts_with(root))
+        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        if canonical.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return false;
+        }
+        roots.iter().any(|root| canonical.starts_with(root))
     }
 
     pub fn add_root(&self, path: PathBuf) {
@@ -1201,6 +1205,95 @@ mod tests {
         let outside = std::env::temp_dir().join("other_folder_outside");
         assert!(!allowed.is_allowed(&outside));
 
+        // Traversal path outside root rejected
+        let traversal = root.join("..").join("outside.png");
+        let canonical_traversal = dunce::canonicalize(&traversal).unwrap_or(traversal);
+        assert!(!allowed.is_allowed(&canonical_traversal));
+
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_natural_order_fixture_parity() {
+        let fixtures = vec![
+            "001.jpg",
+            "002.jpg",
+            "010.jpg",
+            "099.jpg",
+            "100.jpg",
+            "Chapter 1",
+            "Chapter 1.5",
+            "Chapter 2",
+            "Chapter 3",
+            "Chapter 9",
+            "Chapter 10",
+            "Chapter 10.1",
+            "Chapter 10.2",
+            "Chapter 11",
+            "Chapter 100",
+            "Vol. 1 Ch. 1",
+            "Vol. 1 Ch. 2",
+            "Volume 1/Chapter 1/01.jpg",
+            "Volume 1/Chapter 2/01.jpg",
+            "Vol. 2 Ch. 1",
+            "Volume 2/Chapter 1/01.jpg",
+            "Vol. 10 Ch. 1",
+            "Volume 10/Chapter 1/01.jpg",
+        ];
+
+        let mut sorted = fixtures.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        sorted.sort_by(|a, b| natural_order(a, b));
+
+        // Check canonical sorted order invariant
+        assert_eq!(sorted[0], "001.jpg");
+        assert_eq!(sorted[1], "002.jpg");
+        assert_eq!(sorted[2], "010.jpg");
+        assert_eq!(sorted[3], "099.jpg");
+        assert_eq!(sorted[4], "100.jpg");
+        assert_eq!(sorted[5], "Chapter 1");
+        assert_eq!(sorted[6], "Chapter 1.5");
+        assert_eq!(sorted[7], "Chapter 2");
+        assert_eq!(sorted[8], "Chapter 3");
+        assert_eq!(sorted[9], "Chapter 9");
+        assert_eq!(sorted[10], "Chapter 10");
+        assert_eq!(sorted[11], "Chapter 10.1");
+        assert_eq!(sorted[12], "Chapter 10.2");
+        assert_eq!(sorted[13], "Chapter 11");
+        assert_eq!(sorted[14], "Chapter 100");
+    }
+
+    #[test]
+    fn test_parse_image_dimensions_corrupted_headers() {
+        let temp_dir = std::env::temp_dir().join(format!("manga_dim_corrupt_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        // Truncated PNG header
+        let trunc_png = temp_dir.join("trunc.png");
+        std::fs::write(&trunc_png, [0x89, 0x50, 0x4e, 0x47]).unwrap();
+        let (tw, th) = parse_image_dimensions(&trunc_png);
+        assert_eq!(tw, None);
+        assert_eq!(th, None);
+
+        // Empty file
+        let empty_file = temp_dir.join("empty.jpg");
+        std::fs::write(&empty_file, b"").unwrap();
+        let (ew, eh) = parse_image_dimensions(&empty_file);
+        assert_eq!(ew, None);
+        assert_eq!(eh, None);
+
+        // Valid GIF 1x1
+        let gif_bytes = [
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
+            0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00,
+            0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+            0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+        ];
+        let gif_file = temp_dir.join("test.gif");
+        std::fs::write(&gif_file, gif_bytes).unwrap();
+        let (gw, gh) = parse_image_dimensions(&gif_file);
+        assert_eq!(gw, Some(1));
+        assert_eq!(gh, Some(1));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

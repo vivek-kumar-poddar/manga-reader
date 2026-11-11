@@ -966,10 +966,8 @@ pub fn restore_backup_tx(
                 row.get::<_, String>(2)?,
             ))
         }).map_err(|e| e.to_string())?;
-        for r in rows {
-            if let Ok((id, local_path, slug)) = r {
-                existing_info.insert(id, (local_path, slug));
-            }
+        for (id, local_path, slug) in rows.flatten() {
+            existing_info.insert(id, (local_path, slug));
         }
     }
 

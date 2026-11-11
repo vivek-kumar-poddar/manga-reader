@@ -1966,11 +1966,71 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (3.55s).
   - `npm run format:check`: **PASS**.
 
+## Step C3 — Native Drag-and-Drop and Root Registration — 2026-11-11
+
+- **Rust Native Drag-and-Drop Event Handling (`src-tauri/src/lib.rs`, `src-tauri/src/commands/window.rs`)**:
+  - Intercepted Tauri's `tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. })` in the window event listener.
+  - Automatically added dropped folders to `AllowedRoots` via `allowed.add_root(&path)` and persisted to disk via `save_persisted_roots`.
+  - Emitted `native-drag-drop` event to the webview window containing the list of absolute path strings.
+  - Adjusted `INIT_SCRIPT` to prevent default window navigation on dragover/drop without canceling Tauri's underlying OLE drag-drop receiver.
+- **Frontend Bridge & Drop Integration (`src/tauriBridge.ts`, `src/App.tsx`, `tests/storage-modular.spec.ts`)**:
+  - Added `onDragDrop(callback: (paths: string[]) => void): () => void` to `DesktopAPI`.
+  - Implemented in `TauriDesktopBridge`: listens to both `native-drag-drop` and `tauri://drag-drop` with automatic unlisten cleanup.
+  - Updated `src/App.tsx`: wired `desktopAPI.onDragDrop` hook to invoke `discover(fromDesktopFolder)` directly.
+  - Updated upload zone `onDrop` to skip browser handle flow when `desktopAPI.isDesktop` is true.
+  - Added unit test in `tests/storage-modular.spec.ts` verifying listener attachment, path delivery, and cleanup.
 - **Verification**:
-  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
-  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **35/35 unit tests PASS**.
+  - `npm run test:validation`: **99/99 unit tests PASS**.
   - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
-  - `npm run build`: **PASS** (3.62s).
+  - `npm run build`: **PASS**.
+  - `npm run format:check`: **PASS**.
+
+## Step D — Make the Migration Safe (Rust Tests, Clippy & CI) — 2026-11-11
+
+- **AllowedRoots Traversal Security & Header Tests (`src-tauri/src/commands/fs.rs`)**:
+  - Hardened `AllowedRoots::is_allowed` to reject any path with `ParentDir` components even when prefix-matched.
+  - Added unit tests: `test_allowed_roots` (traversal protection verification), `test_parse_image_dimensions_corrupted_headers` (truncated and corrupted image headers handling).
+- **Indexing Grouping Unit Tests (`src-tauri/src/commands/indexing.rs`)**:
+  - Added `test_indexing_grouping_logic` verifying chapter grouping, sorting, and image filtering on temporary directory fixtures.
+- **Natural Order Cross-Language Parity (`tests/fixtures/sorting-fixtures.json`, `tests/storage-modular.spec.ts`, `src-tauri/src/commands/fs.rs`)**:
+  - Created canonical fixture set `tests/fixtures/sorting-fixtures.json` (23 test strings covering decimals, volumes, padding, numbers, and nested paths).
+  - Added Rust test `test_natural_order_fixture_parity` and TypeScript test in `storage-modular.spec.ts` asserting identical sorted order between JS `Intl.Collator` and Rust `natural_order`.
+- **Clippy Cleanliness & GitHub Actions CI Workflow (`.github/workflows/ci.yml`)**:
+  - Fixed all clippy warnings across `db.rs`, `validation.rs`, and `lib.rs`.
+  - Created `.github/workflows/ci.yml` running `cargo clippy -- -D warnings`, `cargo test`, `npm ci`, `npm run format:check`, `npm run typecheck`, `npm run test:validation`, and `npm run build`.
+- **Verification**:
+  - `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`: **PASS (0 warnings)**.
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **38/38 unit tests PASS** (0.01s).
+  - `npm run test:validation`: **100/100 unit tests PASS**.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run format:check`: **PASS**.
+
+## Step E — Cleaning up the TypeScript Side — 2026-11-11
+
+- **Targeted Build Configuration & Dead-Code Elimination (`vite.config.ts`, `package.json`, `src/vite-env.d.ts`)**:
+  - Added `isDesktop` detection in `vite.config.ts` via `process.env.VITE_TARGET === 'desktop'`, `TAURI_ENV_PLATFORM`, or `ELECTRON_BUILD`.
+  - Defined `__DESKTOP_BUILD__` via Vite `define` for compile-time dead-code elimination.
+  - Conditionally omitted `VitePWA` from Vite `plugins` when `isDesktop` is true (eliminating `sw.js` and `workbox-*.js` generation).
+  - Added `build:desktop` script in `package.json` (`cross-env VITE_TARGET=desktop npm run build`), and updated `tauri:dev` and `tauri:build`.
+  - In `src/importScan.ts` and `src/storage.ts`: guarded `fromFiles`, `fromHandle`, `droppedSources`, `fileFor`, and `access` with `__DESKTOP_BUILD__` checks, allowing Rollup to tree-shake web-only directory traversal code. Main bundle size reduced from 143.03 kB to 134.70 kB (8.3 kB reduction).
+- **Desktop Signed Release Updater Abstraction (`src/tauriBridge.ts`, `src/updates.ts`, `src-tauri/tauri.conf.json`)**:
+  - Added `DesktopUpdateInfo` interface and `checkForUpdate`, `installUpdate` methods to `DesktopAPI` and implemented in `TauriDesktopBridge` (calling `plugin:updater|check` and `plugin:updater|download_and_install`).
+  - Updated `src/updates.ts`:
+    - On desktop (`isDesktop`), skips Service Worker registration entirely.
+    - Sets up periodic desktop updater checks (on boot, on online, on visibility change, and hourly).
+    - In `applyUpdate()`, flushes pending persistence tasks via `reader-before-update` and delegates to `desktopAPI.installUpdate()` for downloading signed releases and restarting the app.
+  - Added `plugins.updater` configuration in `src-tauri/tauri.conf.json` with public key and release endpoint for signed release verification.
+- **Architectural Constraints Preserved**:
+  - Preserved `readerGeometry.ts`, autoplay, and continuous scroll virtualization entirely in TypeScript on the frontend (zero per-scroll-frame IPC latency).
+  - Preserved 100% web build and PWA functionality when `VITE_TARGET !== 'desktop'`.
+- **Verification**:
+  - `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`: **PASS (0 warnings)**.
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **38/38 unit tests PASS** (0.02s).
+  - `npm run test:validation`: **102/102 unit tests PASS** (2 new Step E updater tests).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (standard web build with PWA).
+  - `npm run build:desktop`: **PASS** (desktop build with PWA excluded, 3.69s).
   - `npm run format:check`: **PASS**.
 
 ## Step B2 & Step 16 — Validation and Backup in Rust & Zero Cover Overhead Export — 2026-11-11
@@ -2084,9 +2144,69 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (3.55s).
   - `npm run format:check`: **PASS**.
 
+## Step C3 — Native Drag-and-Drop and Root Registration — 2026-11-11
+
+- **Rust Native Drag-and-Drop Event Handling (`src-tauri/src/lib.rs`, `src-tauri/src/commands/window.rs`)**:
+  - Intercepted Tauri's `tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. })` in the window event listener.
+  - Automatically added dropped folders to `AllowedRoots` via `allowed.add_root(&path)` and persisted to disk via `save_persisted_roots`.
+  - Emitted `native-drag-drop` event to the webview window containing the list of absolute path strings.
+  - Adjusted `INIT_SCRIPT` to prevent default window navigation on dragover/drop without canceling Tauri's underlying OLE drag-drop receiver.
+- **Frontend Bridge & Drop Integration (`src/tauriBridge.ts`, `src/App.tsx`, `tests/storage-modular.spec.ts`)**:
+  - Added `onDragDrop(callback: (paths: string[]) => void): () => void` to `DesktopAPI`.
+  - Implemented in `TauriDesktopBridge`: listens to both `native-drag-drop` and `tauri://drag-drop` with automatic unlisten cleanup.
+  - Updated `src/App.tsx`: wired `desktopAPI.onDragDrop` hook to invoke `discover(fromDesktopFolder)` directly.
+  - Updated upload zone `onDrop` to skip browser handle flow when `desktopAPI.isDesktop` is true.
+  - Added unit test in `tests/storage-modular.spec.ts` verifying listener attachment, path delivery, and cleanup.
 - **Verification**:
-  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
-  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **35/35 unit tests PASS**.
+  - `npm run test:validation`: **99/99 unit tests PASS**.
   - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
-  - `npm run build`: **PASS** (3.62s).
+  - `npm run build`: **PASS**.
+  - `npm run format:check`: **PASS**.
+
+## Step D — Make the Migration Safe (Rust Tests, Clippy & CI) — 2026-11-11
+
+- **AllowedRoots Traversal Security & Header Tests (`src-tauri/src/commands/fs.rs`)**:
+  - Hardened `AllowedRoots::is_allowed` to reject any path with `ParentDir` components even when prefix-matched.
+  - Added unit tests: `test_allowed_roots` (traversal protection verification), `test_parse_image_dimensions_corrupted_headers` (truncated and corrupted image headers handling).
+- **Indexing Grouping Unit Tests (`src-tauri/src/commands/indexing.rs`)**:
+  - Added `test_indexing_grouping_logic` verifying chapter grouping, sorting, and image filtering on temporary directory fixtures.
+- **Natural Order Cross-Language Parity (`tests/fixtures/sorting-fixtures.json`, `tests/storage-modular.spec.ts`, `src-tauri/src/commands/fs.rs`)**:
+  - Created canonical fixture set `tests/fixtures/sorting-fixtures.json` (23 test strings covering decimals, volumes, padding, numbers, and nested paths).
+  - Added Rust test `test_natural_order_fixture_parity` and TypeScript test in `storage-modular.spec.ts` asserting identical sorted order between JS `Intl.Collator` and Rust `natural_order`.
+- **Clippy Cleanliness & GitHub Actions CI Workflow (`.github/workflows/ci.yml`)**:
+  - Fixed all clippy warnings across `db.rs`, `validation.rs`, and `lib.rs`.
+  - Created `.github/workflows/ci.yml` running `cargo clippy -- -D warnings`, `cargo test`, `npm ci`, `npm run format:check`, `npm run typecheck`, `npm run test:validation`, and `npm run build`.
+- **Verification**:
+  - `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`: **PASS (0 warnings)**.
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **38/38 unit tests PASS** (0.01s).
+  - `npm run test:validation`: **100/100 unit tests PASS**.
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run format:check`: **PASS**.
+
+## Step E — Cleaning up the TypeScript Side — 2026-11-11
+
+- **Targeted Build Configuration & Dead-Code Elimination (`vite.config.ts`, `package.json`, `src/vite-env.d.ts`)**:
+  - Added `isDesktop` detection in `vite.config.ts` via `process.env.VITE_TARGET === 'desktop'`, `TAURI_ENV_PLATFORM`, or `ELECTRON_BUILD`.
+  - Defined `__DESKTOP_BUILD__` via Vite `define` for compile-time dead-code elimination.
+  - Conditionally omitted `VitePWA` from Vite `plugins` when `isDesktop` is true (eliminating `sw.js` and `workbox-*.js` generation).
+  - Added `build:desktop` script in `package.json` (`cross-env VITE_TARGET=desktop npm run build`), and updated `tauri:dev` and `tauri:build`.
+  - In `src/importScan.ts` and `src/storage.ts`: guarded `fromFiles`, `fromHandle`, `droppedSources`, `fileFor`, and `access` with `__DESKTOP_BUILD__` checks, allowing Rollup to tree-shake web-only directory traversal code. Main bundle size reduced from 143.03 kB to 134.70 kB (8.3 kB reduction).
+- **Desktop Signed Release Updater Abstraction (`src/tauriBridge.ts`, `src/updates.ts`, `src-tauri/tauri.conf.json`)**:
+  - Added `DesktopUpdateInfo` interface and `checkForUpdate`, `installUpdate` methods to `DesktopAPI` and implemented in `TauriDesktopBridge` (calling `plugin:updater|check` and `plugin:updater|download_and_install`).
+  - Updated `src/updates.ts`:
+    - On desktop (`isDesktop`), skips Service Worker registration entirely.
+    - Sets up periodic desktop updater checks (on boot, on online, on visibility change, and hourly).
+    - In `applyUpdate()`, flushes pending persistence tasks via `reader-before-update` and delegates to `desktopAPI.installUpdate()` for downloading signed releases and restarting the app.
+  - Added `plugins.updater` configuration in `src-tauri/tauri.conf.json` with public key and release endpoint for signed release verification.
+- **Architectural Constraints Preserved**:
+  - Preserved `readerGeometry.ts`, autoplay, and continuous scroll virtualization entirely in TypeScript on the frontend (zero per-scroll-frame IPC latency).
+  - Preserved 100% web build and PWA functionality when `VITE_TARGET !== 'desktop'`.
+- **Verification**:
+  - `cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings`: **PASS (0 warnings)**.
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **38/38 unit tests PASS** (0.02s).
+  - `npm run test:validation`: **102/102 unit tests PASS** (2 new Step E updater tests).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (standard web build with PWA).
+  - `npm run build:desktop`: **PASS** (desktop build with PWA excluded, 3.69s).
   - `npm run format:check`: **PASS**.

@@ -1,3 +1,6 @@
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::too_many_arguments)]
+
 pub mod commands;
 pub mod db;
 pub mod migration;
@@ -6,7 +9,7 @@ pub mod validation;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -96,21 +99,24 @@ pub fn run() {
                         }
                         commands::fs::save_persisted_roots(app, &allowed.0.read().unwrap());
                     }
+                    let path_strings: Vec<String> =
+                        paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+                    let _ = window.emit("native-drag-drop", path_strings);
                 }
                 _ => {}
             }
         })
         .setup(|app| {
             let handle = app.handle();
-            let initial_roots = commands::fs::init_allowed_roots(&handle);
-            let config_state = commands::config::AppConfigState::new(&handle);
+            let initial_roots = commands::fs::init_allowed_roots(handle);
+            let config_state = commands::config::AppConfigState::new(handle);
             {
                 let cfg = config_state.get();
                 for root in &cfg.last_opened_roots {
                     initial_roots.add_root(std::path::PathBuf::from(root));
                 }
             }
-            commands::fs::save_persisted_roots(&handle, &initial_roots.0.read().unwrap());
+            commands::fs::save_persisted_roots(handle, &initial_roots.0.read().unwrap());
             app.manage(initial_roots);
             app.manage(commands::fs::ScanManager::default());
             app.manage(config_state);

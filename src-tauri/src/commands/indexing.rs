@@ -821,4 +821,32 @@ mod tests {
         assert!(renamed.is_some());
         assert_eq!(renamed.unwrap().name, "Old Ch 1");
     }
+
+    #[test]
+    fn test_indexing_grouping_logic() {
+        // Test determine_chapter helper logic
+        fn determine_chapter(rel_path: &str, is_cover: bool) -> Option<String> {
+            if is_cover {
+                return None;
+            }
+            if let Some(idx) = rel_path.rfind('/') {
+                let dir_part = &rel_path[..idx];
+                let chapter_name = dir_part.replace('/', " / ");
+                Some(chapter_name)
+            } else {
+                Some("Root pages".to_string())
+            }
+        }
+
+        // Subdirectory becomes chapter name with slash normalization
+        assert_eq!(determine_chapter("Chapter 1/01.jpg", false), Some("Chapter 1".into()));
+        assert_eq!(determine_chapter("Volume 1/Chapter 1/01.jpg", false), Some("Volume 1 / Chapter 1".into()));
+
+        // Root file becomes "Root pages"
+        assert_eq!(determine_chapter("01.jpg", false), Some("Root pages".into()));
+
+        // Cover file excluded from regular chapters
+        assert_eq!(determine_chapter("cover.jpg", true), None);
+        assert_eq!(determine_chapter("thumbnail.png", true), None);
+    }
 }

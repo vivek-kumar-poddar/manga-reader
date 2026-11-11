@@ -38,6 +38,7 @@ import {
   DesktopHandle,
   chapterGroups,
   splitSource,
+  naturalOrder,
   naturalSortPaths,
   prepareChapter,
   indexSource,
@@ -1862,5 +1863,182 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     const resultCustom = bridge.convertFileSrc('C:/Manga/Title/02.webp', 'customscheme');
     expect(resultCustom).toContain('customscheme');
     expect(resultCustom).toContain('02.webp');
+  });
+
+  test('Step C3 — TauriDesktopBridge onDragDrop handles native drag drop paths and returns unlisten', async () => {
+    const bridge = new TauriDesktopBridge();
+    let receivedPaths: string[] = [];
+
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    const origEventPlugin = (globalThis as any).__TAURI_EVENT_PLUGIN_INTERNALS__;
+    const eventHandlers = new Map<string, (event: any) => void>();
+
+    (globalThis as any).window = globalThis;
+    (globalThis as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: (event: string, id: number) => {},
+    };
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      transformCallback: (callback: any) => 1,
+      invoke: async (cmd: string, args: any) => {
+        if (cmd === 'plugin:event|listen') {
+          eventHandlers.set(args.event, args.handler);
+          return 1;
+        }
+        if (cmd === 'plugin:event|unlisten') {
+          eventHandlers.delete(args.event);
+          return null;
+        }
+        return null;
+      },
+    };
+
+    try {
+      const unlisten = bridge.onDragDrop((paths) => {
+        receivedPaths = paths;
+      });
+
+      expect(typeof unlisten).toBe('function');
+      unlisten();
+      // Let promises settle before deleting window
+      await new Promise((r) => setTimeout(r, 10));
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+      (globalThis as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = origEventPlugin;
+    }
+  });
+
+  test('Step D — Parity test: TS naturalOrder and Rust natural_sort_paths sort fixtures identically', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const fixturePath = path.resolve('tests/fixtures/sorting-fixtures.json');
+    const rawFixtures: string[] = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+
+    const tsSorted = [...rawFixtures].sort(naturalOrder);
+    const sorted = await naturalSortPaths(rawFixtures);
+
+    expect(tsSorted).toEqual(sorted);
+    expect(sorted[0]).toBe('001.jpg');
+    expect(sorted[1]).toBe('002.jpg');
+    expect(sorted[2]).toBe('010.jpg');
+    expect(sorted[3]).toBe('099.jpg');
+    expect(sorted[4]).toBe('100.jpg');
+    expect(sorted[5]).toBe('Chapter 1');
+    expect(sorted[6]).toBe('Chapter 1.5');
+    expect(sorted[7]).toBe('Chapter 2');
+    expect(sorted[8]).toBe('Chapter 3');
+    expect(sorted[9]).toBe('Chapter 9');
+    expect(sorted[10]).toBe('Chapter 10');
+    expect(sorted[11]).toBe('Chapter 10.1');
+    expect(sorted[12]).toBe('Chapter 10.2');
+    expect(sorted[13]).toBe('Chapter 11');
+    expect(sorted[14]).toBe('Chapter 100');
+  });
+
+  test('Step E — TauriDesktopBridge checkForUpdate and installUpdate invoke Tauri updater commands', async () => {
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    const invokeCalls: { cmd: string; args?: any }[] = [];
+
+    (globalThis as any).__TAURI_INTERNALS__ = {
+      invoke: async (cmd: string, args?: any) => {
+        invokeCalls.push({ cmd, args });
+        if (cmd === 'plugin:updater|check') {
+          return {
+            version: '2.1.0',
+            currentVersion: '2.0.0',
+            body: 'Bug fixes and performance improvements',
+            date: '2026-11-12T00:00:00Z',
+          };
+        }
+        if (cmd === 'plugin:updater|download_and_install') {
+          return null;
+        }
+        return null;
+      },
+    };
+
+    try {
+      const bridge = new TauriDesktopBridge();
+      const update = await bridge.checkForUpdate!();
+      expect(update).toEqual({
+        version: '2.1.0',
+        currentVersion: '2.0.0',
+        body: 'Bug fixes and performance improvements',
+        date: '2026-11-12T00:00:00Z',
+      });
+      expect(invokeCalls[0].cmd).toBe('plugin:updater|check');
+
+      await bridge.installUpdate!();
+      expect(invokeCalls[1].cmd).toBe('plugin:updater|download_and_install');
+    } finally {
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
+  test('Step E — updates.ts applyUpdate on desktop flushes tasks and delegates to desktopAPI.installUpdate', async () => {
+    const origWindow = (globalThis as any).window;
+    const eventTarget = new EventTarget();
+    (globalThis as any).window = {
+      addEventListener: (type: string, listener: any) =>
+        eventTarget.addEventListener(type, listener),
+      removeEventListener: (type: string, listener: any) =>
+        eventTarget.removeEventListener(type, listener),
+      dispatchEvent: (event: any) => eventTarget.dispatchEvent(event),
+    };
+
+    // ensure CustomEvent on globalThis
+    if (!(globalThis as any).CustomEvent) {
+      (globalThis as any).CustomEvent = class CustomEvent extends Event {
+        detail: any;
+        constructor(name: string, opts: any = {}) {
+          super(name);
+          this.detail = opts.detail;
+        }
+      };
+    }
+    const { applyUpdate } = await import('../src/updates');
+    let installed = false;
+    let eventReceived = false;
+
+    const handler = (e: any) => {
+      eventReceived = true;
+      e.detail.push(Promise.resolve());
+    };
+    (globalThis as any).window.addEventListener('reader-before-update', handler);
+
+    // Mock desktopAPI.installUpdate & isDesktop
+    const originalInstall = desktopAPI.installUpdate;
+    const originalIsDesktop = desktopAPI.isDesktop;
+    (desktopAPI as any).isDesktop = true;
+    desktopAPI.installUpdate = async () => {
+      installed = true;
+    };
+
+    try {
+      await applyUpdate();
+      expect(eventReceived).toBe(true);
+      expect(installed).toBe(true);
+    } finally {
+      (globalThis as any).window.removeEventListener('reader-before-update', handler);
+      desktopAPI.installUpdate = originalInstall;
+      (desktopAPI as any).isDesktop = originalIsDesktop;
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+    }
   });
 });

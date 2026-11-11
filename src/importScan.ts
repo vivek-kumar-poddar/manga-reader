@@ -294,6 +294,9 @@ async function* directoryEntries(dir: Directory, signal?: AbortSignal) {
 }
 
 export async function fromHandle(handle: Directory, options: ScanOptions = {}): Promise<Source> {
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
+    throw new Error('fromHandle is not supported in desktop builds');
+  }
   const source: Source = { title: handle.name, handle, files: new Map(), issues: [] };
   let count = 0;
   const chapterNames = new Set<string>();
@@ -433,6 +436,9 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
 }
 
 export function fromFiles(list: File[]): Source[] {
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
+    return [];
+  }
   assertAtMost(list.length, limits.discoveryEntries, 'Selected files');
   const groups = new Map<string, Source>();
   for (const f of list) {
@@ -588,6 +594,9 @@ export function droppedSources(
   items: DataTransferItem[],
   options: ScanOptions,
 ): () => Promise<Source[]> {
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
+    return async () => [];
+  }
   // Reject asynchronously: App.drop owns cleanup in the returned promise chain.
   if (items.length > limits.discoveryEntries)
     return async () => {

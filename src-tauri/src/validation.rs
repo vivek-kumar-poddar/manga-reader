@@ -340,7 +340,7 @@ pub fn validate_manga(
         }
     }
 
-    if manga.slug.as_ref().map_or(true, |s| s.trim().is_empty()) {
+    if manga.slug.as_ref().is_none_or(|s| s.trim().is_empty()) {
         manga.slug = Some(
             manga
                 .title

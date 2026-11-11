@@ -222,6 +222,16 @@ export interface DesktopAPI {
     onProgress?: (progress: IndexScanProgress) => void,
   ): Promise<IndexTitleDto>;
   convertFileSrc?(filePath: string, protocol?: string): string;
+  onDragDrop?(callback: (paths: string[]) => void): () => void;
+  checkForUpdate?(): Promise<DesktopUpdateInfo | null>;
+  installUpdate?(): Promise<void>;
+}
+
+export interface DesktopUpdateInfo {
+  version: string;
+  currentVersion?: string;
+  body?: string;
+  date?: string;
 }
 
 // Detect Tauri runtime presence
@@ -230,7 +240,10 @@ export const isTauri =
   (Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) ||
     Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__));
 
-export const isDesktop = isTauri;
+export const isDesktop =
+  (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) ||
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_TARGET === 'desktop') ||
+  isTauri;
 
 export class TauriDesktopBridge implements DesktopAPI {
   readonly isDesktop = true;
@@ -765,11 +778,96 @@ export class TauriDesktopBridge implements DesktopAPI {
     const cleanPath = pathWithDrive.startsWith('/') ? pathWithDrive.slice(1) : pathWithDrive;
     return `http://${protocol}.localhost/${cleanPath}`;
   }
+
+  onDragDrop(callback: (paths: string[]) => void): () => void {
+    if (typeof window === 'undefined') {
+      return () => {};
+    }
+    let unlistenNative: (() => void) | undefined;
+    let unlistenTauri: (() => void) | undefined;
+    let active = true;
+
+    if (typeof (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ !== 'object') {
+      (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+        unregisterListener: () => {},
+      };
+    }
+
+    void listen<string[]>('native-drag-drop', (event) => {
+      if (!active) return;
+      const paths = event.payload;
+      if (Array.isArray(paths) && paths.length > 0) {
+        callback(paths);
+      }
+    })
+      .then((un) => {
+        if (!active) {
+          try {
+            void un();
+          } catch {}
+        } else {
+          unlistenNative = un;
+        }
+      })
+      .catch(() => {});
+
+    void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
+      if (!active) return;
+      const paths = event.payload?.paths;
+      if (Array.isArray(paths) && paths.length > 0) {
+        callback(paths);
+      }
+    })
+      .then((un) => {
+        if (!active) {
+          try {
+            void un();
+          } catch {}
+        } else {
+          unlistenTauri = un;
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      try {
+        unlistenNative?.();
+      } catch {}
+      try {
+        unlistenTauri?.();
+      } catch {}
+    };
+  }
+
+  async checkForUpdate(): Promise<DesktopUpdateInfo | null> {
+    if (!this.isTauri) return null;
+    try {
+      return await invoke<DesktopUpdateInfo | null>('plugin:updater|check');
+    } catch (err) {
+      console.debug('Tauri updater check failed or updater plugin inactive:', err);
+      return null;
+    }
+  }
+
+  async installUpdate(): Promise<void> {
+    if (!this.isTauri) return;
+    try {
+      await invoke('plugin:updater|download_and_install');
+    } catch (err) {
+      console.error('Failed to install desktop update:', err);
+      throw err;
+    }
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
   readonly isDesktop = false;
   readonly isTauri = false;
+
+  onDragDrop(): () => void {
+    return () => {};
+  }
 
   async selectFolder(): Promise<string | null> {
     return null;
@@ -923,6 +1021,12 @@ class WebDesktopBridge implements DesktopAPI {
   convertFileSrc(filePath: string): string {
     return filePath;
   }
+
+  async checkForUpdate(): Promise<DesktopUpdateInfo | null> {
+    return null;
+  }
+
+  async installUpdate(): Promise<void> {}
 }
 
 export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();

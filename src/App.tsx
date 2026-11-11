@@ -604,7 +604,7 @@ function Library({
           onDrop={(e) => {
             e.preventDefault();
             setDrag(false);
-            if (!busy) drop(Array.from(e.dataTransfer.items));
+            if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
           }}
           className={
             'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
@@ -1049,6 +1049,24 @@ export default function App() {
       return await read();
     });
   };
+
+  useEffect(() => {
+    if (!desktopAPI.isDesktop || !desktopAPI.onDragDrop) return;
+    return desktopAPI.onDragDrop((paths) => {
+      if (busy || !paths.length) return;
+      void discover(async (options) => {
+        const sources = [];
+        for (const p of paths) {
+          try {
+            sources.push(await fromDesktopFolder(p, options));
+          } catch (e) {
+            console.warn('Failed to import dropped folder:', p, e);
+          }
+        }
+        return sources;
+      });
+    });
+  }, [busy, discover]);
   useEffect(() => {
     const context = (
       document as unknown as {

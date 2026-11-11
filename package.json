@@ -14,9 +14,10 @@
     "format:check": "prettier --check src tests scripts *.ts *.json README.md AGENTS.md docs/*.md",
     "test:limits": "playwright test --project=limits",
     "test:validation": "playwright test --config=playwright.unit.config.ts",
+    "build:desktop": "cross-env VITE_TARGET=desktop npm run build",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "cross-env VITE_TARGET=desktop tauri dev",
+    "tauri:build": "cross-env VITE_TARGET=desktop tauri build"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
