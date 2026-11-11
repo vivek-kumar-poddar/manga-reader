@@ -25,6 +25,7 @@ import {
 } from './data';
 import { mangaPath } from './paths';
 import { APP_VERSION } from './updates';
+import { desktopAPI } from './tauriBridge';
 
 type Mark = { manga: Manga; chapter: number; position: Position };
 type BookmarkTab = 'all' | 'manga' | 'individual';
@@ -52,10 +53,23 @@ function Thumbnail({ mark }: { mark: Mark }) {
         void (async () => {
           let blob = mark.manga.cover;
           const page = mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page];
+          const shouldLoadPage = page && (!mark.position.mangaBookmark || !blob);
+
+          if (
+            shouldLoadPage &&
+            desktopAPI.isDesktop &&
+            desktopAPI.convertFileSrc &&
+            mark.manga.localPath
+          ) {
+            const sep = mark.manga.localPath.includes('\\') ? '\\' : '/';
+            const absPath = mark.manga.localPath + sep + page.path.split('/').join(sep);
+            url = desktopAPI.convertFileSrc(absPath, 'mangaimg');
+            if (live) setUrl(url);
+            return;
+          }
+
           try {
-            if (!blob && page && (await access(mark.manga))) {
-              blob = await fileFor(mark.manga, page);
-            } else if (page && !mark.position.mangaBookmark && (await access(mark.manga))) {
+            if (shouldLoadPage && (await access(mark.manga))) {
               blob = await fileFor(mark.manga, page);
             }
           } catch {
@@ -73,7 +87,7 @@ function Thumbnail({ mark }: { mark: Mark }) {
     return () => {
       live = false;
       observer.disconnect();
-      if (url) URL.revokeObjectURL(url);
+      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
     };
   }, [mark]);
   return (

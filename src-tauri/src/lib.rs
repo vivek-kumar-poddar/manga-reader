@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod migration;
+pub mod protocol;
 pub mod validation;
 
 use tauri::menu::{Menu, MenuItem};
@@ -13,6 +14,13 @@ pub fn run() {
     migration::migrate_legacy_data_if_needed();
 
     tauri::Builder::default()
+        .register_asynchronous_uri_scheme_protocol("mangaimg", |ctx, req, responder| {
+            let app_handle = ctx.app_handle().clone();
+            tokio::task::spawn_blocking(move || {
+                let res = protocol::handle_mangaimg_request(&app_handle, req);
+                responder.respond(res);
+            });
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -35,6 +43,7 @@ pub fn run() {
             commands::window::set_progress_bar,
             commands::cache::save_thumbnail,
             commands::cache::read_thumbnail,
+            commands::cache::get_thumbnail_url,
             commands::cache::delete_thumbnail,
             commands::cache::clear_thumbnails,
             commands::image::generate_thumbnail,

@@ -1911,6 +1911,68 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (3.59s).
   - `npm run format:check`: **PASS**.
 
+## Step C1 — Custom URI Protocol Scheme for Zero-Copy Image Streaming (`mangaimg`) — 2026-11-11
+
+- **Custom URI Scheme Protocol in Rust (`src-tauri/src/protocol.rs`, `src-tauri/src/lib.rs`)**:
+  - Registered asynchronous URI protocol handler `"mangaimg"` on Tauri builder using `register_asynchronous_uri_scheme_protocol`.
+  - Offloaded file I/O and byte range slicing to `tokio::task::spawn_blocking` to avoid stalling the async runtime.
+  - Implemented `handle_mangaimg_request(app, req) -> Response<Vec<u8>>`:
+    - Decodes URI path with percent-decoding and Windows drive letter formatting (`/C%3A/path` -> `C:/path`).
+    - Canonicalizes paths via `dunce::canonicalize` to resolve symlinks and Windows UNC device paths.
+    - Security checks: verifies target is in `AllowedRoots` (or `app_cache_dir/thumbnails`), verifies `ALLOWED_IMAGE_EXTENSIONS`, rejects directory traversals and non-regular files, asserts 100 MiB safety ceiling (`MAX_FILE_READ_BYTES`).
+    - Generates hexadecimal ETag from `mtime_ms` and file size.
+    - Conditional GET: responds with `304 Not Modified` when `If-None-Match` matches.
+    - RFC 7233 Byte Range Requests: supports `Range: bytes={start}-{end}` with partial response `206 Partial Content`, `Content-Range: bytes {start}-{end}/{total}`, and `Accept-Ranges: bytes`.
+    - HTTP caching headers: sets `Cache-Control: public, max-age=31536000, immutable`.
+    - Supports `HEAD` requests (header-only, empty body).
+  - Unit tests in `protocol::tests`:
+    - `test_decode_request_path`: drive letter extraction, Windows backslash/forward-slash handling, percent-decoding.
+    - `test_parse_range`: exact ranges, open-ended ranges, suffix ranges, out-of-bounds rejection.
+    - `test_get_mime_type`: accurate MIME resolution across WebP, JPEG, PNG, AVIF, GIF, etc.
+- **Frontend Bridge & Component Integration (`src/tauriBridge.ts`, `src/PageImage.tsx`, `src/Bookmarks.tsx`)**:
+  - Added `convertFileSrc(filePath, protocol?)` to `DesktopAPI`.
+  - Implemented in `TauriDesktopBridge`: calls Tauri's `convertFileSrc(filePath, 'mangaimg')` with standard localhost URL formatting fallback when running without injected internals.
+  - Updated `PageImage.tsx`:
+    - On desktop (`desktopAPI.isDesktop && mangaLocalPath`), visible images in viewport immediately set `url = desktopAPI.convertFileSrc(absPath, 'mangaimg')` without `read_file` IPC, `new Blob()`, or `URL.createObjectURL()`.
+    - Zero-copy streaming directly from disk to WebView2 texture cache.
+    - Graceful fallback: on decode failure (`onError`), toggles `useBlobFallback(true)` to silently retry via the existing `fileFor` blob queue before surfacing an error button.
+  - Updated `Bookmarks.tsx`:
+    - Chapter bookmark previews utilize `desktopAPI.convertFileSrc` when displaying saved positions on desktop.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.62s).
+  - `npm run format:check`: **PASS**.
+
+## Step C2 — Native Rust Cover & Thumbnail Generation with `fast_image_resize` — 2026-11-11
+
+- **Native Rust Image Resizing & URL Returns (`src-tauri/src/commands/image.rs`, `src-tauri/src/commands/cache.rs`, `src-tauri/src/protocol.rs`)**:
+  - Re-architected `generate_thumbnail` and `generate_image_variant` to return `CachedImageResult { path: String, url: String }` instead of raw binary bytes.
+  - Image downscaling executed using `fast_image_resize` and `image` crate within a bounded Rayon thread pool (`IMAGE_RESIZE_POOL`, 2–6 worker threads) spawned via `tokio::task::spawn_blocking`.
+  - Enforced operational safety ceilings: `MAX_IMAGE_SIDE = 32_768`, `MAX_IMAGE_PIXELS = 16_000_000` (16M pixels).
+  - Thumbnails and variants are written atomically (`write_atomic`) to native disk cache directories (`app_cache_dir/thumbnails/{id}.webp` and `app_cache_dir/variants/{hash}_{w}x{h}.webp`).
+  - Added `get_thumbnail_url(id: String) -> Result<Option<String>, String>` command returning direct `mangaimg` protocol URL if the cached WebP thumbnail already exists on disk.
+  - Registered commands and permissions in `build.rs`, `capabilities/default.json`, and `lib.rs`.
+- **Frontend Zero-Copy Optimization & Web Fallback Isolation (`src/tauriBridge.ts`, `src/App.tsx`, `src/importScan.ts`, `src/PageImage.tsx`)**:
+  - Updated `DesktopAPI` signatures: `getThumbnailUrl(id)`, `generateThumbnail(filePath, id)`, and `generateImageVariant(filePath, maxWidth, maxHeight)` returning `CachedImageResult | null`.
+  - In `src/App.tsx` (`Cover` component): on desktop, queries `desktopAPI.getThumbnailUrl(m.id)` first. When present, directly assigns the protocol URL without fetching blobs, invoking IPC buffer transfers, or tracking object URLs.
+  - In `src/importScan.ts`: on desktop, invokes `desktopAPI.generateThumbnail` to produce the cached disk thumbnail and leaves the in-memory `cover` Blob `undefined`. This prevents retention of large blobs on the V8 heap and avoids subsequent JS-to-Rust thumbnail uploads (`saveThumbnail`). Isolated the `thumbnail()` `ImageBitmap` and `canvas` pipeline purely to web builds (`!cover && !desktopAPI.isDesktop`).
+  - In `src/PageImage.tsx`: low-quality variant generation utilizes `desktopAPI.generateImageVariant` returning the zero-copy URL directly.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **35/35 unit tests PASS** (including `test_path_to_mangaimg_url`, `test_calculate_fitted_dimensions`, and `test_resize_image_fir`, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (all storage and bridge unit tests passing).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.55s).
+  - `npm run format:check`: **PASS**.
+
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.62s).
+  - `npm run format:check`: **PASS**.
+
 ## Step B2 & Step 16 — Validation and Backup in Rust & Zero Cover Overhead Export — 2026-11-11
 
 - **Rust Serde Validation Engine (`src-tauri/src/validation.rs`)**:
@@ -1967,3 +2029,64 @@ User-requested maintenance (G7/G11/G18); numbered steps 04–22 remain pending.
   - `npm run build`: **PASS** (3.59s).
   - `npm run format:check`: **PASS**.
 
+## Step C1 — Custom URI Protocol Scheme for Zero-Copy Image Streaming (`mangaimg`) — 2026-11-11
+
+- **Custom URI Scheme Protocol in Rust (`src-tauri/src/protocol.rs`, `src-tauri/src/lib.rs`)**:
+  - Registered asynchronous URI protocol handler `"mangaimg"` on Tauri builder using `register_asynchronous_uri_scheme_protocol`.
+  - Offloaded file I/O and byte range slicing to `tokio::task::spawn_blocking` to avoid stalling the async runtime.
+  - Implemented `handle_mangaimg_request(app, req) -> Response<Vec<u8>>`:
+    - Decodes URI path with percent-decoding and Windows drive letter formatting (`/C%3A/path` -> `C:/path`).
+    - Canonicalizes paths via `dunce::canonicalize` to resolve symlinks and Windows UNC device paths.
+    - Security checks: verifies target is in `AllowedRoots` (or `app_cache_dir/thumbnails`), verifies `ALLOWED_IMAGE_EXTENSIONS`, rejects directory traversals and non-regular files, asserts 100 MiB safety ceiling (`MAX_FILE_READ_BYTES`).
+    - Generates hexadecimal ETag from `mtime_ms` and file size.
+    - Conditional GET: responds with `304 Not Modified` when `If-None-Match` matches.
+    - RFC 7233 Byte Range Requests: supports `Range: bytes={start}-{end}` with partial response `206 Partial Content`, `Content-Range: bytes {start}-{end}/{total}`, and `Accept-Ranges: bytes`.
+    - HTTP caching headers: sets `Cache-Control: public, max-age=31536000, immutable`.
+    - Supports `HEAD` requests (header-only, empty body).
+  - Unit tests in `protocol::tests`:
+    - `test_decode_request_path`: drive letter extraction, Windows backslash/forward-slash handling, percent-decoding.
+    - `test_parse_range`: exact ranges, open-ended ranges, suffix ranges, out-of-bounds rejection.
+    - `test_get_mime_type`: accurate MIME resolution across WebP, JPEG, PNG, AVIF, GIF, etc.
+- **Frontend Bridge & Component Integration (`src/tauriBridge.ts`, `src/PageImage.tsx`, `src/Bookmarks.tsx`)**:
+  - Added `convertFileSrc(filePath, protocol?)` to `DesktopAPI`.
+  - Implemented in `TauriDesktopBridge`: calls Tauri's `convertFileSrc(filePath, 'mangaimg')` with standard localhost URL formatting fallback when running without injected internals.
+  - Updated `PageImage.tsx`:
+    - On desktop (`desktopAPI.isDesktop && mangaLocalPath`), visible images in viewport immediately set `url = desktopAPI.convertFileSrc(absPath, 'mangaimg')` without `read_file` IPC, `new Blob()`, or `URL.createObjectURL()`.
+    - Zero-copy streaming directly from disk to WebView2 texture cache.
+    - Graceful fallback: on decode failure (`onError`), toggles `useBlobFallback(true)` to silently retry via the existing `fileFor` blob queue before surfacing an error button.
+  - Updated `Bookmarks.tsx`:
+    - Chapter bookmark previews utilize `desktopAPI.convertFileSrc` when displaying saved positions on desktop.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.62s).
+  - `npm run format:check`: **PASS**.
+
+## Step C2 — Native Rust Cover & Thumbnail Generation with `fast_image_resize` — 2026-11-11
+
+- **Native Rust Image Resizing & URL Returns (`src-tauri/src/commands/image.rs`, `src-tauri/src/commands/cache.rs`, `src-tauri/src/protocol.rs`)**:
+  - Re-architected `generate_thumbnail` and `generate_image_variant` to return `CachedImageResult { path: String, url: String }` instead of raw binary bytes.
+  - Image downscaling executed using `fast_image_resize` and `image` crate within a bounded Rayon thread pool (`IMAGE_RESIZE_POOL`, 2–6 worker threads) spawned via `tokio::task::spawn_blocking`.
+  - Enforced operational safety ceilings: `MAX_IMAGE_SIDE = 32_768`, `MAX_IMAGE_PIXELS = 16_000_000` (16M pixels).
+  - Thumbnails and variants are written atomically (`write_atomic`) to native disk cache directories (`app_cache_dir/thumbnails/{id}.webp` and `app_cache_dir/variants/{hash}_{w}x{h}.webp`).
+  - Added `get_thumbnail_url(id: String) -> Result<Option<String>, String>` command returning direct `mangaimg` protocol URL if the cached WebP thumbnail already exists on disk.
+  - Registered commands and permissions in `build.rs`, `capabilities/default.json`, and `lib.rs`.
+- **Frontend Zero-Copy Optimization & Web Fallback Isolation (`src/tauriBridge.ts`, `src/App.tsx`, `src/importScan.ts`, `src/PageImage.tsx`)**:
+  - Updated `DesktopAPI` signatures: `getThumbnailUrl(id)`, `generateThumbnail(filePath, id)`, and `generateImageVariant(filePath, maxWidth, maxHeight)` returning `CachedImageResult | null`.
+  - In `src/App.tsx` (`Cover` component): on desktop, queries `desktopAPI.getThumbnailUrl(m.id)` first. When present, directly assigns the protocol URL without fetching blobs, invoking IPC buffer transfers, or tracking object URLs.
+  - In `src/importScan.ts`: on desktop, invokes `desktopAPI.generateThumbnail` to produce the cached disk thumbnail and leaves the in-memory `cover` Blob `undefined`. This prevents retention of large blobs on the V8 heap and avoids subsequent JS-to-Rust thumbnail uploads (`saveThumbnail`). Isolated the `thumbnail()` `ImageBitmap` and `canvas` pipeline purely to web builds (`!cover && !desktopAPI.isDesktop`).
+  - In `src/PageImage.tsx`: low-quality variant generation utilizes `desktopAPI.generateImageVariant` returning the zero-copy URL directly.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **35/35 unit tests PASS** (including `test_path_to_mangaimg_url`, `test_calculate_fitted_dimensions`, and `test_resize_image_fir`, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (all storage and bridge unit tests passing).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.55s).
+  - `npm run format:check`: **PASS**.
+
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: **34/34 unit tests PASS** (3 new protocol tests, 0.01s).
+  - `npm run test:validation`: **98/98 unit tests PASS** (1 new C1 convertFileSrc unit test).
+  - `npm run typecheck` (`tsc -b`): **PASS** (0 errors).
+  - `npm run build`: **PASS** (3.62s).
+  - `npm run format:check`: **PASS**.

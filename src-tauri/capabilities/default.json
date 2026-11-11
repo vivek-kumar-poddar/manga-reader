@@ -22,6 +22,7 @@
     "allow-set-progress-bar",
     "allow-save-thumbnail",
     "allow-read-thumbnail",
+    "allow-get-thumbnail-url",
     "allow-delete-thumbnail",
     "allow-clear-thumbnails",
     "allow-generate-thumbnail",

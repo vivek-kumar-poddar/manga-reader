@@ -178,6 +178,19 @@ pub async fn read_thumbnail(
 }
 
 #[tauri::command]
+pub async fn get_thumbnail_url(
+    app: AppHandle,
+    id: String,
+) -> Result<Option<String>, String> {
+    let path = get_thumbnail_path(&app, &id)?;
+    if path.exists() && path.is_file() {
+        Ok(Some(crate::protocol::path_to_mangaimg_url(&path)))
+    } else {
+        Ok(None)
+    }
+}
+
+#[tauri::command]
 pub async fn delete_thumbnail(app: AppHandle, id: String) -> Result<(), String> {
     let path = get_thumbnail_path(&app, &id)?;
     if path.exists() {

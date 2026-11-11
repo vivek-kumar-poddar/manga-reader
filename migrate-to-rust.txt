@@ -420,6 +420,36 @@ Path: src-tauri/src/commands/indexing.rs; src-tauri/src/commands/image.rs; src/t
       src/importScan.ts; tests/storage-modular.spec.ts.
 Function: Native parallel folder indexing, streaming progress channel, chapter grouping & re-link matching.
 
+16. [COMPLETED] C1. Custom Protocol Scheme in Rust for Zero-Copy Image Streaming
+Changes: NEW src-tauri/src/protocol.rs (custom URI scheme mangaimg protocol handler with RFC 7233 range requests,
+         ETag / 304 conditional GET, Cache-Control max-age=31536000 immutable, AllowedRoots allowlist check,
+         thumbnail cache check, ALLOWED_IMAGE_EXTENSIONS filter, 100 MiB safety ceiling);
+         src-tauri/src/lib.rs (registered asynchronous URI scheme protocol mangaimg);
+         src/tauriBridge.ts (DesktopAPI.convertFileSrc returning http://mangaimg.localhost/ URL with fallback);
+         src/PageImage.tsx (fast zero-copy <img src={desktopAPI.convertFileSrc(absPath)}> path with graceful blob fallback);
+         src/Bookmarks.tsx (zero-copy convertFileSrc for chapter bookmark thumbnails);
+         tests/storage-modular.spec.ts (unit test for convertFileSrc custom scheme URL generation).
+Verified: `cargo test` 34/34 PASS (3 protocol unit tests: path decode, range parsing, mime type);
+          `npm run test:validation` 98/98 PASS; `npm run typecheck` PASS; `npm run build` PASS; `npm run format:check` PASS.
+Keep: Retain blob IPC fallback in PageImage for web builds and decoding errors; enforce AllowedRoots and 100 MiB limit in protocol handler.
+Path: src-tauri/src/protocol.rs; src-tauri/src/lib.rs; src/tauriBridge.ts; src/PageImage.tsx;
+      src/Bookmarks.tsx; tests/storage-modular.spec.ts.
+Function: Custom URI protocol handler, zero-copy image streaming, HTTP range parsing, browser caching.
 
+17. [COMPLETED] C2. Native Rust Cover & Thumbnail Generation with fast_image_resize
+Changes: src-tauri/src/commands/image.rs (generate_thumbnail and generate_image_variant return CachedImageResult
+         with zero-copy mangaimg URL and path, eliminating binary IPC buffer uploads, using spawn_blocking,
+         IMAGE_RESIZE_POOL bounded rayon pool, 16M pixel and 32,768 side caps); src-tauri/src/commands/cache.rs
+         (get_thumbnail_url returning direct protocol URL); src-tauri/build.rs, capabilities/default.json & lib.rs
+         (registered get_thumbnail_url); src/tauriBridge.ts (CachedImageResult, getThumbnailUrl, generateThumbnail/Variant
+         signatures); src/App.tsx (Cover directly uses getThumbnailUrl with zero blob creation or IPC);
+         src/importScan.ts (desktop scan leaves cover blob undefined; generates thumbnail natively on disk, web fallback
+         retains ImageBitmap/canvas); src/PageImage.tsx (generateImageVariant uses zero-copy URL).
+Verified: `cargo test` 35/35 PASS; `npm run test:validation` 98/98 PASS; `npm run typecheck` PASS;
+          `npm run build` PASS; `npm run format:check` PASS.
+Keep: Retain ImageBitmap and canvas path only for web builds; bounded 2-6 thread rayon pool for image resizing.
+Path: src-tauri/src/commands/image.rs; src-tauri/src/commands/cache.rs; src-tauri/src/protocol.rs;
+      src/tauriBridge.ts; src/App.tsx; src/importScan.ts; src/PageImage.tsx; tests/storage-modular.spec.ts.
+Function: Fast native thumbnail and variant generation, zero-copy cached image URLs, disk caching.
 
 

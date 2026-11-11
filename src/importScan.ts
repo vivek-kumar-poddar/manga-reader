@@ -828,26 +828,21 @@ export async function indexSource(
     };
   }
 
-
   // High-performance native Rust indexing on desktop
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
     alive(options.signal);
-    const dto = await desktopAPI.indexTitle(
-      source.localPath,
-      { sort, previous },
-      (progress) => {
-        alive(options.signal);
-        options.update?.({
-          phase: progress.phase as 'discover' | 'index',
-          done: progress.done,
-          total: progress.total,
-          title: progress.title,
-        });
-        if (progress.total > 0) {
-          desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
-        }
-      },
-    );
+    const dto = await desktopAPI.indexTitle(source.localPath, { sort, previous }, (progress) => {
+      alive(options.signal);
+      options.update?.({
+        phase: progress.phase as 'discover' | 'index',
+        done: progress.done,
+        total: progress.total,
+        title: progress.title,
+      });
+      if (progress.total > 0) {
+        desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+      }
+    });
     alive(options.signal);
 
     const m: Manga = {
@@ -1078,17 +1073,16 @@ export async function indexSource(
     typeof (targetEntry as any).absPath === 'string'
   ) {
     try {
-      const buffer = await desktopAPI.generateThumbnail((targetEntry as any).absPath, mangaId);
-      if (buffer && buffer.byteLength > 0) {
-        cover = new Blob([buffer], { type: 'image/webp' });
-      }
+      await desktopAPI.generateThumbnail((targetEntry as any).absPath, mangaId);
+      // Thumbnail generated and saved atomically on disk under cache/thumbnails/{mangaId}.webp
+      // Cover Blob is left undefined to prevent memory retention and JS-to-Rust IPC upload
     } catch {
       // Fallback to JS canvas thumbnail path
     }
   }
 
-  // Web fallback: ImageBitmap and canvas path
-  if (!cover) {
+  // Web fallback: ImageBitmap and canvas path only for web builds
+  if (!cover && !desktopAPI.isDesktop) {
     try {
       cover = await thumbnail(
         await readFile(coverEntry || source.files.get(chapters[0].pages[0].path)!),

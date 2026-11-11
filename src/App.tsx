@@ -205,21 +205,41 @@ export const Cover = memo(function Cover({ m }: { m: Pick<Summary, 'id'> }) {
     if (!host.current) return;
 
     const unobserve = observeCoverVisibility(host.current, () => {
-      void getCover(m.id)
-        .then((blob) => {
-          if (!live || !blob) return;
-          let objectUrl = coverUrlPool.get(m.id);
-          if (!objectUrl) {
-            if (coverUrlPool.size >= MAX_COVER_URLS) {
-              const oldestKey = coverUrlPool.keys().next().value;
-              if (oldestKey) clearCoverUrlPool(oldestKey);
+      if (desktopAPI.isDesktop && desktopAPI.getThumbnailUrl) {
+        desktopAPI
+          .getThumbnailUrl(m.id)
+          .then((thumbUrl) => {
+            if (!live) return;
+            if (thumbUrl) {
+              setUrl(thumbUrl);
+              return;
             }
-            objectUrl = URL.createObjectURL(blob);
-            coverUrlPool.set(m.id, objectUrl);
-          }
-          setUrl(objectUrl);
-        })
-        .catch(() => {});
+            loadCoverBlob();
+          })
+          .catch(() => {
+            if (live) loadCoverBlob();
+          });
+        return;
+      }
+      loadCoverBlob();
+
+      function loadCoverBlob() {
+        void getCover(m.id)
+          .then((blob) => {
+            if (!live || !blob) return;
+            let objectUrl = coverUrlPool.get(m.id);
+            if (!objectUrl) {
+              if (coverUrlPool.size >= MAX_COVER_URLS) {
+                const oldestKey = coverUrlPool.keys().next().value;
+                if (oldestKey) clearCoverUrlPool(oldestKey);
+              }
+              objectUrl = URL.createObjectURL(blob);
+              coverUrlPool.set(m.id, objectUrl);
+            }
+            setUrl(objectUrl);
+          })
+          .catch(() => {});
+      }
     });
 
     return () => {

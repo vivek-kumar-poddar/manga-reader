@@ -12,6 +12,7 @@ fn main() {
       "set_progress_bar",
       "save_thumbnail",
       "read_thumbnail",
+      "get_thumbnail_url",
       "delete_thumbnail",
       "clear_thumbnails",
       "generate_thumbnail",

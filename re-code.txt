@@ -9,7 +9,7 @@ HOW TO USE
 - Invariant: Work through numbered steps in order; land small reviewable changes. Mark [COMPLETED] only after automated acceptance checks pass. Update `docs/verification.md` with evidence.
 
 CRITICAL ARCHITECTURAL INVARIANTS:
-1. No custom protocol schemes (e.g. `manga://`). Use verified IPC (`read-file` / Tauri bridge). Custom schemes break Chromium's `file://` security context and LevelDB/IndexedDB backing store.
+1. Custom protocol schemes for image streaming: Under Tauri v2 (`http://tauri.localhost`), custom asset protocols (`mangaimg:`) are safely scoped to image elements without altering origin storage or SQLite/IndexedDB backing partitions (superseding the legacy Electron `file://` LevelDB constraint). The protocol strictly enforces `AllowedRoots`, 100 MiB limits, and image extension allowlists.
 2. Single-instance process lock to prevent concurrent LevelDB corruption.
 3. Strict bounds on native file access: 100 MiB file ceiling, depth <= 64, <= 100,000 files, allowlisted image extensions only.
 4. Preserve existing user IndexedDB data, reading progress, and settings schema across all refactors.

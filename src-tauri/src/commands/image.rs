@@ -78,12 +78,19 @@ pub fn resize_image_fir(
     Ok(out)
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CachedImageResult {
+    pub path: String,
+    pub url: String,
+}
+
 #[tauri::command]
 pub async fn generate_thumbnail(
     app: AppHandle,
     file_path: String,
     id: String,
-) -> Result<tauri::ipc::Response, String> {
+) -> Result<CachedImageResult, String> {
     let trimmed = file_path.trim().to_string();
     if trimmed.is_empty() {
         return Err("File path cannot be empty".into());
@@ -115,9 +122,16 @@ pub async fn generate_thumbnail(
 
     let thumb_path = crate::commands::cache::get_thumbnail_path(&app, &id)?;
 
-    // Run decode, resize, and atomic write in bounded rayon pool off main/async thread
-    let encoded_bytes = tokio::task::spawn_blocking(move || {
-        IMAGE_RESIZE_POOL.install(|| -> Result<Vec<u8>, String> {
+    if thumb_path.exists() {
+        return Ok(CachedImageResult {
+            path: thumb_path.to_string_lossy().to_string(),
+            url: crate::protocol::path_to_mangaimg_url(&thumb_path),
+        });
+    }
+
+    let thumb_path_clone = thumb_path.clone();
+    tokio::task::spawn_blocking(move || {
+        IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
             let reader = image::ImageReader::open(&resolved)
                 .map_err(|e| format!("Failed to open image file: {e}"))?
                 .with_guessed_format()
@@ -144,19 +158,22 @@ pub async fn generate_thumbnail(
 
             let bytes = resize_image_fir(decoded, target_w, target_h)?;
 
-            if let Some(parent) = thumb_path.parent() {
+            if let Some(parent) = thumb_path_clone.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            // Save to native thumbnail cache atomically
-            let _ = crate::commands::fs::write_atomic(&thumb_path, &bytes);
+            crate::commands::fs::write_atomic(&thumb_path_clone, &bytes)
+                .map_err(|e| format!("Failed to write thumbnail: {e}"))?;
 
-            Ok(bytes)
+            Ok(())
         })
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
 
-    Ok(tauri::ipc::Response::new(encoded_bytes))
+    Ok(CachedImageResult {
+        path: thumb_path.to_string_lossy().to_string(),
+        url: crate::protocol::path_to_mangaimg_url(&thumb_path),
+    })
 }
 
 pub fn generate_thumbnail_direct(
@@ -222,7 +239,7 @@ pub async fn generate_image_variant(
     file_path: String,
     max_width: u32,
     max_height: u32,
-) -> Result<tauri::ipc::Response, String> {
+) -> Result<CachedImageResult, String> {
     let trimmed = file_path.trim().to_string();
     if trimmed.is_empty() {
         return Err("File path cannot be empty".into());
@@ -259,15 +276,15 @@ pub async fn generate_image_variant(
 
     // Check if variant already cached on disk
     if variant_cache_path.exists() {
-        if let Ok(bytes) = tokio::fs::read(&variant_cache_path).await {
-            if !bytes.is_empty() {
-                return Ok(tauri::ipc::Response::new(bytes));
-            }
-        }
+        return Ok(CachedImageResult {
+            path: variant_cache_path.to_string_lossy().to_string(),
+            url: crate::protocol::path_to_mangaimg_url(&variant_cache_path),
+        });
     }
 
-    let encoded_bytes = tokio::task::spawn_blocking(move || {
-        IMAGE_RESIZE_POOL.install(|| -> Result<Vec<u8>, String> {
+    let variant_cache_path_clone = variant_cache_path.clone();
+    tokio::task::spawn_blocking(move || {
+        IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
             let reader = image::ImageReader::open(&resolved)
                 .map_err(|e| format!("Failed to open image file: {e}"))?
                 .with_guessed_format()
@@ -294,15 +311,18 @@ pub async fn generate_image_variant(
 
             let bytes = resize_image_fir(decoded, target_w, target_h)?;
 
-            let _ = crate::commands::fs::write_atomic(&variant_cache_path, &bytes);
+            let _ = crate::commands::fs::write_atomic(&variant_cache_path_clone, &bytes);
 
-            Ok(bytes)
+            Ok(())
         })
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
 
-    Ok(tauri::ipc::Response::new(encoded_bytes))
+    Ok(CachedImageResult {
+        path: variant_cache_path.to_string_lossy().to_string(),
+        url: crate::protocol::path_to_mangaimg_url(&variant_cache_path),
+    })
 }
 
 #[cfg(test)]

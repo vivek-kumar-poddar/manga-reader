@@ -51,6 +51,7 @@ function PageImage({
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [useBlobFallback, setUseBlobFallback] = useState(false);
   const reportRef = useRef(report);
   reportRef.current = report;
 
@@ -105,6 +106,30 @@ function PageImage({
       cancelTask: CancelHandle | null = null,
       objectUrl = '';
 
+    // Fast zero-copy path on desktop: use native custom URI scheme mangaimg:
+    if (!useBlobFallback && desktopAPI.isDesktop && desktopAPI.convertFileSrc && mangaLocalPath) {
+      const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
+      const absPath = mangaLocalPath + sep + pagePath.split('/').join(sep);
+      const customSrc = desktopAPI.convertFileSrc(absPath, 'mangaimg');
+
+      const stop = host.current
+        ? observe(host.current, (visible) => {
+            if (!live) return;
+            if (visible) {
+              setUrl(customSrc);
+              setError('');
+            } else {
+              setUrl('');
+            }
+          })
+        : () => {};
+
+      return () => {
+        live = false;
+        stop();
+      };
+    }
+
     const release = () => {
       if (cancelTask) {
         cancelTask();
@@ -150,14 +175,18 @@ function PageImage({
               if (desktopAPI.isDesktop && desktopAPI.generateImageVariant && m.localPath) {
                 try {
                   const absPath = `${m.localPath.replace(/[/\\]+$/, '')}/${page.path.replace(/^[/\\]+/, '')}`;
-                  const variantBuffer = await desktopAPI.generateImageVariant(
+                  const variantRes = await desktopAPI.generateImageVariant(
                     absPath,
                     1000,
                     targetHeight,
                   );
-                  if (variantBuffer && variantBuffer.byteLength > 0) {
-                    blob = new Blob([variantBuffer], { type: 'image/webp' });
+                  if (variantRes?.url) {
+                    if (live && wanted && !signal.aborted) {
+                      setUrl(variantRes.url);
+                      setError('');
+                    }
                     handled = true;
+                    return;
                   }
                 } catch {
                   /* Fallback to downscaleImage */
@@ -221,6 +250,7 @@ function PageImage({
     Boolean(dimensionsPending),
     lowQuality,
     retry,
+    useBlobFallback,
   ]);
 
   return (
@@ -245,6 +275,7 @@ function PageImage({
           className="page-retry"
           onClick={() => {
             setError('');
+            setUseBlobFallback(false);
             setRetry((x) => x + 1);
           }}
         >
@@ -257,6 +288,11 @@ function PageImage({
           draggable={false}
           decoding="async"
           onError={() => {
+            if (!useBlobFallback && desktopAPI.isDesktop && mangaLocalPath) {
+              // Gracefully fall back to the blob IPC path before showing an error
+              setUseBlobFallback(true);
+              return;
+            }
             const message = `Page ${index + 1} (${page.name}): This browser could not decode the image. It may be damaged, unsupported, or too large for this device. Try another browser or a smaller copy of this image.`;
             setError(message);
             reportRef.current(message);

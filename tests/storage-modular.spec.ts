@@ -478,12 +478,23 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     (globalThis as any).__TAURI_INTERNALS__ = {
       invoke: async (cmd: string, args: any, options?: any) => {
         calls.push({ cmd, args, options });
-        if (
-          cmd === 'read_thumbnail' ||
-          cmd === 'generate_thumbnail' ||
-          cmd === 'generate_image_variant'
-        ) {
+        if (cmd === 'read_thumbnail') {
           return new Uint8Array([0x52, 0x49, 0x46, 0x46]);
+        }
+        if (cmd === 'get_thumbnail_url') {
+          return 'http://mangaimg.localhost/C%3A/cache/thumbnails/thumb-1.webp';
+        }
+        if (cmd === 'generate_thumbnail') {
+          return {
+            path: 'C:/cache/thumbnails/thumb-1.webp',
+            url: 'http://mangaimg.localhost/C%3A/cache/thumbnails/thumb-1.webp',
+          };
+        }
+        if (cmd === 'generate_image_variant') {
+          return {
+            path: 'C:/cache/variants/var.webp',
+            url: 'http://mangaimg.localhost/C%3A/cache/variants/var.webp',
+          };
         }
         return null;
       },
@@ -514,23 +525,21 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       expect(readBuffer).toBeInstanceOf(ArrayBuffer);
       expect(readBuffer?.byteLength).toBe(4);
 
-      // 4. generateThumbnail queries native Rust image engine and returns ArrayBuffer
-      const genBuffer = await bridge.generateThumbnail('C:/manga/ch1/01.jpg', 'thumb-1');
-      expect(genBuffer).toBeInstanceOf(ArrayBuffer);
-      expect(genBuffer?.byteLength).toBe(4);
-      expect(calls[3].cmd).toBe('generate_thumbnail');
-      expect(calls[3].args).toEqual({ filePath: 'C:/manga/ch1/01.jpg', id: 'thumb-1' });
+      // 4. getThumbnailUrl returns direct mangaimg protocol URL
+      const thumbUrl = await bridge.getThumbnailUrl('thumb-1');
+      expect(thumbUrl).toBe('http://mangaimg.localhost/C%3A/cache/thumbnails/thumb-1.webp');
 
-      // 5. generateImageVariant queries native Rust variant engine and returns ArrayBuffer
-      const varBuffer = await bridge.generateImageVariant('C:/manga/ch1/01.jpg', 1000, 1500);
-      expect(varBuffer).toBeInstanceOf(ArrayBuffer);
-      expect(varBuffer?.byteLength).toBe(4);
-      expect(calls[4].cmd).toBe('generate_image_variant');
-      expect(calls[4].args).toEqual({
-        filePath: 'C:/manga/ch1/01.jpg',
-        maxWidth: 1000,
-        maxHeight: 1500,
-      });
+      // 5. generateThumbnail queries native Rust image engine and returns CachedImageResult
+      const genResult = await bridge.generateThumbnail('C:/manga/ch1/01.jpg', 'thumb-1');
+      expect(genResult?.path).toBe('C:/cache/thumbnails/thumb-1.webp');
+      expect(genResult?.url).toContain('mangaimg');
+      expect(calls.some((c) => c.cmd === 'generate_thumbnail')).toBe(true);
+
+      // 6. generateImageVariant queries native Rust variant engine and returns CachedImageResult
+      const varResult = await bridge.generateImageVariant('C:/manga/ch1/01.jpg', 1000, 1500);
+      expect(varResult?.path).toBe('C:/cache/variants/var.webp');
+      expect(varResult?.url).toContain('mangaimg');
+      expect(calls.some((c) => c.cmd === 'generate_image_variant')).toBe(true);
     } finally {
       if (origWindow === undefined) {
         delete (globalThis as any).window;
@@ -1841,5 +1850,17 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       (desktopAPI as any).indexTitle = originalIndexTitle;
       (desktopAPI as any).setProgressBar = originalProgressBar;
     }
+  });
+
+  test('Step C1 — TauriDesktopBridge convertFileSrc formats zero-copy custom protocol URL', () => {
+    const bridge = new TauriDesktopBridge();
+    const resultDefault = bridge.convertFileSrc('C:/Manga/Title/01.jpg');
+    // Default protocol is 'mangaimg'
+    expect(resultDefault).toContain('mangaimg');
+    expect(resultDefault).toContain('01.jpg');
+
+    const resultCustom = bridge.convertFileSrc('C:/Manga/Title/02.webp', 'customscheme');
+    expect(resultCustom).toContain('customscheme');
+    expect(resultCustom).toContain('02.webp');
   });
 });

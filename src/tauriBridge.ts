@@ -1,4 +1,4 @@
-import { invoke, Channel } from '@tauri-apps/api/core';
+import { invoke, Channel, convertFileSrc as tauriConvertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { Manga, Summary, Position, Settings } from './model';
 
@@ -118,6 +118,11 @@ export interface IndexTitleOptions {
   warmChapters?: number;
 }
 
+export interface CachedImageResult {
+  path: string;
+  url: string;
+}
+
 export interface FsErrorPayload {
   code: 'NotFound' | 'TooLarge' | 'ForbiddenExt' | 'PathNotAllowed' | 'Cancelled' | 'Io';
   message?: string;
@@ -159,14 +164,15 @@ export interface DesktopAPI {
   setProgressBar(progress: number): void;
   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
+  getThumbnailUrl?(id: string): Promise<string | null>;
   deleteThumbnail?(id: string): Promise<void>;
   clearThumbnails?(): Promise<void>;
-  generateThumbnail?(filePath: string, id: string): Promise<ArrayBuffer | null>;
+  generateThumbnail?(filePath: string, id: string): Promise<CachedImageResult | null>;
   generateImageVariant?(
     filePath: string,
     maxWidth: number,
     maxHeight: number,
-  ): Promise<ArrayBuffer | null>;
+  ): Promise<CachedImageResult | null>;
   getAppConfig?(): Promise<AppConfig | null>;
   saveAppConfig?(config: AppConfig): Promise<boolean>;
   setAppPreference?(key: string, value: unknown): Promise<boolean>;
@@ -215,6 +221,7 @@ export interface DesktopAPI {
     options?: IndexTitleOptions,
     onProgress?: (progress: IndexScanProgress) => void,
   ): Promise<IndexTitleDto>;
+  convertFileSrc?(filePath: string, protocol?: string): string;
 }
 
 // Detect Tauri runtime presence
@@ -426,24 +433,21 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
-  async generateThumbnail(filePath: string, id: string): Promise<ArrayBuffer | null> {
+  async getThumbnailUrl(id: string): Promise<string | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer>('generate_thumbnail', {
+      return await invoke<string | null>('get_thumbnail_url', { id });
+    } catch (err) {
+      console.warn('Tauri getThumbnailUrl failed for', id, parseFsError(err) ?? err);
+      return null;
+    }
+  }
+
+  async generateThumbnail(filePath: string, id: string): Promise<CachedImageResult | null> {
+    try {
+      return await invoke<CachedImageResult>('generate_thumbnail', {
         filePath,
         id,
       });
-      if (response instanceof ArrayBuffer) {
-        return response.byteLength > 0 ? response : null;
-      }
-      if (response instanceof Uint8Array) {
-        return response.byteLength > 0
-          ? (response.buffer.slice(
-              response.byteOffset,
-              response.byteOffset + response.byteLength,
-            ) as ArrayBuffer)
-          : null;
-      }
-      return null;
     } catch (err) {
       console.warn('Tauri generateThumbnail failed for', filePath, id, parseFsError(err) ?? err);
       return null;
@@ -454,25 +458,13 @@ export class TauriDesktopBridge implements DesktopAPI {
     filePath: string,
     maxWidth: number,
     maxHeight: number,
-  ): Promise<ArrayBuffer | null> {
+  ): Promise<CachedImageResult | null> {
     try {
-      const response = await invoke<Uint8Array | ArrayBuffer>('generate_image_variant', {
+      return await invoke<CachedImageResult>('generate_image_variant', {
         filePath,
         maxWidth,
         maxHeight,
       });
-      if (response instanceof ArrayBuffer) {
-        return response.byteLength > 0 ? response : null;
-      }
-      if (response instanceof Uint8Array) {
-        return response.byteLength > 0
-          ? (response.buffer.slice(
-              response.byteOffset,
-              response.byteOffset + response.byteLength,
-            ) as ArrayBuffer)
-          : null;
-      }
-      return null;
     } catch (err) {
       console.warn('Tauri generateImageVariant failed for', filePath, parseFsError(err) ?? err);
       return null;
@@ -760,6 +752,19 @@ export class TauriDesktopBridge implements DesktopAPI {
       onProgress: channel,
     });
   }
+
+  convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
+    if (
+      typeof window !== 'undefined' &&
+      typeof (window as any).__TAURI_INTERNALS__?.convertFileSrc === 'function'
+    ) {
+      return tauriConvertFileSrc(filePath, protocol);
+    }
+    const normalized = filePath.replace(/\\/g, '/');
+    const pathWithDrive = normalized.replace(/^([a-zA-Z]):/, '$1%3A');
+    const cleanPath = pathWithDrive.startsWith('/') ? pathWithDrive.slice(1) : pathWithDrive;
+    return `http://${protocol}.localhost/${cleanPath}`;
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -808,15 +813,19 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
+  async getThumbnailUrl(): Promise<string | null> {
+    return null;
+  }
+
   async deleteThumbnail(): Promise<void> {}
 
   async clearThumbnails(): Promise<void> {}
 
-  async generateThumbnail(): Promise<ArrayBuffer | null> {
+  async generateThumbnail(): Promise<CachedImageResult | null> {
     return null;
   }
 
-  async generateImageVariant(): Promise<ArrayBuffer | null> {
+  async generateImageVariant(): Promise<CachedImageResult | null> {
     return null;
   }
 
@@ -909,6 +918,10 @@ class WebDesktopBridge implements DesktopAPI {
 
   async indexTitle(): Promise<IndexTitleDto> {
     throw new Error('indexTitle is only available in desktop environment.');
+  }
+
+  convertFileSrc(filePath: string): string {
+    return filePath;
   }
 }
 
