@@ -325,6 +325,32 @@ Verification battery:
 - **Centralized Source Invalidation**:
   - Source version token (`mangaUpdatedAt`) in the URL path ensures that database updates or folder re-scans automatically bust the WebView's HTTP cache without manual cache busting.
 
+### Eliminate Duplicate Work Before Adding Threads (Step 43 — 2.1)
+
+- **Retained Discovery Snapshot (`src-tauri/src/commands/fs.rs` & `indexing.rs`)**:
+  - `DiscoveryState`: Tauri-managed state caching discovery snapshots (`DiscoverySnapshot`) with 15-minute TTL and max 8 entries.
+  - In `discover_library()`, discovered candidate pages and dimensions are cached in `DiscoveryState`.
+  - In `index_title()`, checks `DiscoveryState` for a matching snapshot; if found, revalidates file presence and modification timestamps via `fs::metadata` only without re-running walkdir or reading file bytes. Pre-populates dimension cache directly from the snapshot.
+- **Native Previous Metadata Loading (`src-tauri/src/db.rs`)**:
+  - `DbState::get_previous_manga_for_indexing_sync`: Reads previous manga metadata, chapters, and pages directly from SQLite reader connection by `target_id` or `local_path`.
+  - Eliminates serializing and transferring the entire previous manga record from JS into Rust over IPC.
+- **Native SQLite Indexing Commit (`src-tauri/src/db.rs` & `indexing.rs`)**:
+  - `DbState::save_manga_sync`: Synchronously commits the newly indexed manga record directly to SQLite on the writer lock inside `index_title`.
+  - Eliminates returning the full indexed manga back to JS only for JS to immediately re-serialize and send it back to SQLite via `saveManga`.
+  - Returns enriched `TitleDto` containing summary metadata (`chapter_count`, `page_count`, `has_pending_dimensions`).
+- **Bookmark Cards Direct SQL Join Query (`src-tauri/src/db.rs`)**:
+  - `query_bookmark_cards` / `get_bookmark_cards`: Executes a single SQL query joining `bookmarks`, `manga`, `chapters`, and `pages` with `WHERE` filtering for tabs (`all`, `manga`, `individual`), sort ordering (`newest`, `oldest`, `title-asc`, `title-desc`, `chapter`), and pagination (`LIMIT`/`OFFSET`).
+  - Returns flat `BookmarkCardDto[]` containing all display fields (`mangaTitle`, `chapterName`, `page`, `pagePath`, `fraction`, `mangaBookmark`, `timestamp`, `localPath`).
+  - Eliminates the desktop N+1 loop where `getBookmarkedMangaIds()` fetched all IDs and `getManga()` was called sequentially for every single manga in the library.
+- **Bookmark Small Thumbnail Preview (`src-tauri/src/protocol.rs` & `src/Bookmarks.tsx`)**:
+  - Added `"thumb"` transform variant in `protocol.rs`: generates and caches a dedicated 320×420 WebP thumbnail via `generate_image_variant_direct`.
+  - `src/Bookmarks.tsx`: `Thumbnail` uses `transform: 'thumb'` on desktop, serving the small cached preview instead of decoding full-resolution page images.
+- **Metadata-Only Import Preview Mismatch Check (`src/ImportDialogs.tsx`)**:
+  - Compares `candidate.size` and `candidate.modified` directly against `page.size` and `page.modified` from the discovery scan.
+  - Eliminates calling `candidate.getFile()` (which transferred up to 24 complete image files per target simply to inspect size/mtime).
+- **Blob-Last Pattern (`src/PageImage.tsx`)**:
+  - Requests native image variant URL first on desktop; only falls back to reading original image bytes via `fileFor` if the native variant request fails.
+
 ---
 
 ## 3. Command Reference & Acceptance Benchmarks
@@ -332,9 +358,9 @@ Verification battery:
 | Command                                                                     | Target             | Purpose / Invariant                                                                            |
 | --------------------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`                 | Backend            | Enforces standard Rust formatting.                                                             |
-| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 64 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.      |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 65 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.      |
 | `cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings` | Backend            | Zero Clippy warnings across whole crate.                                                       |
-| `npm run test:validation`                                                   | Frontend / Unit    | Runs 120 Playwright unit & acceptance tests across storage, validation, lifecycle, and images. |
+| `npm run test:validation`                                                   | Frontend / Unit    | Runs 121 Playwright unit & acceptance tests across storage, validation, lifecycle, and images. |
 | `npm run typecheck`                                                         | Frontend           | Runs `tsc -b && tsc -p tsconfig.desktop.json --noEmit` with zero errors across platforms.      |
 | `npm run build`                                                             | Web Production     | Builds production client with PWA service worker.                                              |
 | `npm run build:desktop`                                                     | Desktop Production | Compiles desktop bundle with tree-shaken desktop modules (`dist/assets/index-*.js` ~98 kB).    |

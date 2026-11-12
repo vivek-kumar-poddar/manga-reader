@@ -131,12 +131,18 @@ impl DbState {
             let mut stmt = conn
                 .prepare_cached("SELECT id FROM manga WHERE id = ?1")
                 .ok()?;
-            stmt.query_row([tid], |row| row.get(0)).optional().ok().flatten()
+            stmt.query_row([tid], |row| row.get(0))
+                .optional()
+                .ok()
+                .flatten()
         } else if let Some(lp) = local_path {
             let mut stmt = conn
                 .prepare_cached("SELECT id FROM manga WHERE local_path = ?1")
                 .ok()?;
-            stmt.query_row([lp], |row| row.get(0)).optional().ok().flatten()
+            stmt.query_row([lp], |row| row.get(0))
+                .optional()
+                .ok()
+                .flatten()
         } else {
             None
         };
@@ -149,7 +155,10 @@ impl DbState {
     }
 
     pub fn save_manga_sync(&self, manga: &MangaRecord) -> DbResult<()> {
-        let mut conn = self.writer.lock().map_err(|e| DbError::Lock(e.to_string()))?;
+        let mut conn = self
+            .writer
+            .lock()
+            .map_err(|e| DbError::Lock(e.to_string()))?;
         save_manga(&mut conn, manga)
     }
 }
@@ -1438,9 +1447,15 @@ pub fn query_bookmark_cards(
     let sort_clause = match query.sort.as_deref() {
         Some("newest") => "ORDER BY b.timestamp DESC, b.id DESC",
         Some("oldest") => "ORDER BY b.timestamp ASC, b.id ASC",
-        Some("title-asc") => "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC",
-        Some("title-desc") => "ORDER BY m.title COLLATE NOCASE DESC, c.chapter_idx ASC, b.page ASC, b.id ASC",
-        Some("chapter") => "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC",
+        Some("title-asc") => {
+            "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC"
+        }
+        Some("title-desc") => {
+            "ORDER BY m.title COLLATE NOCASE DESC, c.chapter_idx ASC, b.page ASC, b.id ASC"
+        }
+        Some("chapter") => {
+            "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC"
+        }
         _ => "ORDER BY b.timestamp DESC, b.id DESC",
     };
 
@@ -1762,7 +1777,9 @@ pub async fn get_bookmark_cards(
     state: State<'_, DbState>,
     query: BookmarkCardsQuery,
 ) -> DbResult<BookmarkCardsResult> {
-    state.read(move |conn| query_bookmark_cards(conn, &query)).await
+    state
+        .read(move |conn| query_bookmark_cards(conn, &query))
+        .await
 }
 
 #[tauri::command]

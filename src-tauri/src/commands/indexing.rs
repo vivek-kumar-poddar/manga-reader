@@ -402,96 +402,95 @@ pub async fn index_title(
     }
 
     // 1. Check for retained discovery snapshot to eliminate duplicate walkdir and dimension parsing
-    let (mut scanned_files, mut traversal_issues) = if let Some(discovery_state) =
-        app.try_state::<crate::commands::fs::DiscoveryState>()
-    {
-        if let Some(snapshot) = discovery_state.get_for_path(&root_path) {
-            let relevant: Vec<_> = snapshot
-                .candidates
-                .into_iter()
-                .filter(|c| {
-                    let p = Path::new(&c.absolute_path);
-                    p.starts_with(&root_path)
-                })
-                .collect();
+    let (mut scanned_files, mut traversal_issues) =
+        if let Some(discovery_state) = app.try_state::<crate::commands::fs::DiscoveryState>() {
+            if let Some(snapshot) = discovery_state.get_for_path(&root_path) {
+                let relevant: Vec<_> = snapshot
+                    .candidates
+                    .into_iter()
+                    .filter(|c| {
+                        let p = Path::new(&c.absolute_path);
+                        p.starts_with(&root_path)
+                    })
+                    .collect();
 
-            if !relevant.is_empty() {
-                let root_clone2 = root_path.clone();
-                let cancel_clone = cancel_flag.clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    let mut files = Vec::new();
-                    let mut issues = Vec::new();
-                    for c in relevant {
-                        if let Some(ref cf) = cancel_clone {
-                            if cf.load(std::sync::atomic::Ordering::Relaxed) {
-                                break;
+                if !relevant.is_empty() {
+                    let root_clone2 = root_path.clone();
+                    let cancel_clone = cancel_flag.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let mut files = Vec::new();
+                        let mut issues = Vec::new();
+                        for c in relevant {
+                            if let Some(ref cf) = cancel_clone {
+                                if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                                    break;
+                                }
                             }
-                        }
-                        let abs = PathBuf::from(&c.absolute_path);
-                        let meta = match std::fs::metadata(&abs) {
-                            Ok(m) => m,
-                            Err(e) => {
-                                issues.push(ScanIssue {
-                                    path: c.absolute_path.clone(),
-                                    reason: format!("File missing on commit: {e}"),
-                                });
+                            let abs = PathBuf::from(&c.absolute_path);
+                            let meta = match std::fs::metadata(&abs) {
+                                Ok(m) => m,
+                                Err(e) => {
+                                    issues.push(ScanIssue {
+                                        path: c.absolute_path.clone(),
+                                        reason: format!("File missing on commit: {e}"),
+                                    });
+                                    continue;
+                                }
+                            };
+                            if !meta.is_file() {
                                 continue;
                             }
-                        };
-                        if !meta.is_file() {
-                            continue;
+                            let mtime = meta
+                                .modified()
+                                .ok()
+                                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                                .map(|d| d.as_millis() as f64)
+                                .unwrap_or(0.0);
+                            let size = meta.len();
+
+                            let rel = match abs.strip_prefix(&root_clone2) {
+                                Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                                Err(_) => c.relative_path.clone(),
+                            };
+
+                            let name = abs
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| rel.clone());
+
+                            let (w, h) = if size == c.size
+                                && (mtime - c.modified).abs() < 1000.0
+                                && c.width.is_some()
+                                && c.height.is_some()
+                            {
+                                (c.width, c.height)
+                            } else {
+                                parse_image_dimensions(&abs)
+                            };
+
+                            files.push(ScannedFile {
+                                rel_path: rel,
+                                abs_path: abs,
+                                name,
+                                size,
+                                modified: mtime,
+                                cached_width: w,
+                                cached_height: h,
+                            });
                         }
-                        let mtime = meta
-                            .modified()
-                            .ok()
-                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                            .map(|d| d.as_millis() as f64)
-                            .unwrap_or(0.0);
-                        let size = meta.len();
-
-                        let rel = match abs.strip_prefix(&root_clone2) {
-                            Ok(p) => p.to_string_lossy().replace('\\', "/"),
-                            Err(_) => c.relative_path.clone(),
-                        };
-
-                        let name = abs
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| rel.clone());
-
-                        let (w, h) = if size == c.size
-                            && (mtime - c.modified).abs() < 1000.0
-                            && c.width.is_some()
-                            && c.height.is_some()
-                        {
-                            (c.width, c.height)
-                        } else {
-                            parse_image_dimensions(&abs)
-                        };
-
-                        files.push(ScannedFile {
-                            rel_path: rel,
-                            abs_path: abs,
-                            name,
-                            size,
-                            modified: mtime,
-                            cached_width: w,
-                            cached_height: h,
-                        });
-                    }
-                    (files, issues)
-                })
-                .await
-                .unwrap_or_else(|_| (Vec::new(), Vec::new()))
+                        (files, issues)
+                    })
+                    .await
+                    .unwrap_or_else(|_| (Vec::new(), Vec::new()))
+                } else {
+                    (Vec::new(), Vec::new())
+                }
             } else {
                 (Vec::new(), Vec::new())
             }
         } else {
             (Vec::new(), Vec::new())
-        }
-    } else {
-        (Vec::new(), Vec::new())
-    };
+        };
 
     // If no retained snapshot or snapshot had no valid files, run standard recursive walkdir scan
     if scanned_files.is_empty() {

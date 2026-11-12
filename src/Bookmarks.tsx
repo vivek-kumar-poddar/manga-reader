@@ -25,9 +25,46 @@ import {
 } from './data';
 import { mangaPath } from './paths';
 import { APP_VERSION } from './updates';
-import { desktopAPI } from './tauriBridge';
+import { desktopAPI, type BookmarkCardDto } from './tauriBridge';
 
-type Mark = { manga: Manga; chapter: number; position: Position };
+/** pagePath / localPath / chapterName are pre-populated on desktop from BookmarkCardDto; undefined on web. */
+type Mark = {
+  manga: Manga;
+  chapter: number;
+  position: Position;
+  pagePath?: string;
+  localPath?: string;
+  chapterName?: string;
+};
+
+/** Convert a flat SQL bookmark card into the Mark shape used by the UI. */
+function cardToMark(card: BookmarkCardDto): Mark {
+  const manga: Manga = {
+    id: card.mangaId,
+    title: card.mangaTitle,
+    slug: card.mangaSlug,
+    localPath: card.localPath,
+    updatedAt: card.updatedAt,
+    addedAt: card.timestamp,
+    chapters: [],
+    cover: undefined,
+  } as unknown as Manga;
+  const position: Position = {
+    page: card.page,
+    fraction: card.fraction,
+    path: card.pagePath,
+    mangaBookmark: card.mangaBookmark || undefined,
+    timestamp: card.timestamp,
+  };
+  return {
+    manga,
+    chapter: card.chapterIdx,
+    position,
+    pagePath: card.pagePath,
+    localPath: card.localPath,
+    chapterName: card.chapterName,
+  };
+}
 type BookmarkTab = 'all' | 'manga' | 'individual';
 type BookmarkSort = 'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'chapter';
 export const bookmarkCollator = new Intl.Collator(undefined, {
@@ -40,6 +77,9 @@ const key = (b: Mark) =>
   b.chapter +
   '/' +
   (b.position.mangaBookmark ? 'manga' : b.position.path || b.position.page);
+/** Returns the chapter display name, using the pre-populated field (desktop) or the chapters array (web). */
+const getChapterName = (mark: Mark): string =>
+  mark.chapterName ?? mark.manga.chapters[mark.chapter]?.name ?? '';
 function Thumbnail({ mark }: { mark: Mark }) {
   const host = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState('');
@@ -51,25 +91,20 @@ function Thumbnail({ mark }: { mark: Mark }) {
         if (!entries[0].isIntersecting) return;
         observer.disconnect();
         void (async () => {
-          let blob = mark.manga.cover;
-          const page = mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page];
-          const shouldLoadPage = page && (!mark.position.mangaBookmark || !blob);
-
+          // Desktop: use native page/cover URLs — no blob reads needed.
           if (desktopAPI.isDesktop) {
-            if (shouldLoadPage && desktopAPI.getPageImageUrl && mark.manga.localPath) {
+            const lp = mark.localPath ?? mark.manga.localPath;
+            const pp =
+              mark.pagePath ?? mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page]?.path;
+            const shouldLoadPage = pp && (!mark.position.mangaBookmark || !mark.manga.cover);
+            if (shouldLoadPage && desktopAPI.getPageImageUrl && lp) {
               url = desktopAPI.getPageImageUrl({
                 mangaId: mark.manga.id,
-                pagePath: page.path,
+                pagePath: pp,
                 version: mark.manga.updatedAt,
-                transform: 'preview',
-                localPath: mark.manga.localPath,
+                transform: 'thumb',
+                localPath: lp,
               });
-              if (live) setUrl(url);
-              return;
-            } else if (shouldLoadPage && desktopAPI.convertFileSrc && mark.manga.localPath) {
-              const sep = mark.manga.localPath.includes('\\') ? '\\' : '/';
-              const absPath = mark.manga.localPath + sep + page.path.split('/').join(sep);
-              url = desktopAPI.convertFileSrc(absPath, 'mangaimg');
               if (live) setUrl(url);
               return;
             } else if (!shouldLoadPage && desktopAPI.getCoverImageUrl) {
@@ -79,6 +114,10 @@ function Thumbnail({ mark }: { mark: Mark }) {
             }
           }
 
+          // Web fallback: load blob from filesystem.
+          let blob = mark.manga.cover;
+          const page = mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page];
+          const shouldLoadPage = page && (!mark.position.mangaBookmark || !blob);
           try {
             if (shouldLoadPage && (await access(mark.manga))) {
               blob = await fileFor(mark.manga, page);
@@ -145,6 +184,47 @@ export function BookmarkShelf({
   });
 
   useEffect(() => {
+    // Desktop: use SQL JOIN query — no per-manga getManga() calls needed.
+    // Always fetch tab='all' so badge counts on each tab button remain accurate;
+    // SQL handles sort order; client-side filter drives the active-tab display.
+    if (!desktopAPI.isDesktop || !desktopAPI.getBookmarkCards) return;
+    let live = true;
+    let loadGen = 0;
+    function loadBookmarks() {
+      const currentGen = ++loadGen;
+      setLoading(true);
+      void desktopAPI.getBookmarkCards!({ tab: 'all', sort: carousel ? 'newest' : sortBy })
+        .then((res) => {
+          if (!live || currentGen !== loadGen) return;
+          const result = res.cards.map(cardToMark);
+          setMarks(result);
+          onCountChangeRef.current?.(result.length);
+          setError('');
+        })
+        .catch((e: unknown) => {
+          if (live && currentGen === loadGen) {
+            setError(errorMessage(e));
+            onCountChangeRef.current?.(0);
+          }
+        })
+        .finally(() => {
+          if (live && currentGen === loadGen) setLoading(false);
+        });
+    }
+    loadBookmarks();
+    const onSync = (e: MessageEvent) => {
+      if (e.data?.type === 'progress') loadBookmarks();
+    };
+    syncChannel?.addEventListener('message', onSync);
+    return () => {
+      live = false;
+      syncChannel?.removeEventListener('message', onSync);
+    };
+  }, [carousel, sortBy]);
+
+  useEffect(() => {
+    // Web fallback: load full Manga objects from IndexedDB via getManga().
+    if (desktopAPI.isDesktop) return;
     let live = true;
     let loadGen = 0;
     function loadBookmarks() {
@@ -189,6 +269,7 @@ export function BookmarkShelf({
     };
   }, [library]);
 
+  // On desktop, marks is always all-tabs (SQL fetches tab='all'); filter here for tab display and counts.
   const mangaMarks = marks.filter((m) => Boolean(m.position.mangaBookmark));
   const individualMarks = marks.filter((m) => !m.position.mangaBookmark);
 
@@ -231,7 +312,12 @@ export function BookmarkShelf({
   }
 
   const activeMarks = tab === 'all' ? marks : tab === 'manga' ? mangaMarks : individualMarks;
-  const displayMarks = carousel ? marks : getSortedMarks(activeMarks, sortBy);
+  // Desktop: SQL already sorted; web: apply JS sort.
+  const displayMarks = carousel
+    ? marks
+    : desktopAPI.isDesktop
+      ? activeMarks
+      : getSortedMarks(activeMarks, sortBy);
 
   useEffect(() => {
     const el = track.current;
@@ -268,7 +354,7 @@ export function BookmarkShelf({
     const id = key(mark);
     setRemoving(id);
     try {
-      await removeBookmark(mark.manga.id, mark.manga.chapters[mark.chapter].name, mark.position);
+      await removeBookmark(mark.manga.id, getChapterName(mark), mark.position);
       setMarks((items) => {
         const next = items.filter((b) => key(b) !== id);
         onCountChangeRef.current?.(next.length);
@@ -337,9 +423,7 @@ export function BookmarkShelf({
                 <span className="bookmark-page-number">Manga Bookmarked</span>
               ) : (
                 <>
-                  <p title={mark.manga.chapters[mark.chapter].name}>
-                    {mark.manga.chapters[mark.chapter].name}
-                  </p>
+                  <p title={getChapterName(mark)}>{getChapterName(mark)}</p>
                   <span className="bookmark-page-number">Page {mark.position.page + 1}</span>
                 </>
               )}
@@ -355,7 +439,7 @@ export function BookmarkShelf({
               : 'Remove bookmark: ' +
                 mark.manga.title +
                 ', ' +
-                mark.manga.chapters[mark.chapter].name +
+                getChapterName(mark) +
                 ', page ' +
                 (mark.position.page + 1)
           }
@@ -383,7 +467,7 @@ export function BookmarkShelf({
       description={
         confirmMark?.position.mangaBookmark
           ? `Remove manga bookmark for “${confirmMark.manga.title}”?`
-          : `Remove bookmark for “${confirmMark?.manga.title}” (${confirmMark?.manga.chapters[confirmMark.chapter]?.name || ''}, Page ${(confirmMark?.position.page ?? 0) + 1})?`
+          : `Remove bookmark for “${confirmMark?.manga.title}” (${confirmMark ? getChapterName(confirmMark) : ''}, Page ${(confirmMark?.position.page ?? 0) + 1})?`
       }
     >
       <div className="button-row">
