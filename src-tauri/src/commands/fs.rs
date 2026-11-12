@@ -163,15 +163,23 @@ impl DiscoveryState {
 }
 
 pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    fn has_word_prefix(s: &str, prefix: &str) -> bool {
+        if let Some(rest) = s.strip_prefix(prefix) {
+            rest.is_empty() || !rest.chars().next().unwrap().is_alphanumeric()
+        } else {
+            false
+        }
+    }
+
     fn category(s: &str) -> i32 {
         let trimmed = s.trim_start();
         let lower = trimmed.to_lowercase();
-        if lower.starts_with("prologue") || lower.starts_with("opening") {
+        if has_word_prefix(&lower, "prologue") || has_word_prefix(&lower, "opening") {
             -1
-        } else if lower.starts_with("extra")
-            || lower.starts_with("bonus")
-            || lower.starts_with("special")
-            || lower.starts_with("epilogue")
+        } else if has_word_prefix(&lower, "extra")
+            || has_word_prefix(&lower, "bonus")
+            || has_word_prefix(&lower, "special")
+            || has_word_prefix(&lower, "epilogue")
         {
             1
         } else {
@@ -685,7 +693,7 @@ impl AllowedRoots {
 
         let to_remove_active: Vec<PathBuf> = active
             .iter()
-            .filter(|r| **r == canonical || r.starts_with(&canonical) || canonical.starts_with(r))
+            .filter(|r| **r == canonical || r.starts_with(&canonical))
             .cloned()
             .collect();
         for r in to_remove_active {
@@ -694,7 +702,7 @@ impl AllowedRoots {
 
         let to_remove_unavail: Vec<PathBuf> = unavail
             .iter()
-            .filter(|r| **r == canonical || r.starts_with(&canonical) || canonical.starts_with(r))
+            .filter(|r| **r == canonical || r.starts_with(&canonical))
             .cloned()
             .collect();
         for r in to_remove_unavail {
@@ -747,6 +755,9 @@ static DESTINATION_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
 fn get_destination_lock(path: &Path) -> Arc<Mutex<()>> {
     let key = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut locks = DESTINATION_LOCKS.lock().unwrap();
+    if locks.len() > 1024 {
+        locks.retain(|_, arc| Arc::strong_count(arc) > 1);
+    }
     locks
         .entry(key)
         .or_insert_with(|| Arc::new(Mutex::new(())))
@@ -1414,9 +1425,7 @@ pub async fn discover_library(
         });
     }
 
-    let has_nested_titles = candidates
-        .iter()
-        .any(|c| c.rel_path.split('/').count() >= 3);
+    let has_nested_titles = false;
     let root_folder_name = root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())

@@ -213,15 +213,22 @@ pub fn prune_cache(app: &AppHandle) -> Result<(), String> {
             }
         }
 
-        let total_size: u64 = files.iter().map(|f| f.2).sum();
-        if total_size > 500 * 1024 * 1024 || files.len() > 1000 {
+        let mut total_size: u64 = files.iter().map(|f| f.2).sum();
+        let mut remaining = files.len();
+        if total_size > 500 * 1024 * 1024 || remaining > 1000 {
             files.sort_by_key(|f| f.1); // oldest first
-            let to_remove = (files.len() / 5).max(1);
-            for (p, _, _) in files.into_iter().take(to_remove) {
-                let _ = std::fs::remove_file(p);
+            for (p, _, len) in files {
+                if total_size <= 400 * 1024 * 1024 && remaining <= 800 {
+                    break;
+                }
+                if std::fs::remove_file(p).is_ok() {
+                    total_size = total_size.saturating_sub(len);
+                    remaining = remaining.saturating_sub(1);
+                }
             }
         }
     }
+
     Ok(())
 }
 
@@ -316,12 +323,17 @@ pub async fn save_file_dialog(
     default_name: String,
     content: String,
 ) -> Result<bool, String> {
+    let safe_default = Path::new(&default_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("export.txt")
+        .to_string();
+
     let app_clone = app.clone();
-    let name_clone = default_name.clone();
     let path_opt = tokio::task::spawn_blocking(move || {
         let mut builder = app_clone.dialog().file();
-        if !name_clone.is_empty() {
-            builder = builder.set_file_name(&name_clone);
+        if !safe_default.is_empty() {
+            builder = builder.set_file_name(&safe_default);
         }
         builder.blocking_save_file()
     })
@@ -332,6 +344,14 @@ pub async fn save_file_dialog(
         let pb = file_path
             .into_path()
             .map_err(|e| format!("Invalid selected file path: {e}"))?;
+        let ext = pb
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .unwrap_or_default();
+        if ext != "json" && ext != "txt" {
+            return Err("Only .json and .txt exports are permitted".to_string());
+        }
         let bytes = content.into_bytes();
         tokio::task::spawn_blocking(move || crate::commands::fs::write_atomic(&pb, &bytes))
             .await

@@ -44,7 +44,7 @@ export function folderSlug(name: string) {
 }
 export function uniqueSlug(name: string, used: Set<string>) {
   const base = folderSlug(name);
-  const reserved = ['read', 'assets', 'api'];
+  const reserved = ['read', 'assets', 'api', 'bookmarks', 'index.html'];
   // At most used.size + reserved.length candidates can collide.
   for (let attempt = 0; attempt <= used.size + reserved.length; attempt++) {
     const slug = attempt === 0 ? base : base + '-' + (attempt + 1);

@@ -85,7 +85,7 @@ function Thumbnail({ mark }: { mark: Mark }) {
   const [url, setUrl] = useState('');
   useEffect(() => {
     let live = true,
-      url = '';
+      currentUrl = '';
     const observer = new IntersectionObserver(
       (entries) => {
         if (!entries[0].isIntersecting) return;
@@ -96,20 +96,20 @@ function Thumbnail({ mark }: { mark: Mark }) {
             const lp = mark.localPath ?? mark.manga.localPath;
             const pp =
               mark.pagePath ?? mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page]?.path;
-            const shouldLoadPage = pp && (!mark.position.mangaBookmark || !mark.manga.cover);
-            if (shouldLoadPage && desktopAPI.getPageImageUrl && lp) {
-              url = desktopAPI.getPageImageUrl({
+            const shouldLoadPage = Boolean(pp && !mark.position.mangaBookmark);
+            if (shouldLoadPage && desktopAPI.getPageImageUrl && lp && pp) {
+              currentUrl = desktopAPI.getPageImageUrl({
                 mangaId: mark.manga.id,
                 pagePath: pp,
                 version: mark.manga.updatedAt,
                 transform: 'thumb',
                 localPath: lp,
               });
-              if (live) setUrl(url);
+              if (live) setUrl(currentUrl);
               return;
-            } else if (!shouldLoadPage && desktopAPI.getCoverImageUrl) {
-              url = desktopAPI.getCoverImageUrl(mark.manga.id, mark.manga.updatedAt);
-              if (live) setUrl(url);
+            } else if (desktopAPI.getCoverImageUrl) {
+              currentUrl = desktopAPI.getCoverImageUrl(mark.manga.id, mark.manga.updatedAt);
+              if (live) setUrl(currentUrl);
               return;
             }
           }
@@ -126,8 +126,8 @@ function Thumbnail({ mark }: { mark: Mark }) {
             /* A saved cover remains available without folder permission. */
           }
           if (live && blob) {
-            url = URL.createObjectURL(blob);
-            setUrl(url);
+            currentUrl = URL.createObjectURL(blob);
+            setUrl(currentUrl);
           }
         })();
       },
@@ -137,7 +137,7 @@ function Thumbnail({ mark }: { mark: Mark }) {
     return () => {
       live = false;
       observer.disconnect();
-      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+      if (currentUrl && currentUrl.startsWith('blob:')) URL.revokeObjectURL(currentUrl);
     };
   }, [mark]);
   return (
@@ -176,7 +176,6 @@ export function BookmarkShelf({
   const [edges, setEdges] = useState({ start: true, end: true });
   const drag = useRef<{ x: number; scroll: number; id: number; moved: boolean } | null>(null);
   const suppress = useRef(false);
-  const tabInitialized = useRef(false);
   const onCountChangeRef = useRef(onCountChange);
 
   useEffect(() => {
@@ -312,12 +311,7 @@ export function BookmarkShelf({
   }
 
   const activeMarks = tab === 'all' ? marks : tab === 'manga' ? mangaMarks : individualMarks;
-  // Desktop: SQL already sorted; web: apply JS sort.
-  const displayMarks = carousel
-    ? marks
-    : desktopAPI.isDesktop
-      ? activeMarks
-      : getSortedMarks(activeMarks, sortBy);
+  const displayMarks = carousel ? getSortedMarks(marks, 'newest') : getSortedMarks(activeMarks, sortBy);
 
   useEffect(() => {
     const el = track.current;

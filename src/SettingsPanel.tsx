@@ -83,7 +83,8 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     try {
       assertAtMost(file.size, limits.backupBytes, 'Backup size (bytes)');
       const text = await withinTime(file.text(), limits.ioTimeoutMs, 'Reading backup');
-      const appliedSettings = await restoreBackup(text);
+      const parsed = desktopAPI.isDesktop ? text : validateBackup(JSON.parse(text));
+      const appliedSettings = await restoreBackup(parsed);
       setSettings(appliedSettings);
       await refresh();
       notify('Backup imported. Re-link folders when requested.');

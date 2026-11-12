@@ -19,69 +19,15 @@ import {
 export type SourceFile = File | { getFile(): Promise<File> };
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
 
-export type MangaDeleteListener = (id?: string) => void;
-const deleteListeners = new Set<MangaDeleteListener>();
-
-export function onMangaDelete(listener: MangaDeleteListener): () => void {
-  deleteListeners.add(listener);
-  return () => {
-    deleteListeners.delete(listener);
-  };
-}
-
-export function notifyDelete(id?: string): void {
-  for (const listener of deleteListeners) {
-    try {
-      listener(id);
-    } catch (e) {
-      console.error('Error in manga delete listener:', e);
-    }
-  }
-}
-
-export interface StorageSyncMessage {
-  type: 'library' | 'progress';
-  id?: string;
-}
-
-export const syncChannel =
-  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader:sync') : null;
-
-const localSyncListeners = new Set<(msg: StorageSyncMessage) => void>();
-
-export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () => void {
-  localSyncListeners.add(listener);
-  return () => {
-    localSyncListeners.delete(listener);
-  };
-}
-
-export function broadcastSync(msg: StorageSyncMessage): void {
-  // 1. Dispatch locally to all registered store subscribers in the current window
-  for (const listener of localSyncListeners) {
-    try {
-      listener(msg);
-    } catch (e) {
-      console.warn('Error in local storage sync listener:', e);
-    }
-  }
-
-  // 2. Dispatch synthetic MessageEvent on local syncChannel so local event listeners receive it
-  if (syncChannel && typeof MessageEvent !== 'undefined') {
-    try {
-      syncChannel.dispatchEvent(new MessageEvent('message', { data: msg }));
-    } catch {
-      // Ignore dispatch failure if environment does not support synthetic MessageEvent
-    }
-  }
-
-  // 3. Dispatch across contexts / other windows via native BroadcastChannel
-  try {
-    syncChannel?.postMessage(msg);
-  } catch {
-    // Ignore channel errors
-  }
-}
+export {
+  type MangaDeleteListener,
+  onMangaDelete,
+  notifyDelete,
+  type StorageSyncMessage,
+  syncChannel,
+  onStorageSync,
+  broadcastSync,
+} from '../web/storage';
 
 export function invalidateSummaryCache(): void {
   getRepo().invalidateCaches?.();
@@ -277,7 +223,7 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     if (res.status === 'failed') throw res.error;
     return [];
   }
-  async saveManga() {}
+  async saveManga() { }
   async saveProgress() {
     return 'saved' as const;
   }
@@ -293,9 +239,9 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   async removeBookmark() {
     return [];
   }
-  async deleteManga() {}
-  async clearLibrary() {}
-  async resetProgress() {}
+  async deleteManga() { }
+  async clearLibrary() { }
+  async resetProgress() { }
   async getStoredSettings() {
     const res = await readLegacyIndexedDB();
     if (res.status === 'data') return res.settings;

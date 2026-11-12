@@ -476,7 +476,7 @@ pub fn run_migrations(conn: &Connection) -> DbResult<()> {
             CREATE INDEX IF NOT EXISTS idx_chapters_manga_idx ON chapters(manga_id, chapter_idx);
             CREATE INDEX IF NOT EXISTS idx_pages_manga_chapter ON pages(manga_id, chapter_id);
             CREATE INDEX IF NOT EXISTS idx_progress_manga ON progress(manga_id);
-            CREATE INDEX IF NOT EXISTS idx_bookmarks_manga ON bookmarks(manga_id);
+            CREATE INDEX IF NOT EXISTS idx_bookmarks_manga ON bookmarks(manga_id, chapter_id);
             CREATE INDEX IF NOT EXISTS idx_manga_updated ON manga(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_manga_slug ON manga(slug);
 
@@ -699,16 +699,30 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                         dim_pending,
                     ])?;
                 }
+            } else {
+                tx.execute(
+                    "UPDATE pages SET chapter_idx = ?1 WHERE manga_id = ?2 AND chapter_id = ?3 AND chapter_idx != ?1",
+                    params![c_idx as i64, m.id, ch_id],
+                )?;
             }
         }
     }
 
-    // Remove obsolete chapters (cascades to pages)
-    tx.execute(
-        "DELETE FROM chapters WHERE manga_id = ?1 AND chapter_idx >= ?2",
-        params![m.id, m.chapters.len() as i64],
-    )?;
-
+    // Remove obsolete chapters by chapter_id (cascades to pages, progress, bookmarks)
+    {
+        let existing_ch_ids: Vec<String> = {
+            let mut stmt = tx.prepare("SELECT chapter_id FROM chapters WHERE manga_id = ?1")?;
+            let rows = stmt.query_map(params![m.id], |row| row.get(0))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let mut del_ch_stmt =
+            tx.prepare("DELETE FROM chapters WHERE manga_id = ?1 AND chapter_id = ?2")?;
+        for old_ch_id in existing_ch_ids {
+            if !current_chapter_ids.contains(&old_ch_id) {
+                del_ch_stmt.execute(params![m.id, old_ch_id])?;
+            }
+        }
+    }
     // 3. Diff and upsert progress keyed by stable chapter_id
     type ProgressSnapshot = (bool, Option<i64>, Option<String>, Option<f64>);
     {
@@ -1132,14 +1146,13 @@ pub fn save_progress(
         }
     };
 
-    if let Some(exp_up) = expected_updated_at {
-        if (exp_up - cur_updated_at).abs() > 0.001 {
+    if let Some(exp_rev) = expected_revision {
+        if exp_rev != cur_revision as u64 {
             tx.rollback()?;
             return Ok("stale".to_string());
         }
-    }
-    if let Some(exp_rev) = expected_revision {
-        if exp_rev != cur_revision as u64 {
+    } else if let Some(exp_up) = expected_updated_at {
+        if (exp_up - cur_updated_at).abs() > 0.001 {
             tx.rollback()?;
             return Ok("stale".to_string());
         }
@@ -1506,7 +1519,7 @@ pub fn query_bookmark_cards(
         FROM bookmarks b
         JOIN manga m ON b.manga_id = m.id
         LEFT JOIN chapters c ON b.manga_id = c.manga_id AND b.chapter_id = c.chapter_id
-        LEFT JOIN pages p ON b.manga_id = p.manga_id AND b.chapter_id = p.chapter_id AND b.page = p.idx
+        LEFT JOIN pages p ON b.manga_id = p.manga_id AND c.chapter_id = p.chapter_id AND b.page = p.idx
         {}
         {}",
         where_clause,
@@ -1552,10 +1565,10 @@ pub fn delete_manga(conn: &mut Connection, id: &str) -> DbResult<()> {
 pub fn clear_library(conn: &mut Connection) -> DbResult<()> {
     conn.execute_batch(
         r#"
+        DELETE FROM bookmarks;
+        DELETE FROM progress;
         DELETE FROM pages;
         DELETE FROM chapters;
-        DELETE FROM progress;
-        DELETE FROM bookmarks;
         DELETE FROM manga;
         "#,
     )?;
@@ -1664,16 +1677,6 @@ pub fn restore_backup_tx(
             existing_info.insert(id, (local_path, slug));
         }
     }
-
-    // Clear existing library tables
-    // tx.execute_batch(
-    //     r#"
-    //     DELETE FROM chapters;
-    //     DELETE FROM progress;
-    //     DELETE FROM bookmarks;
-    //     DELETE FROM manga;
-    //     "#,
-    // )?;
 
     for valid_m in &payload.manga {
         let mut m_rec = MangaRecord::from(valid_m.clone());

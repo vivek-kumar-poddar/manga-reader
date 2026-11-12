@@ -24,15 +24,15 @@ export type ImportState =
   | { status: 'preview'; preview: { sources: Source[]; target?: Manga } }
   | { status: 'indexing'; scan: ScanState }
   | {
-      status: 'complete';
-      report: {
-        titles: Manga[];
-        count: number;
-        reused: number;
-        issues: Issue[];
-        retry: ImportPlan[];
-      };
-    }
+    status: 'complete';
+    report: {
+      titles: Manga[];
+      count: number;
+      reused: number;
+      issues: Issue[];
+      retry: ImportPlan[];
+    };
+  }
   | { status: 'failed'; message: string };
 
 export function useImport({
@@ -197,11 +197,7 @@ export function useImport({
           if (activeOp.current !== opId) break;
           options.signal?.throwIfAborted();
           try {
-            const previous = plan.targetId
-              ? desktopAPI.isDesktop
-                ? ({ id: plan.targetId } as Manga)
-                : await getManga(plan.targetId)
-              : undefined;
+            const previous = plan.targetId ? await getManga(plan.targetId) : undefined;
             const result = await indexSource(plan.source, options, previous, plan.sort);
             if (activeOp.current !== opId || options.signal?.aborted) {
               break;

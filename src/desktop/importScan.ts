@@ -1,7 +1,7 @@
 import { uniqueSlug, normalizePath, normalizeRelativePath } from '../paths';
 import { type Directory, type Page, type Chapter, type Manga } from '../model';
 import { matchingPosition, isRecord } from './validation';
-import { limits, LimitError, assertAtMost, assertPathLimits, withinTime } from '../limits';
+import { limits, LimitError, assertAtMost, assertPathLimits, assertImageDimensions, withinTime } from '../limits';
 import { imageFile } from '../images';
 import {
   desktopAPI,
@@ -15,6 +15,7 @@ import {
   saveManga,
   getManga,
   listLibrary,
+  access,
   errorMessage,
   onMangaDelete,
   invalidateSummaryCache,
@@ -22,8 +23,32 @@ import {
   broadcastSync,
 } from './storage';
 
+const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
 export function naturalOrder(a: string, b: string): number {
-  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+  const tokens = (s: string) =>
+    s
+      .normalize('NFC')
+      .toLowerCase()
+      .replace(/\b(chapter|ch)\.?\s*(?=\d)/g, 'ch ')
+      .replace(/\b(volume|vol)\.?\s*(?=\d)/g, 'vol ')
+      .match(/\d+(?:\.\d+)?|[^\d]+/g) || [];
+  const category = (s: string) =>
+    /^(prologue|opening)\b/i.test(s) ? -1 : /^(extra|bonus|special|epilogue)\b/i.test(s) ? 1 : 0;
+  const categoryDiff = category(a) - category(b);
+  if (categoryDiff) return categoryDiff;
+  const aa = tokens(a),
+    bb = tokens(b);
+  for (let i = 0; i < Math.min(aa.length, bb.length); i++) {
+    const x = aa[i],
+      y = bb[i],
+      nx = Number(x),
+      ny = Number(y);
+    const both = x.trim() !== '' && y.trim() !== '' && Number.isFinite(nx) && Number.isFinite(ny);
+    const result = both ? nx - ny : natural.compare(x, y);
+    if (result) return result;
+  }
+  return aa.length - bb.length || natural.compare(a, b);
 }
 
 export async function naturalSortPaths(paths: string[]): Promise<string[]> {
@@ -38,10 +63,15 @@ export async function naturalSortPaths(paths: string[]): Promise<string[]> {
 }
 
 export const ignored = (path: string): boolean =>
-  /(^|\/)\.[^/]+$/.test(path) ||
-  /(^|\/)__MACOSX(\/|$)/.test(path) ||
-  /(^|\/)Thumbs\.db$/i.test(path) ||
-  /(^|\/)desktop\.ini$/i.test(path);
+  path
+    .split('/')
+    .some(
+      (p) =>
+        p.startsWith('.') ||
+        p === '__MACOSX' ||
+        p.toLowerCase() === 'thumbs.db' ||
+        p.toLowerCase() === 'desktop.ini',
+    );
 
 export function clearSessionDimensions(): void { }
 
@@ -238,7 +268,7 @@ export function droppedSources(
 }
 
 export async function splitSource(source: Source): Promise<Source[]> {
-  if (source.discoveredTitles && source.discoveredTitles.length > 0) {
+  if (source.discoveredTitles && source.discoveredTitles.length > 1) {
     const splitTitles: Source[] = [];
     for (const dt of source.discoveredTitles) {
       const s: Source = {
@@ -269,6 +299,7 @@ export async function splitSource(source: Source): Promise<Source[]> {
   }
 
   const result = new Map<string, Source>();
+  const sep = source.localPath?.includes('\\') ? '\\' : '/';
   for (const [path, file] of source.files) {
     const parts = path.split('/');
     const title = parts.length > 1 ? parts.shift()! : `${source.title} — root pages`;
@@ -276,7 +307,7 @@ export async function splitSource(source: Source): Promise<Source[]> {
     if (!s) {
       const childLocalPath =
         source.localPath && title !== `${source.title} — root pages`
-          ? `${source.localPath.replace(/[\\/]+$/, '')}/${title}`
+          ? `${source.localPath.replace(/[\\/]+$/, '')}${sep}${title}`
           : source.localPath;
       s = {
         title,
@@ -391,12 +422,13 @@ export async function indexSource(
         updatedAt: dto.updatedAt,
         revision: dto.revision,
         sort: dto.sort as 'natural' | 'name' | 'reverse',
-        chapters: (dto.chapters || []).map((c) => ({
+        chapters: (dto.chapters || []).map((c: any) => ({
+          ...(c.id ? { id: c.id } : {}),
           name: c.name,
           read: c.read,
           position: c.position,
           bookmarks: c.bookmarks,
-          pages: (c.pages || []).map((p) => ({
+          pages: (c.pages || []).map((p: any) => ({
             name: p.name,
             path: p.path,
             width: p.width,
@@ -455,12 +487,15 @@ export async function prepareChapter(
           headerMap.set(h.path, h);
         }
         let done = 0;
+        let updated = false;
         for (const p of unmeasured) {
           const found = p.path ? headerMap.get(p.path) : undefined;
           if (found && found.width > 0 && found.height > 0) {
+            assertImageDimensions(found.width, found.height);
             p.width = found.width;
             p.height = found.height;
             p.dimensionsPending = false;
+            updated = true;
           } else {
             issues.push({
               path: p.path || p.name,
@@ -474,6 +509,9 @@ export async function prepareChapter(
             total: unmeasured.length,
             title: manga.title,
           });
+        }
+        if (updated) {
+          await saveManga(manga);
         }
         return issues;
       } catch (err) {
@@ -547,20 +585,20 @@ async function runDrainPass(): Promise<void> {
     if (!entry) break;
     const [id, job] = entry;
     try {
-      const manga = await getManga(id);
+      const initial = await getManga(id);
       if (
-        !manga ||
-        manga.updatedAt !== job.updatedAt ||
-        (job.revision !== undefined && manga.revision !== job.revision)
+        !initial ||
+        initial.updatedAt !== job.updatedAt ||
+        (job.revision !== undefined && initial.revision !== job.revision)
       ) {
-        continue; // <-- was: break;
+        continue;
       }
-      let modified = false;
-      for (let i = 0; i < manga.chapters.length; i++) {
+      for (let i = 0; i < initial.chapters.length; i++) {
         alive(job.controller.signal);
-        if (!manga.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
+        if (!initial.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
         await new Promise<void>((r) => setTimeout(r, 50));
         alive(job.controller.signal);
+        if (!(await access(initial))) break;
         const stored = await getManga(id);
         if (
           !stored ||
@@ -569,13 +607,12 @@ async function runDrainPass(): Promise<void> {
         ) {
           break;
         }
-        const issues = await prepareChapter(manga, i, { signal: job.controller.signal });
-        if (!issues.length) {
-          modified = true;
+        const issues = await prepareChapter(stored, i, { signal: job.controller.signal });
+        job.updatedAt = stored.updatedAt;
+        job.revision = stored.revision;
+        if (issues.length > 0 && stored.chapters[i]?.pages.some((p) => p.dimensionsPending)) {
+          break;
         }
-      }
-      if (modified && !job.controller.signal.aborted) {
-        await saveManga(manga);
       }
     } catch {
       /* Interrupted jobs remain pending in saved metadata and can resume later */

@@ -90,7 +90,7 @@ function PageImage({
     return () => {
       live = false;
     };
-  }, [dimensionsPending, mangaLocalPath, pagePath, page, index, onDimensionsResolved]);
+  }, [dimensionsPending, mangaLocalPath, pagePath, index, onDimensionsResolved]);
 
   // Dynamically update priority for waiting tasks as user scrolls near/far
   useEffect(() => {
@@ -200,7 +200,11 @@ function PageImage({
             ) {
               try {
                 const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
-                const absPath = `${m.localPath.replace(/[/\\]+$/, '')}/${page.path.replace(/^[/\\]+/, '')}`;
+                const sep = m.localPath.includes('\\') ? '\\' : '/';
+                const absPath =
+                  m.localPath.replace(/[/\\]+$/, '') +
+                  sep +
+                  page.path.replace(/^[/\\]+/, '').split('/').join(sep);
                 const variantRes = await desktopAPI.generateImageVariant(
                   absPath,
                   1000,
@@ -295,10 +299,12 @@ function PageImage({
     pagePath,
     pageWidth,
     pageHeight,
+    page.modified,
     Boolean(dimensionsPending),
     lowQuality,
     retry,
     useBlobFallback,
+    priority,
   ]);
 
   return (
@@ -354,12 +360,12 @@ function PageImage({
 }
 
 function arePropsEqual(prev: PageImageProps, next: PageImageProps): boolean {
-  const prevNear = Math.abs(prev.index - (prev.activePage ?? prev.index)) <= 1;
-  const nextNear = Math.abs(next.index - (next.activePage ?? next.index)) <= 1;
+  const prevDist = Math.min(10, Math.abs(prev.index - (prev.activePage ?? prev.index)));
+  const nextDist = Math.min(10, Math.abs(next.index - (next.activePage ?? next.index)));
 
   return (
     prev.index === next.index &&
-    prevNear === nextNear &&
+    prevDist === nextDist &&
     prev.lowQuality === next.lowQuality &&
     prev.m.id === next.m.id &&
     prev.m.updatedAt === next.m.updatedAt &&
@@ -369,6 +375,7 @@ function arePropsEqual(prev: PageImageProps, next: PageImageProps): boolean {
     prev.page.width === next.page.width &&
     prev.page.height === next.page.height &&
     prev.page.name === next.page.name &&
+    prev.page.modified === next.page.modified &&
     Boolean(prev.page.dimensionsPending) === Boolean(next.page.dimensionsPending)
   );
 }

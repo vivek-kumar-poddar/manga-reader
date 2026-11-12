@@ -2,6 +2,7 @@ import { mangaPath, mangaDetailsPath, chapterIndex } from './paths';
 import { limits } from './limits';
 import Dropdown from './Dropdown';
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -48,6 +49,7 @@ import {
   prepareChapter,
   access,
   getManga,
+  saveManga,
   saveProgress,
   addBookmark,
   removeBookmark,
@@ -934,19 +936,32 @@ function ReaderView({ manga }: { manga: Manga }) {
   }
 
   const [, setDimRevision] = useState(0);
-  const onDimensionsResolved = (pageIndex: number, width: number, height: number) => {
-    const c = metadata.current.chapters[ci];
-    if (c && c.pages && c.pages[pageIndex]) {
-      c.pages[pageIndex] = {
-        ...c.pages[pageIndex],
-        width,
-        height,
-        dimensionsPending: false,
-      };
-      setDimRevision((v) => v + 1);
-      actions.current.measure(false);
-    }
-  };
+  const dimSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (dimSaveTimer.current) clearTimeout(dimSaveTimer.current);
+    };
+  }, []);
+  const onDimensionsResolved = useCallback(
+    (pageIndex: number, width: number, height: number) => {
+      const c = metadata.current.chapters[ci];
+      if (c && c.pages && c.pages[pageIndex]) {
+        c.pages[pageIndex] = {
+          ...c.pages[pageIndex],
+          width,
+          height,
+          dimensionsPending: false,
+        };
+        setDimRevision((v) => v + 1);
+        actions.current.measure(false);
+        if (dimSaveTimer.current) clearTimeout(dimSaveTimer.current);
+        dimSaveTimer.current = setTimeout(() => {
+          void saveManga(metadata.current).catch(() => { });
+        }, 500);
+      }
+    },
+    [ci],
+  );
 
   if (allowed === null)
     return (
@@ -1180,7 +1195,7 @@ function ReaderView({ manga }: { manga: Manga }) {
                   m={manga}
                   page={p}
                   index={actualIndex}
-                  activePage={s.mode === 'single' ? singlePage : undefined}
+                  activePage={pageStore.getPage()}
                   lowQuality={s.lowQuality}
                   report={setFailure}
                   retryPreparation={retryPreparation}
@@ -1255,7 +1270,7 @@ function ReaderView({ manga }: { manga: Manga }) {
             onChange={(e) => goChapter(Number(e.target.value))}
           >
             {manga.chapters.map((c, i) => (
-              <option key={c.name} value={i}>
+              <option key={c.id || `${i}:${c.name}`} value={i}>
                 {metadata.current.chapters[i].read ? '✓ ' : ''}
                 {c.name}
               </option>

@@ -189,38 +189,52 @@ export async function migrateV1ToV2(tx: any, _d?: IDBPDatabase<MangaDB>): Promis
   }
 }
 
-export const db: Promise<IDBPDatabase<MangaDB>> =
-  typeof indexedDB !== 'undefined'
-    ? openDB<MangaDB>('manga-reader', 2, {
-      async upgrade(d, old, _new, tx) {
-        if (old < 1) {
-          d.createObjectStore('manga', { keyPath: 'id' });
-          d.createObjectStore('settings');
-        }
-        if (old < 2) {
-          d.createObjectStore('summaries', { keyPath: 'id' });
-          d.createObjectStore('covers');
-          const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
-          p.createIndex('mangaId', 'mangaId');
-          try {
-            await migrateV1ToV2(tx, d);
-          } catch (err) {
-            console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
-            tx.abort();
-            throw err;
-          }
-        }
-      },
-      blocking() {
-        void db.then((d) => d.close());
-      },
-      blocked() {
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
-        }
-      },
-    })
-    : (new Promise(() => { }) as unknown as Promise<IDBPDatabase<MangaDB>>);
+let dbInstance: Promise<IDBPDatabase<MangaDB>> | null = null;
+
+function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
+  if (!dbInstance) {
+    dbInstance =
+      typeof indexedDB !== 'undefined'
+        ? openDB<MangaDB>('manga-reader', 2, {
+          async upgrade(d, old, _new, tx) {
+            if (old < 1) {
+              d.createObjectStore('manga', { keyPath: 'id' });
+              d.createObjectStore('settings');
+            }
+            if (old < 2) {
+              d.createObjectStore('summaries', { keyPath: 'id' });
+              d.createObjectStore('covers');
+              const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
+              p.createIndex('mangaId', 'mangaId');
+              try {
+                await migrateV1ToV2(tx, d);
+              } catch (err) {
+                console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
+                tx.abort();
+                throw err;
+              }
+            }
+          },
+          blocking() {
+            void dbInstance?.then((d) => d.close());
+          },
+          blocked() {
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
+            }
+          },
+        })
+        : (new Promise(() => { }) as unknown as Promise<IDBPDatabase<MangaDB>>);
+  }
+  return dbInstance;
+}
+
+export const db: Promise<IDBPDatabase<MangaDB>> = desktopAPI.isDesktop
+  ? ({
+    then: (onfulfilled?: any, onrejected?: any) =>
+      getWebDb().then(onfulfilled, onrejected),
+  } as Promise<IDBPDatabase<MangaDB>>)
+  : getWebDb();
 
 export const listLibraryIdb = async (): Promise<Summary[]> => {
   if (cachedSummaries !== null) {
@@ -670,6 +684,13 @@ export async function restoreBackupIdb(backup: {
     const database = await db;
 
     // Read existing handles, local paths, and covers to preserve them
+    const existingSummaries = await listLibraryIdb();
+    const backupIds = new Set(backup.manga.map((m) => m.id));
+    const usedSlugs = new Set<string>(
+      existingSummaries
+        .filter((s) => !backupIds.has(s.id) && Boolean(s.slug))
+        .map((s) => s.slug!),
+    );
     const existingManga = new Map<string, Manga>();
     for (const m of backup.manga) {
       const existing = await getMangaIdb(m.id);
@@ -679,7 +700,6 @@ export async function restoreBackupIdb(backup: {
     }
 
     const now = Date.now();
-    const usedSlugs = new Set<string>();
     const preparedList: {
       manga: Omit<Manga, 'cover'>;
       summary: Summary;
@@ -699,7 +719,8 @@ export async function restoreBackupIdb(backup: {
       const localPath = old?.localPath;
       const coverBlob = old?.cover;
 
-      const slug = old?.slug || uniqueSlug(raw.title, usedSlugs);
+      const slug =
+        old?.slug && !usedSlugs.has(old.slug) ? old.slug : uniqueSlug(raw.title, usedSlugs);
       usedSlugs.add(slug);
 
       const m: Manga = {
@@ -909,8 +930,11 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     return restoreBackupIdb(payload);
   }
   invalidateCaches(): void {
-    invalidateSummaryCache();
-    invalidateBookmarkCache();
+    cachedSummaries = null;
+    bookmarkGeneration++;
+    cachedBookmarkedMangaIds = null;
+    cachedMangaBookmarkedIds = null;
+    bookmarkCachePromise = null;
   }
 }
 

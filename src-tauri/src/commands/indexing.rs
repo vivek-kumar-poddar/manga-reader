@@ -153,7 +153,7 @@ pub fn generate_slug(name: &str) -> String {
         }
     }
     let trimmed = slug.trim_matches('-');
-    if trimmed.is_empty() {
+    if trimmed.is_empty() || matches!(trimmed, "read" | "assets" | "api" | "bookmarks" | "index-html") {
         "manga".to_string()
     } else {
         trimmed.to_string()
@@ -822,15 +822,32 @@ pub async fn index_title(
         // Apply parsed dimensions back to warm chapters
         for name in &warm_names {
             if let Some(pages) = grouped_pages.get_mut(name) {
-                for p in pages.iter_mut() {
+                pages.retain_mut(|p| {
+                    if !p.dimensions_pending {
+                        return true;
+                    }
                     if let Some(&(w, h)) = parsed_results.get(&p.path) {
                         p.width = w;
                         p.height = h;
                         p.dimensions_pending = false;
+                        true
+                    } else {
+                        false
                     }
-                }
+                });
             }
         }
+    }
+
+    grouped_pages.retain(|_, pages| !pages.is_empty());
+    chapter_names.retain(|name| grouped_pages.contains_key(name));
+
+    if chapter_names.is_empty() {
+        return Err(if let Some(first_issue) = traversal_issues.first() {
+            format!("No readable pages. {}: {}", first_issue.path, first_issue.reason)
+        } else {
+            "No image pages found in this selection.".to_string()
+        });
     }
 
     check_cancelled(handle.as_ref())?;
@@ -900,7 +917,13 @@ pub async fn index_title(
     let base_slug = generate_slug(&title_name);
     let slug = if let Some(ref prev) = previous_manga {
         if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str()) || opts.title.is_none() {
-            prev.slug.clone().unwrap_or_else(|| base_slug.clone())
+            prev.slug.clone().unwrap_or_else(|| {
+                app.try_state::<crate::db::DbState>()
+                    .map(|db| db.allocate_unique_slug_sync(&base_slug, &manga_id))
+                    .unwrap_or_else(|| base_slug.clone())
+            })
+        } else if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+            db_state.allocate_unique_slug_sync(&base_slug, &manga_id)
         } else {
             base_slug
         }

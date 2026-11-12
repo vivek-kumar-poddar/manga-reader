@@ -742,7 +742,7 @@ export function droppedSources(
 
 export async function splitSource(source: Source): Promise<Source[]> {
   assertSourceLimits(source);
-  if (source.discoveredTitles && source.discoveredTitles.length > 0) {
+  if (source.discoveredTitles && source.discoveredTitles.length > 1) {
     const splitTitles: Source[] = [];
     for (const dt of source.discoveredTitles) {
       const s: Source = {
@@ -773,13 +773,21 @@ export async function splitSource(source: Source): Promise<Source[]> {
   }
 
   const result = new Map<string, Source>();
+  const sep = source.localPath?.includes('\\') ? '\\' : '/';
   for (const [path, file] of source.files) {
     const parts = path.split('/');
     const title = parts.length > 1 ? parts.shift()! : source.title + ' — root pages';
-    const s = result.get(title) || { title, files: new Map(), issues: [] };
+    let s = result.get(title);
+    if (!s) {
+      const childLocalPath =
+        source.localPath && title !== source.title + ' — root pages'
+          ? `${source.localPath.replace(/[\\/]+$/, '')}${sep}${title}`
+          : source.localPath;
+      s = { title, localPath: childLocalPath, files: new Map(), issues: [] };
+      result.set(title, s);
+      assertAtMost(result.size, limits.titles, 'Selected titles');
+    }
     s.files.set(parts.join('/'), file);
-    result.set(title, s);
-    assertAtMost(result.size, limits.titles, 'Selected titles');
   }
   for (const s of result.values())
     if (source.handle && s.title !== source.title + ' — root pages') {
@@ -900,12 +908,13 @@ export async function indexSource(
         updatedAt: dto.updatedAt,
         revision: dto.revision,
         sort: dto.sort as 'natural' | 'name' | 'reverse',
-        chapters: (dto.chapters || []).map((c) => ({
+        chapters: (dto.chapters || []).map((c: any) => ({
+          ...(c.id ? { id: c.id } : {}),
           name: c.name,
           read: c.read,
           position: c.position,
           bookmarks: c.bookmarks,
-          pages: (c.pages || []).map((p) => ({
+          pages: (c.pages || []).map((p: any) => ({
             name: p.name,
             path: p.path,
             width: p.width,
@@ -1391,20 +1400,20 @@ async function runDrainPass() {
   while (backgroundJobs.size && remaining-- > 0) {
     const [id, job] = backgroundJobs.entries().next().value!;
     try {
-      const manga = await getManga(id);
+      const initial = await getManga(id);
       if (
-        !manga ||
-        manga.updatedAt !== job.updatedAt ||
-        (job.revision !== undefined && manga.revision !== job.revision)
+        !initial ||
+        initial.updatedAt !== job.updatedAt ||
+        (job.revision !== undefined && initial.revision !== job.revision)
       ) {
         continue;
       }
-      for (let i = 0; i < manga.chapters.length; i++) {
+      for (let i = 0; i < initial.chapters.length; i++) {
         alive(job.controller.signal);
-        if (!manga.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
+        if (!initial.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
         await new Promise<void>((r) => setTimeout(r, 100));
         alive(job.controller.signal);
-        if (!(await access(manga))) break;
+        if (!(await access(initial))) break;
         const stored = await getManga(id);
         if (
           !stored ||
@@ -1413,7 +1422,12 @@ async function runDrainPass() {
         ) {
           break;
         }
-        await prepareChapter(manga, i, { signal: job.controller.signal });
+        const issues = await prepareChapter(stored, i, { signal: job.controller.signal });
+        job.updatedAt = stored.updatedAt;
+        job.revision = stored.revision;
+        if (issues.length > 0 && stored.chapters[i]?.pages.some((p) => p.dimensionsPending)) {
+          break;
+        }
       }
     } catch {
       /* Interrupted jobs remain pending in saved metadata and can resume later. */

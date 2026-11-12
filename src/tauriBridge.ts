@@ -204,15 +204,15 @@ export interface FsErrorPayload {
 
 export interface DbErrorPayload {
   code:
-    | 'Sqlite'
-    | 'Migration'
-    | 'Lock'
-    | 'Validation'
-    | 'NotFound'
-    | 'Conflict'
-    | 'Task'
-    | 'Io'
-    | 'Serialization';
+  | 'Sqlite'
+  | 'Migration'
+  | 'Lock'
+  | 'Validation'
+  | 'NotFound'
+  | 'Conflict'
+  | 'Task'
+  | 'Io'
+  | 'Serialization';
   message?: string;
 }
 
@@ -340,7 +340,7 @@ export interface TauriCommands {
   };
   sqlite_get_bookmarked_manga_ids: {
     args: Record<string, never>;
-    return: { allBookmarked: string[]; mangaBookmarked: string[] };
+    return: { allBookmarkedIds: string[]; mangaBookmarkedIds: string[] };
   };
   get_bookmark_cards: {
     args: { query: BookmarkCardsQuery };
@@ -788,9 +788,9 @@ export class TauriDesktopBridge implements DesktopAPI {
       if (response instanceof Uint8Array) {
         return response.byteLength > 0
           ? (response.buffer.slice(
-              response.byteOffset,
-              response.byteOffset + response.byteLength,
-            ) as ArrayBuffer)
+            response.byteOffset,
+            response.byteOffset + response.byteLength,
+          ) as ArrayBuffer)
           : null;
       }
       return null;
@@ -1082,38 +1082,37 @@ export class TauriDesktopBridge implements DesktopAPI {
         root,
         options: options
           ? {
-              sort: options.sort,
-              warmChapters: options.warmChapters,
-              jobId,
-              title: options.title,
-              targetId: options.targetId ?? options.previous?.id,
-              previous:
-                options.previous && !options.targetId
-                  ? {
-                      id: options.previous.id,
-                      title: options.previous.title,
-                      slug: options.previous.slug,
-                      lastChapter: options.previous.lastChapter,
-                      addedAt: options.previous.addedAt,
-                      revision: options.previous.revision,
-                      chapters: options.previous.chapters.map((c) => ({
-                        name: c.name,
-                        read: c.read,
-                        position: c.position,
-                        bookmarks: c.bookmarks,
-                        pages: c.pages.map((p) => ({
-                          name: p.name,
-                          path: p.path,
-                          width: p.width,
-                          height: p.height,
-                          size: p.size,
-                          modified: p.modified,
-                          dimensionsPending: p.dimensionsPending,
-                        })),
-                      })),
-                    }
-                  : undefined,
-            }
+            sort: options.sort,
+            warmChapters: options.warmChapters,
+            jobId,
+            title: options.title,
+            targetId: options.targetId ?? options.previous?.id,
+            previous: options.previous
+              ? {
+                id: options.previous.id,
+                title: options.previous.title,
+                slug: options.previous.slug,
+                lastChapter: options.previous.lastChapter,
+                addedAt: options.previous.addedAt,
+                revision: options.previous.revision,
+                chapters: options.previous.chapters.map((c) => ({
+                  name: c.name,
+                  read: c.read,
+                  position: c.position,
+                  bookmarks: c.bookmarks,
+                  pages: c.pages.map((p) => ({
+                    name: p.name,
+                    path: p.path,
+                    width: p.width,
+                    height: p.height,
+                    size: p.size,
+                    modified: p.modified,
+                    dimensionsPending: p.dimensionsPending,
+                  })),
+                })),
+              }
+              : undefined,
+          }
           : undefined,
         onProgress: channel,
       } as any);
@@ -1135,6 +1134,13 @@ export class TauriDesktopBridge implements DesktopAPI {
   }
 
   convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
+    if (typeof tauriConvertFileSrc === 'function' && isTauri) {
+      try {
+        return tauriConvertFileSrc(filePath, protocol);
+      } catch {
+        // fallback below
+      }
+    }
     const normalized = filePath.replace(/\\/g, '/');
     const isWindowsDrive = /^([a-zA-Z]):/.test(normalized);
     const drivePrefix = isWindowsDrive ? normalized.slice(0, 1) + '%3A' : '';
@@ -1157,7 +1163,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
   onDragDrop(callback: (paths: string[]) => void): () => void {
     if (typeof window === 'undefined') {
-      return () => {};
+      return () => { };
     }
     let unlistenNative: (() => void) | undefined;
     let unlistenTauri: (() => void) | undefined;
@@ -1165,7 +1171,7 @@ export class TauriDesktopBridge implements DesktopAPI {
 
     if (typeof (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ !== 'object') {
       (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-        unregisterListener: () => {},
+        unregisterListener: () => { },
       };
     }
 
@@ -1180,12 +1186,12 @@ export class TauriDesktopBridge implements DesktopAPI {
         if (!active) {
           try {
             void un();
-          } catch {}
+          } catch { }
         } else {
           unlistenNative = un;
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
       if (!active) return;
@@ -1198,21 +1204,21 @@ export class TauriDesktopBridge implements DesktopAPI {
         if (!active) {
           try {
             void un();
-          } catch {}
+          } catch { }
         } else {
           unlistenTauri = un;
         }
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       active = false;
       try {
         unlistenNative?.();
-      } catch {}
+      } catch { }
       try {
         unlistenTauri?.();
-      } catch {}
+      } catch { }
     };
   }
 
@@ -1250,7 +1256,7 @@ class WebDesktopBridge implements DesktopAPI {
   readonly isTauri = false;
 
   onDragDrop(): () => void {
-    return () => {};
+    return () => { };
   }
 
   async selectFolder(): Promise<string | null> {
@@ -1305,7 +1311,7 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  setProgressBar(): void {}
+  setProgressBar(): void { }
 
   async showMainWindow(): Promise<boolean> {
     return false;
@@ -1323,9 +1329,9 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  async deleteThumbnail(): Promise<void> {}
+  async deleteThumbnail(): Promise<void> { }
 
-  async clearThumbnails(): Promise<void> {}
+  async clearThumbnails(): Promise<void> { }
 
   async generateThumbnail(): Promise<CachedImageResult | null> {
     return null;
@@ -1379,7 +1385,7 @@ class WebDesktopBridge implements DesktopAPI {
     return undefined;
   }
 
-  async sqliteSaveManga(): Promise<void> {}
+  async sqliteSaveManga(): Promise<void> { }
 
   async sqliteSaveProgress(): Promise<'saved' | 'stale' | 'missing'> {
     return 'saved';
@@ -1404,11 +1410,11 @@ class WebDesktopBridge implements DesktopAPI {
     return { cards: [], total: 0 };
   }
 
-  async sqliteDeleteManga(): Promise<void> {}
+  async sqliteDeleteManga(): Promise<void> { }
 
-  async sqliteClearLibrary(): Promise<void> {}
+  async sqliteClearLibrary(): Promise<void> { }
 
-  async sqliteResetProgress(): Promise<void> {}
+  async sqliteResetProgress(): Promise<void> { }
 
   async sqliteGetSettings(): Promise<Settings | undefined> {
     return undefined;
@@ -1457,7 +1463,7 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  async installUpdate(): Promise<void> {}
+  async installUpdate(): Promise<void> { }
 
   async getStorageStats(): Promise<StorageStats> {
     return { db_bytes: 0, cache_bytes: 0, total_bytes: 0 };

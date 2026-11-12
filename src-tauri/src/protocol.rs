@@ -392,8 +392,10 @@ fn try_find_and_generate_cover(
         "cover.jpeg",
         "cover.png",
         "cover.webp",
-        "Cover.jpg",
-        "Cover.png",
+        "thumbnail.jpg",
+        "thumbnail.jpeg",
+        "thumbnail.png",
+        "thumbnail.webp",
         "folder.jpg",
     ] {
         let candidate = base_dir.join(name);
@@ -402,14 +404,15 @@ fn try_find_and_generate_cover(
         }
     }
 
-    // Search immediate files in base_dir
     if let Ok(entries) = std::fs::read_dir(base_dir) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.is_file())
             .collect();
-        files.sort();
+        files.sort_by(|a, b| {
+            crate::commands::fs::natural_order(&a.to_string_lossy(), &b.to_string_lossy())
+        });
         for path in files {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 if ALLOWED_IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
@@ -419,14 +422,15 @@ fn try_find_and_generate_cover(
         }
     }
 
-    // Search first subfolder (e.g. Chapter 1)
     if let Ok(entries) = std::fs::read_dir(base_dir) {
         let mut subdirs: Vec<PathBuf> = entries
             .flatten()
             .map(|e| e.path())
-            .filter(|p| p.is_dir())
+            .filter(|p| p.is_dir() && !crate::commands::fs::is_ignored_directory(p))
             .collect();
-        subdirs.sort();
+        subdirs.sort_by(|a, b| {
+            crate::commands::fs::natural_order(&a.to_string_lossy(), &b.to_string_lossy())
+        });
         for subdir in subdirs {
             if let Ok(sub_entries) = std::fs::read_dir(&subdir) {
                 let mut files: Vec<PathBuf> = sub_entries
@@ -434,7 +438,9 @@ fn try_find_and_generate_cover(
                     .map(|e| e.path())
                     .filter(|p| p.is_file())
                     .collect();
-                files.sort();
+                files.sort_by(|a, b| {
+                    crate::commands::fs::natural_order(&a.to_string_lossy(), &b.to_string_lossy())
+                });
                 for f in files {
                     if let Some(ext) = f.extension().and_then(|e| e.to_str()) {
                         if ALLOWED_IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {

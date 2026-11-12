@@ -25,6 +25,7 @@ export default function MangaDetails() {
       nav('/', { replace: true });
     }
   }, [slug, nav]);
+
   useEffect(() => {
     let live = true;
     let revision = 0;
@@ -56,19 +57,26 @@ export default function MangaDetails() {
       document.removeEventListener('visibilitychange', visible);
     };
   }, [summary, retry]);
+
   const chapters = useMemo(() => {
     const entries = manga?.chapters.map((chapter, index) => ({ chapter, index })) || [];
     if (sort === 'last') entries.reverse();
     if (sort === 'unread')
       entries.sort((a, b) => Number(a.chapter.read) - Number(b.chapter.read) || a.index - b.index);
-    const query = chapterQuery.trim();
+    const query = chapterQuery.trim().toLowerCase();
     if (!query) return entries;
-    if (!/^\d+$/.test(query)) return [];
     const number = Number(query);
-    return entries.filter(({ index }) => index + 1 === number);
+    return entries.filter(({ chapter, index }) => {
+      if (Number.isFinite(number) && index + 1 === number) return true;
+      const match = chapter.name.toLowerCase().match(/\d+(?:\.\d+)?/g);
+      const numTokens: string[] = match ? Array.from(match) : [];
+      return numTokens.includes(query) || chapter.name.toLowerCase().includes(query);
+    });
   }, [manga, sort, chapterQuery]);
+
   const current = manga?.chapters[manga.lastChapter];
   const hasProgress = !!current?.position;
+
   return (
     <main className="manga-details">
       <nav className="manga-details-nav" aria-label="Manga navigation">

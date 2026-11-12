@@ -294,7 +294,7 @@ export function parseChapter(value: unknown, chapterIndex: number, oldChapter?: 
     for (const b of value.bookmarks) {
       const parsed = parsePosition(b, pages, oldChapter?.pages);
       if (parsed) {
-        const key = `${parsed.page}:${parsed.path}`;
+        const key = `${parsed.page}:${parsed.path ?? ''}:${Boolean(parsed.mangaBookmark)}`;
         if (!seenBookmarks.has(key)) {
           seenBookmarks.add(key);
           bookmarks.push(parsed);
@@ -382,8 +382,8 @@ export function parseManga(
 
   const localPath =
     options.preserveHardwarePointers &&
-    typeof value.localPath === 'string' &&
-    value.localPath.trim()
+      typeof value.localPath === 'string' &&
+      value.localPath.trim()
       ? value.localPath.trim()
       : undefined;
 
@@ -430,22 +430,22 @@ export function parseSummary(
 
   const chapterCount =
     typeof value.chapterCount === 'number' &&
-    Number.isInteger(value.chapterCount) &&
-    value.chapterCount >= 0
+      Number.isInteger(value.chapterCount) &&
+      value.chapterCount >= 0
       ? value.chapterCount
       : 0;
 
   const chaptersRead =
     typeof value.chaptersRead === 'number' &&
-    Number.isInteger(value.chaptersRead) &&
-    value.chaptersRead >= 0
+      Number.isInteger(value.chaptersRead) &&
+      value.chaptersRead >= 0
       ? Math.min(chapterCount, value.chaptersRead)
       : 0;
 
   const lastChapter =
     typeof value.lastChapter === 'number' &&
-    Number.isInteger(value.lastChapter) &&
-    value.lastChapter >= 0
+      Number.isInteger(value.lastChapter) &&
+      value.lastChapter >= 0
       ? Math.max(0, Math.min(Math.max(0, chapterCount - 1), value.lastChapter))
       : 0;
 
@@ -580,9 +580,9 @@ export function parseSettings(value: unknown): Settings {
 
   const shelfSort: Settings['shelfSort'] =
     s.shelfSort === 'recent' ||
-    s.shelfSort === 'title' ||
-    s.shelfSort === 'added' ||
-    s.shelfSort === 'progress'
+      s.shelfSort === 'title' ||
+      s.shelfSort === 'added' ||
+      s.shelfSort === 'progress'
       ? s.shelfSort
       : undefined;
 
