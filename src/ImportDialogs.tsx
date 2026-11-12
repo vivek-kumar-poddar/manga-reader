@@ -338,13 +338,40 @@ export function ImportDialog({
           const candidate = plan.source.files.get(page.path);
           if (!candidate) continue;
           try {
-            const file = candidate instanceof File ? candidate : await candidate.getFile();
-            if (
-              page.size !== undefined &&
-              page.size === file.size &&
-              page.modified === file.lastModified
-            )
-              matched++;
+            const cand = candidate as any;
+            const candidateSize =
+              typeof cand.size === 'number'
+                ? cand.size
+                : candidate instanceof File
+                  ? candidate.size
+                  : undefined;
+            const candidateModified =
+              typeof cand.modified === 'number'
+                ? cand.modified
+                : typeof cand.lastModified === 'number'
+                  ? cand.lastModified
+                  : candidate instanceof File
+                    ? candidate.lastModified
+                    : undefined;
+
+            if (candidateSize !== undefined && candidateModified !== undefined) {
+              if (
+                page.size !== undefined &&
+                page.size === candidateSize &&
+                page.modified === candidateModified
+              ) {
+                matched++;
+              }
+            } else {
+              const file = candidate instanceof File ? candidate : await candidate.getFile();
+              if (
+                page.size !== undefined &&
+                page.size === file.size &&
+                page.modified === file.lastModified
+              ) {
+                matched++;
+              }
+            }
           } catch {
             /* Unreadable candidates require confirmation and appear in the import report. */
           }

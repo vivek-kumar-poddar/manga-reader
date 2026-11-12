@@ -197,12 +197,18 @@ export function useImport({
           if (activeOp.current !== opId) break;
           options.signal?.throwIfAborted();
           try {
-            const previous = plan.targetId ? await getManga(plan.targetId) : undefined;
+            const previous = plan.targetId
+              ? desktopAPI.isDesktop
+                ? ({ id: plan.targetId } as Manga)
+                : await getManga(plan.targetId)
+              : undefined;
             const result = await indexSource(plan.source, options, previous, plan.sort);
             if (activeOp.current !== opId || options.signal?.aborted) {
               break;
             }
-            await saveManga(result.m);
+            if (!desktopAPI.isDesktop) {
+              await saveManga(result.m);
+            }
             count++;
             titles.push(result.m);
             scheduleBackground(result.m);

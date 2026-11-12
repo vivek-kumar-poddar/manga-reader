@@ -92,6 +92,9 @@ export interface IndexTitleDto {
   updatedAt: number;
   revision: number;
   sort: string;
+  chapterCount?: number;
+  pageCount?: number;
+  hasPendingDimensions?: boolean;
   chapters: Array<{
     name: string;
     read: boolean;
@@ -115,10 +118,38 @@ export interface IndexTitleDto {
 export interface IndexTitleOptions {
   sort?: 'natural' | 'name' | 'reverse';
   previous?: Manga;
+  targetId?: string;
   warmChapters?: number;
   jobId?: string;
   title?: string;
   signal?: AbortSignal;
+}
+
+export interface BookmarkCardsQuery {
+  tab?: 'all' | 'manga' | 'individual' | string;
+  sort?: 'newest' | 'oldest' | 'title-asc' | 'title-desc' | 'chapter' | string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface BookmarkCardDto {
+  mangaId: string;
+  mangaTitle: string;
+  mangaSlug: string;
+  localPath?: string;
+  updatedAt: number;
+  chapterIdx: number;
+  chapterName: string;
+  page: number;
+  pagePath?: string;
+  fraction: number;
+  mangaBookmark: boolean;
+  timestamp: number;
+}
+
+export interface BookmarkCardsResult {
+  cards: BookmarkCardDto[];
+  total: number;
 }
 
 export interface CachedImageResult {
@@ -311,6 +342,10 @@ export interface TauriCommands {
     args: Record<string, never>;
     return: { allBookmarked: string[]; mangaBookmarked: string[] };
   };
+  get_bookmark_cards: {
+    args: { query: BookmarkCardsQuery };
+    return: BookmarkCardsResult;
+  };
   sqlite_delete_manga: { args: { id: string }; return: void };
   sqlite_clear_library: { args: Record<string, never>; return: void };
   sqlite_reset_progress: { args: Record<string, never>; return: void };
@@ -325,6 +360,7 @@ export interface TauriCommands {
       options?: {
         sort?: string;
         previous?: any;
+        targetId?: string;
         warmChapters?: number;
         jobId?: string;
         title?: string;
@@ -419,6 +455,7 @@ export interface DesktopAPI {
     allBookmarkedIds: string[];
     mangaBookmarkedIds: string[];
   }>;
+  getBookmarkCards?(query: BookmarkCardsQuery): Promise<BookmarkCardsResult>;
   sqliteDeleteManga?(id: string): Promise<void>;
   sqliteClearLibrary?(): Promise<void>;
   sqliteResetProgress?(): Promise<void>;
@@ -950,6 +987,15 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
+  async getBookmarkCards(query: BookmarkCardsQuery = {}): Promise<BookmarkCardsResult> {
+    try {
+      return await invokeCommand('get_bookmark_cards', { query });
+    } catch (err) {
+      console.warn('Tauri getBookmarkCards failed, falling back to empty:', err);
+      return { cards: [], total: 0 };
+    }
+  }
+
   async sqliteDeleteManga(id: string): Promise<void> {
     await invokeCommand('sqlite_delete_manga', { id });
   }
@@ -1040,31 +1086,33 @@ export class TauriDesktopBridge implements DesktopAPI {
               warmChapters: options.warmChapters,
               jobId,
               title: options.title,
-              previous: options.previous
-                ? {
-                    id: options.previous.id,
-                    title: options.previous.title,
-                    slug: options.previous.slug,
-                    lastChapter: options.previous.lastChapter,
-                    addedAt: options.previous.addedAt,
-                    revision: options.previous.revision,
-                    chapters: options.previous.chapters.map((c) => ({
-                      name: c.name,
-                      read: c.read,
-                      position: c.position,
-                      bookmarks: c.bookmarks,
-                      pages: c.pages.map((p) => ({
-                        name: p.name,
-                        path: p.path,
-                        width: p.width,
-                        height: p.height,
-                        size: p.size,
-                        modified: p.modified,
-                        dimensionsPending: p.dimensionsPending,
+              targetId: options.targetId ?? options.previous?.id,
+              previous:
+                options.previous && !options.targetId
+                  ? {
+                      id: options.previous.id,
+                      title: options.previous.title,
+                      slug: options.previous.slug,
+                      lastChapter: options.previous.lastChapter,
+                      addedAt: options.previous.addedAt,
+                      revision: options.previous.revision,
+                      chapters: options.previous.chapters.map((c) => ({
+                        name: c.name,
+                        read: c.read,
+                        position: c.position,
+                        bookmarks: c.bookmarks,
+                        pages: c.pages.map((p) => ({
+                          name: p.name,
+                          path: p.path,
+                          width: p.width,
+                          height: p.height,
+                          size: p.size,
+                          modified: p.modified,
+                          dimensionsPending: p.dimensionsPending,
+                        })),
                       })),
-                    })),
-                  }
-                : undefined,
+                    }
+                  : undefined,
             }
           : undefined,
         onProgress: channel,
@@ -1350,6 +1398,10 @@ class WebDesktopBridge implements DesktopAPI {
     mangaBookmarkedIds: string[];
   }> {
     return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
+  }
+
+  async getBookmarkCards(_query: BookmarkCardsQuery = {}): Promise<BookmarkCardsResult> {
+    return { cards: [], total: 0 };
   }
 
   async sqliteDeleteManga(): Promise<void> {}

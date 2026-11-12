@@ -15,6 +15,7 @@ use crate::commands::fs::{
 pub struct IndexOptions {
     pub sort: Option<String>,
     pub previous: Option<PreviousMangaDto>,
+    pub target_id: Option<String>,
     pub warm_chapters: Option<usize>,
     pub job_id: Option<String>,
     pub title: Option<String>,
@@ -121,6 +122,12 @@ pub struct TitleDto {
     pub updated_at: f64,
     pub revision: u64,
     pub sort: String,
+    #[serde(default)]
+    pub chapter_count: usize,
+    #[serde(default)]
+    pub page_count: usize,
+    #[serde(default)]
+    pub has_pending_dimensions: bool,
     pub chapters: Vec<ChapterDto>,
     pub cover_path: Option<String>,
     pub issues: Vec<ScanIssue>,
@@ -251,6 +258,56 @@ pub fn chapter_match<'a>(
     }
 }
 
+pub fn manga_record_to_previous_dto(rec: crate::db::MangaRecord) -> PreviousMangaDto {
+    PreviousMangaDto {
+        id: rec.id,
+        title: rec.title,
+        slug: rec.slug,
+        last_chapter: Some(rec.last_chapter),
+        added_at: Some(rec.added_at),
+        revision: rec.revision,
+        chapters: rec
+            .chapters
+            .into_iter()
+            .map(|c| PreviousChapterDto {
+                name: c.name,
+                read: Some(c.read),
+                position: c.position.map(|p| PositionDto {
+                    page: p.page as usize,
+                    path: p.path,
+                    fraction: Some(p.fraction),
+                    manga_bookmark: p.manga_bookmark,
+                    timestamp: p.timestamp,
+                }),
+                bookmarks: c.bookmarks.map(|bms| {
+                    bms.into_iter()
+                        .map(|p| PositionDto {
+                            page: p.page as usize,
+                            path: p.path,
+                            fraction: Some(p.fraction),
+                            manga_bookmark: p.manga_bookmark,
+                            timestamp: p.timestamp,
+                        })
+                        .collect()
+                }),
+                pages: c
+                    .pages
+                    .into_iter()
+                    .map(|p| PreviousPageDto {
+                        name: p.name,
+                        path: p.path,
+                        width: Some(p.width),
+                        height: Some(p.height),
+                        size: p.size,
+                        modified: p.modified,
+                        dimensions_pending: p.dimensions_pending,
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ScannedFile {
     rel_path: String,
@@ -258,6 +315,8 @@ struct ScannedFile {
     name: String,
     size: u64,
     modified: f64,
+    cached_width: Option<u32>,
+    cached_height: Option<u32>,
 }
 
 #[tauri::command]
@@ -328,111 +387,224 @@ pub async fn index_title(
 
     let root_clone = root_path.clone();
 
-    // 1. Recursive directory scan
-    let (scanned_files, mut traversal_issues) = tauri::async_runtime::spawn_blocking(move || {
-        let mut files = Vec::new();
-        let mut issues = Vec::new();
-        let walker = walkdir::WalkDir::new(&root_clone)
-            .max_depth(MAX_DEPTH)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|entry| {
-                if entry.depth() == 0 {
-                    return true;
-                }
-                let name = entry.file_name().to_string_lossy().to_lowercase();
-                if entry.file_type().is_dir() {
-                    if name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str()) {
-                        return false;
+    // 0. Load previous manga from SQLite if not provided in options
+    let mut previous_manga = opts.previous;
+    if previous_manga.is_none() {
+        if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+            let target_id = opts.target_id.as_deref();
+            let root_str = root_path.to_string_lossy();
+            if let Some(prev_rec) =
+                db_state.get_previous_manga_for_indexing_sync(target_id, Some(&root_str))
+            {
+                previous_manga = Some(manga_record_to_previous_dto(prev_rec));
+            }
+        }
+    }
+
+    // 1. Check for retained discovery snapshot to eliminate duplicate walkdir and dimension parsing
+    let (mut scanned_files, mut traversal_issues) = if let Some(discovery_state) =
+        app.try_state::<crate::commands::fs::DiscoveryState>()
+    {
+        if let Some(snapshot) = discovery_state.get_for_path(&root_path) {
+            let relevant: Vec<_> = snapshot
+                .candidates
+                .into_iter()
+                .filter(|c| {
+                    let p = Path::new(&c.absolute_path);
+                    p.starts_with(&root_path)
+                })
+                .collect();
+
+            if !relevant.is_empty() {
+                let root_clone2 = root_path.clone();
+                let cancel_clone = cancel_flag.clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    let mut files = Vec::new();
+                    let mut issues = Vec::new();
+                    for c in relevant {
+                        if let Some(ref cf) = cancel_clone {
+                            if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                                break;
+                            }
+                        }
+                        let abs = PathBuf::from(&c.absolute_path);
+                        let meta = match std::fs::metadata(&abs) {
+                            Ok(m) => m,
+                            Err(e) => {
+                                issues.push(ScanIssue {
+                                    path: c.absolute_path.clone(),
+                                    reason: format!("File missing on commit: {e}"),
+                                });
+                                continue;
+                            }
+                        };
+                        if !meta.is_file() {
+                            continue;
+                        }
+                        let mtime = meta
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as f64)
+                            .unwrap_or(0.0);
+                        let size = meta.len();
+
+                        let rel = match abs.strip_prefix(&root_clone2) {
+                            Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                            Err(_) => c.relative_path.clone(),
+                        };
+
+                        let name = abs
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| rel.clone());
+
+                        let (w, h) = if size == c.size
+                            && (mtime - c.modified).abs() < 1000.0
+                            && c.width.is_some()
+                            && c.height.is_some()
+                        {
+                            (c.width, c.height)
+                        } else {
+                            parse_image_dimensions(&abs)
+                        };
+
+                        files.push(ScannedFile {
+                            rel_path: rel,
+                            abs_path: abs,
+                            name,
+                            size,
+                            modified: mtime,
+                            cached_width: w,
+                            cached_height: h,
+                        });
+                    }
+                    (files, issues)
+                })
+                .await
+                .unwrap_or_else(|_| (Vec::new(), Vec::new()))
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    } else {
+        (Vec::new(), Vec::new())
+    };
+
+    // If no retained snapshot or snapshot had no valid files, run standard recursive walkdir scan
+    if scanned_files.is_empty() {
+        let (files, issues) = tauri::async_runtime::spawn_blocking(move || {
+            let mut files = Vec::new();
+            let mut issues = Vec::new();
+            let walker = walkdir::WalkDir::new(&root_clone)
+                .max_depth(MAX_DEPTH)
+                .follow_links(false)
+                .into_iter()
+                .filter_entry(|entry| {
+                    if entry.depth() == 0 {
+                        return true;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_lowercase();
+                    if entry.file_type().is_dir() {
+                        if name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str()) {
+                            return false;
+                        }
+                    }
+                    true
+                });
+
+            for entry_res in walker {
+                if let Some(ref cf) = cancel_flag {
+                    if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
                     }
                 }
-                true
-            });
-
-        for entry_res in walker {
-            if let Some(ref cf) = cancel_flag {
-                if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                if files.len() >= MAX_SCAN_FILES {
+                    issues.push(ScanIssue {
+                        path: root_clone.to_string_lossy().to_string(),
+                        reason: format!(
+                            "Reached maximum scan limit of {MAX_SCAN_FILES} files; scan results may be incomplete"
+                        ),
+                    });
                     break;
                 }
-            }
-            if files.len() >= MAX_SCAN_FILES {
-                issues.push(ScanIssue {
-                    path: root_clone.to_string_lossy().to_string(),
-                    reason: format!(
-                        "Reached maximum scan limit of {MAX_SCAN_FILES} files; scan results may be incomplete"
-                    ),
+                let entry = match entry_res {
+                    Ok(e) => e,
+                    Err(err) => {
+                        let p = err
+                            .path()
+                            .map(|p| p.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        issues.push(ScanIssue {
+                            path: p,
+                            reason: err.to_string(),
+                        });
+                        continue;
+                    }
+                };
+
+                if !entry.file_type().is_file() {
+                    continue;
+                }
+
+                let file_path = entry.path();
+                let ext = match file_path.extension() {
+                    Some(e) => e.to_string_lossy().to_lowercase(),
+                    None => continue,
+                };
+
+                if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+                    continue;
+                }
+
+                let metadata = match entry.metadata() {
+                    Ok(m) => m,
+                    Err(err) => {
+                        issues.push(ScanIssue {
+                            path: file_path.to_string_lossy().to_string(),
+                            reason: format!("Failed to read metadata: {err}"),
+                        });
+                        continue;
+                    }
+                };
+
+                let rel_path = match file_path.strip_prefix(&root_clone) {
+                    Ok(p) => p.to_string_lossy().replace('\\', "/"),
+                    Err(_) => continue,
+                };
+
+                let file_name = file_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| rel_path.clone());
+
+                let modified = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as f64)
+                    .unwrap_or(0.0);
+
+                files.push(ScannedFile {
+                    rel_path,
+                    abs_path: file_path.to_path_buf(),
+                    name: file_name,
+                    size: metadata.len(),
+                    modified,
+                    cached_width: None,
+                    cached_height: None,
                 });
-                break;
             }
-            let entry = match entry_res {
-                Ok(e) => e,
-                Err(err) => {
-                    let p = err
-                        .path()
-                        .map(|p| p.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "unknown".to_string());
-                    issues.push(ScanIssue {
-                        path: p,
-                        reason: err.to_string(),
-                    });
-                    continue;
-                }
-            };
+            (files, issues)
+        })
+        .await
+        .map_err(|e| format!("Scan error: {e}"))?;
 
-            if !entry.file_type().is_file() {
-                continue;
-            }
-
-            let file_path = entry.path();
-            let ext = match file_path.extension() {
-                Some(e) => e.to_string_lossy().to_lowercase(),
-                None => continue,
-            };
-
-            if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-                continue;
-            }
-
-            let metadata = match entry.metadata() {
-                Ok(m) => m,
-                Err(err) => {
-                    issues.push(ScanIssue {
-                        path: file_path.to_string_lossy().to_string(),
-                        reason: format!("Failed to read metadata: {err}"),
-                    });
-                    continue;
-                }
-            };
-
-            let rel_path = match file_path.strip_prefix(&root_clone) {
-                Ok(p) => p.to_string_lossy().replace('\\', "/"),
-                Err(_) => continue,
-            };
-
-            let file_name = file_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| rel_path.clone());
-
-            let modified = metadata
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_millis() as f64)
-                .unwrap_or(0.0);
-
-            files.push(ScannedFile {
-                rel_path,
-                abs_path: file_path.to_path_buf(),
-                name: file_name,
-                size: metadata.len(),
-                modified,
-            });
-        }
-        (files, issues)
-    })
-    .await
-    .map_err(|e| format!("Scan error: {e}"))?;
+        scanned_files = files;
+        traversal_issues.extend(issues);
+    }
 
     check_cancelled(handle.as_ref())?;
 
@@ -458,7 +630,7 @@ pub async fn index_title(
 
     // 2. Build lookup for previous dimensions reuse
     let mut old_pages_map: HashMap<String, PreviousPageDto> = HashMap::new();
-    if let Some(ref prev) = opts.previous {
+    if let Some(ref prev) = previous_manga {
         for ch in &prev.chapters {
             for pg in &ch.pages {
                 old_pages_map.insert(pg.path.clone(), pg.clone());
@@ -497,7 +669,14 @@ pub async fn index_title(
         let mut height = 1200;
         let mut dimensions_pending = true;
 
-        if let Some(cached) = old_pages_map.get(&file.rel_path) {
+        if let (Some(w), Some(h)) = (file.cached_width, file.cached_height) {
+            if w > 0 && h > 0 {
+                width = w;
+                height = h;
+                dimensions_pending = false;
+                reused_count += 1;
+            }
+        } else if let Some(cached) = old_pages_map.get(&file.rel_path) {
             let not_pending = !cached.dimensions_pending.unwrap_or(false);
             let size_matches = cached.size == Some(file.size);
             let mtime_matches = cached
@@ -662,7 +841,7 @@ pub async fn index_title(
 
     for name in chapter_names {
         let pages = grouped_pages.remove(&name).unwrap_or_default();
-        let old_match = chapter_match(&name, &pages, opts.previous.as_ref());
+        let old_match = chapter_match(&name, &pages, previous_manga.as_ref());
 
         let (read, position, bookmarks) = if let Some(old) = old_match {
             let old_names: HashSet<&str> = old.pages.iter().map(|p| p.name.as_str()).collect();
@@ -711,16 +890,15 @@ pub async fn index_title(
         .as_ref()
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .or_else(|| opts.previous.as_ref().map(|p| p.title.clone()))
+        .or_else(|| previous_manga.as_ref().map(|p| p.title.clone()))
         .unwrap_or_else(|| folder_name.clone());
 
-    let manga_id = opts
-        .previous
+    let manga_id = previous_manga
         .as_ref()
         .map(|p| p.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let slug = if let Some(ref prev) = opts.previous {
+    let slug = if let Some(ref prev) = previous_manga {
         if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
             || opts.title.is_none()
         {
@@ -739,16 +917,17 @@ pub async fn index_title(
         .unwrap_or_default()
         .as_millis() as f64;
 
-    let added_at = opts
-        .previous
+    let added_at = previous_manga
         .as_ref()
         .and_then(|p| p.added_at)
         .unwrap_or(now);
 
-    let revision = opts.previous.as_ref().and_then(|p| p.revision).unwrap_or(1);
+    let revision = previous_manga
+        .as_ref()
+        .and_then(|p| p.revision)
+        .unwrap_or(1);
 
-    let last_chapter = opts
-        .previous
+    let last_chapter = previous_manga
         .as_ref()
         .and_then(|p| p.last_chapter)
         .unwrap_or(0)
@@ -761,6 +940,68 @@ pub async fn index_title(
         let _ = crate::commands::image::generate_thumbnail_direct(&app, &cover_file, &manga_id);
     }
 
+    let chapter_count = final_chapters.len();
+    let page_count = final_chapters.iter().map(|c| c.pages.len()).sum();
+    let has_pending = final_chapters
+        .iter()
+        .any(|c| c.pages.iter().any(|p| p.dimensions_pending));
+
+    // Natively commit manga directly to SQLite, eliminating duplicate serialization to JS and back
+    if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+        let rec = crate::db::MangaRecord {
+            id: manga_id.clone(),
+            slug: Some(slug.clone()),
+            title: title_name.clone(),
+            local_path: Some(root_path.to_string_lossy().to_string()),
+            last_chapter,
+            added_at,
+            updated_at: now,
+            revision: Some(revision),
+            sort: Some(sort_mode.clone()),
+            chapters: final_chapters
+                .iter()
+                .map(|c| crate::db::ChapterRecord {
+                    id: None,
+                    name: c.name.clone(),
+                    pages: c
+                        .pages
+                        .iter()
+                        .map(|p| crate::db::PageRecord {
+                            name: p.name.clone(),
+                            path: p.path.clone(),
+                            width: p.width,
+                            height: p.height,
+                            size: p.size,
+                            modified: p.modified,
+                            dimensions_pending: Some(p.dimensions_pending),
+                        })
+                        .collect(),
+                    read: c.read,
+                    position: c.position.as_ref().map(|p| crate::db::PositionRecord {
+                        page: p.page as u32,
+                        path: p.path.clone(),
+                        fraction: p.fraction.unwrap_or(0.0),
+                        manga_bookmark: p.manga_bookmark,
+                        timestamp: p.timestamp,
+                    }),
+                    bookmarks: Some(
+                        c.bookmarks
+                            .iter()
+                            .map(|b| crate::db::PositionRecord {
+                                page: b.page as u32,
+                                path: b.path.clone(),
+                                fraction: b.fraction.unwrap_or(0.0),
+                                manga_bookmark: b.manga_bookmark,
+                                timestamp: b.timestamp,
+                            })
+                            .collect(),
+                    ),
+                })
+                .collect(),
+        };
+        let _ = db_state.save_manga_sync(&rec);
+    }
+
     Ok(TitleDto {
         id: manga_id,
         title: title_name,
@@ -771,6 +1012,9 @@ pub async fn index_title(
         updated_at: now,
         revision,
         sort: sort_mode,
+        chapter_count,
+        page_count,
+        has_pending_dimensions: has_pending,
         chapters: final_chapters,
         cover_path: final_cover_path,
         issues: traversal_issues,
@@ -978,6 +1222,7 @@ mod tests {
         let opts = IndexOptions {
             sort: Some("natural".to_string()),
             previous: None,
+            target_id: None,
             warm_chapters: Some(3),
             job_id: Some("job-custom-123".to_string()),
             title: Some("Confirmed Manga Title".to_string()),

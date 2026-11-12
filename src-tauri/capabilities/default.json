@@ -51,6 +51,7 @@
     "allow-sqlite-add-bookmark",
     "allow-sqlite-remove-bookmark",
     "allow-sqlite-get-bookmarked-manga-ids",
+    "allow-get-bookmark-cards",
     "allow-sqlite-delete-manga",
     "allow-sqlite-clear-library",
     "allow-sqlite-reset-progress",

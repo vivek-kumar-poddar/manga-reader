@@ -39,6 +39,7 @@ fn main() {
             "sqlite_add_bookmark",
             "sqlite_remove_bookmark",
             "sqlite_get_bookmarked_manga_ids",
+            "get_bookmark_cards",
             "sqlite_delete_manga",
             "sqlite_clear_library",
             "sqlite_reset_progress",

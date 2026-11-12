@@ -110,6 +110,58 @@ pub struct LibraryDiscovery {
     pub total_files: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct DiscoverySnapshot {
+    pub root_path: PathBuf,
+    pub created_at: std::time::Instant,
+    pub candidates: Vec<DiscoveredPage>,
+}
+
+#[derive(Default)]
+pub struct DiscoveryState {
+    snapshots: std::sync::Mutex<std::collections::HashMap<PathBuf, DiscoverySnapshot>>,
+}
+
+impl DiscoveryState {
+    pub fn store(&self, root_path: PathBuf, candidates: Vec<DiscoveredPage>) {
+        if let Ok(mut map) = self.snapshots.lock() {
+            let now = std::time::Instant::now();
+            map.retain(|_, v| now.duration_since(v.created_at).as_secs() < 900);
+            if map.len() >= 8 {
+                if let Some(oldest) = map
+                    .iter()
+                    .min_by_key(|(_, v)| v.created_at)
+                    .map(|(k, _)| k.clone())
+                {
+                    map.remove(&oldest);
+                }
+            }
+            map.insert(
+                root_path.clone(),
+                DiscoverySnapshot {
+                    root_path,
+                    created_at: now,
+                    candidates,
+                },
+            );
+        }
+    }
+
+    pub fn get_for_path(&self, path: &Path) -> Option<DiscoverySnapshot> {
+        if let Ok(map) = self.snapshots.lock() {
+            if let Some(snap) = map.get(path) {
+                return Some(snap.clone());
+            }
+            for (root, snap) in map.iter() {
+                if path.starts_with(root) {
+                    return Some(snap.clone());
+                }
+            }
+        }
+        None
+    }
+}
+
 pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
     fn category(s: &str) -> i32 {
         let trimmed = s.trim_start();
@@ -1510,6 +1562,15 @@ pub async fn discover_library(
     }
 
     titles.sort_by(|a, b| natural_order(&a.title, &b.title));
+
+    let all_pages: Vec<DiscoveredPage> = titles
+        .iter()
+        .flat_map(|t| t.chapters.iter().flat_map(|c| c.pages.clone()))
+        .collect();
+
+    if let Some(state) = app.try_state::<DiscoveryState>() {
+        state.store(root.clone(), all_pages);
+    }
 
     Ok(LibraryDiscovery {
         root_path: root.to_string_lossy().to_string(),

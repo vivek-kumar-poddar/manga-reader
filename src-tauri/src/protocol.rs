@@ -562,6 +562,14 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
 
         match page_params.transform.as_str() {
             "raw" | "full" | "original" => resolved,
+            "thumb" => {
+                match crate::commands::image::generate_image_variant_direct(
+                    app, &resolved, 320, 420,
+                ) {
+                    Ok(variant_path) => variant_path,
+                    Err(_) => resolved,
+                }
+            }
             "preview" | "low" => {
                 match crate::commands::image::generate_image_variant_direct(
                     app, &resolved, 1000, 1600,

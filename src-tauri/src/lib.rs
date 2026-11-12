@@ -76,6 +76,7 @@ pub fn run() {
             db::sqlite_add_bookmark,
             db::sqlite_remove_bookmark,
             db::sqlite_get_bookmarked_manga_ids,
+            db::get_bookmark_cards,
             db::sqlite_delete_manga,
             db::sqlite_clear_library,
             db::sqlite_reset_progress,
@@ -133,6 +134,7 @@ pub fn run() {
             let config_state = commands::config::AppConfigState::new(handle);
             app.manage(initial_roots);
             app.manage(commands::fs::ScanManager::default());
+            app.manage(commands::fs::DiscoveryState::default());
             app.manage(config_state);
 
             // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)

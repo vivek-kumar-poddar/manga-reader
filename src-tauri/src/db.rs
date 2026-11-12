@@ -120,6 +120,38 @@ impl DbState {
             .flatten();
         res
     }
+
+    pub fn get_previous_manga_for_indexing_sync(
+        &self,
+        target_id: Option<&str>,
+        local_path: Option<&str>,
+    ) -> Option<MangaRecord> {
+        let conn = self.reader.lock().ok()?;
+        let id_found: Option<String> = if let Some(tid) = target_id {
+            let mut stmt = conn
+                .prepare_cached("SELECT id FROM manga WHERE id = ?1")
+                .ok()?;
+            stmt.query_row([tid], |row| row.get(0)).optional().ok().flatten()
+        } else if let Some(lp) = local_path {
+            let mut stmt = conn
+                .prepare_cached("SELECT id FROM manga WHERE local_path = ?1")
+                .ok()?;
+            stmt.query_row([lp], |row| row.get(0)).optional().ok().flatten()
+        } else {
+            None
+        };
+
+        if let Some(id) = id_found {
+            get_manga(&conn, &id).ok().flatten()
+        } else {
+            None
+        }
+    }
+
+    pub fn save_manga_sync(&self, manga: &MangaRecord) -> DbResult<()> {
+        let mut conn = self.writer.lock().map_err(|e| DbError::Lock(e.to_string()))?;
+        save_manga(&mut conn, manga)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1352,6 +1384,121 @@ pub fn get_bookmarked_ids(conn: &Connection) -> DbResult<BookmarkedIdsResponse> 
     })
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkCardsQuery {
+    pub tab: Option<String>,
+    pub sort: Option<String>,
+    pub limit: Option<usize>,
+    pub offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkCardDto {
+    pub manga_id: String,
+    pub manga_title: String,
+    pub manga_slug: String,
+    pub local_path: Option<String>,
+    pub updated_at: f64,
+    pub chapter_idx: usize,
+    pub chapter_name: String,
+    pub page: usize,
+    pub page_path: Option<String>,
+    pub fraction: f64,
+    pub manga_bookmark: bool,
+    pub timestamp: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookmarkCardsResult {
+    pub cards: Vec<BookmarkCardDto>,
+    pub total: usize,
+}
+
+pub fn query_bookmark_cards(
+    conn: &Connection,
+    query: &BookmarkCardsQuery,
+) -> DbResult<BookmarkCardsResult> {
+    let where_clause = match query.tab.as_deref() {
+        Some("manga") => " WHERE b.manga_bookmark = 1",
+        Some("individual") => " WHERE b.manga_bookmark = 0",
+        _ => "",
+    };
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM bookmarks b JOIN manga m ON b.manga_id = m.id{}",
+        where_clause
+    );
+    let total: usize = conn
+        .query_row(&count_sql, [], |row| row.get::<_, i64>(0))
+        .map(|c| c as usize)?;
+
+    let sort_clause = match query.sort.as_deref() {
+        Some("newest") => "ORDER BY b.timestamp DESC, b.id DESC",
+        Some("oldest") => "ORDER BY b.timestamp ASC, b.id ASC",
+        Some("title-asc") => "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC",
+        Some("title-desc") => "ORDER BY m.title COLLATE NOCASE DESC, c.chapter_idx ASC, b.page ASC, b.id ASC",
+        Some("chapter") => "ORDER BY m.title COLLATE NOCASE ASC, c.chapter_idx ASC, b.page ASC, b.id ASC",
+        _ => "ORDER BY b.timestamp DESC, b.id DESC",
+    };
+
+    let mut select_sql = format!(
+        "SELECT
+            b.manga_id,
+            m.title,
+            m.slug,
+            m.local_path,
+            m.updated_at,
+            COALESCE(c.chapter_idx, 0),
+            b.chapter_name,
+            b.page,
+            COALESCE(b.path, p.path) AS page_path,
+            b.fraction,
+            b.manga_bookmark,
+            b.timestamp
+        FROM bookmarks b
+        JOIN manga m ON b.manga_id = m.id
+        LEFT JOIN chapters c ON b.manga_id = c.manga_id AND b.chapter_id = c.chapter_id
+        LEFT JOIN pages p ON b.manga_id = p.manga_id AND b.chapter_id = p.chapter_id AND b.page = p.idx
+        {}
+        {}",
+        where_clause,
+        sort_clause
+    );
+
+    if let Some(limit) = query.limit {
+        let offset = query.offset.unwrap_or(0);
+        select_sql.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
+    }
+
+    let mut stmt = conn.prepare(&select_sql)?;
+    let rows = stmt.query_map([], |row| {
+        Ok(BookmarkCardDto {
+            manga_id: row.get(0)?,
+            manga_title: row.get(1)?,
+            manga_slug: row.get(2)?,
+            local_path: row.get(3)?,
+            updated_at: row.get(4)?,
+            chapter_idx: row.get::<_, i64>(5)? as usize,
+            chapter_name: row.get(6)?,
+            page: row.get::<_, i64>(7)? as usize,
+            page_path: row.get(8)?,
+            fraction: row.get(9)?,
+            manga_bookmark: row.get::<_, i64>(10)? == 1,
+            timestamp: row.get(11)?,
+        })
+    })?;
+
+    let mut cards = Vec::new();
+    for r in rows {
+        cards.push(r?);
+    }
+
+    Ok(BookmarkCardsResult { cards, total })
+}
+
 pub fn delete_manga(conn: &mut Connection, id: &str) -> DbResult<()> {
     conn.execute("DELETE FROM manga WHERE id = ?1", params![id])?;
     Ok(())
@@ -1608,6 +1755,14 @@ pub async fn sqlite_get_bookmarked_manga_ids(
     state: State<'_, DbState>,
 ) -> DbResult<BookmarkedIdsResponse> {
     state.read(get_bookmarked_ids).await
+}
+
+#[tauri::command]
+pub async fn get_bookmark_cards(
+    state: State<'_, DbState>,
+    query: BookmarkCardsQuery,
+) -> DbResult<BookmarkCardsResult> {
+    state.read(move |conn| query_bookmark_cards(conn, &query)).await
 }
 
 #[tauri::command]
@@ -2348,5 +2503,141 @@ mod tests {
             reloaded.chapters[0].bookmarks.as_ref().map(|b| b.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn test_query_bookmark_cards_tabs_sort_pagination() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+
+        let manga1 = MangaRecord {
+            id: "manga-bm-1".into(),
+            slug: Some("manga-bm-1".into()),
+            title: "Alpha Manga".into(),
+            local_path: Some("C:/Manga/Alpha".into()),
+            last_chapter: 0,
+            added_at: 1000.0,
+            updated_at: 2000.0,
+            revision: Some(1),
+            sort: Some("natural".into()),
+            chapters: vec![ChapterRecord {
+                id: None,
+                name: "Chapter 1".into(),
+                pages: vec![PageRecord {
+                    dimensions_pending: None,
+                    name: "01.jpg".into(),
+                    path: "Chapter 1/01.jpg".into(),
+                    width: 800,
+                    height: 1200,
+                    size: Some(100),
+                    modified: Some(10.0),
+                }],
+                read: false,
+                position: None,
+                bookmarks: Some(vec![
+                    PositionRecord {
+                        page: 0,
+                        path: Some("Chapter 1/01.jpg".into()),
+                        fraction: 0.2,
+                        manga_bookmark: Some(true),
+                        timestamp: Some(100.0),
+                    },
+                    PositionRecord {
+                        page: 0,
+                        path: Some("Chapter 1/01.jpg".into()),
+                        fraction: 0.8,
+                        manga_bookmark: Some(false),
+                        timestamp: Some(200.0),
+                    },
+                ]),
+            }],
+        };
+
+        let manga2 = MangaRecord {
+            id: "manga-bm-2".into(),
+            slug: Some("manga-bm-2".into()),
+            title: "Beta Manga".into(),
+            local_path: Some("C:/Manga/Beta".into()),
+            last_chapter: 0,
+            added_at: 1500.0,
+            updated_at: 2500.0,
+            revision: Some(1),
+            sort: Some("natural".into()),
+            chapters: vec![ChapterRecord {
+                id: None,
+                name: "Chapter 1".into(),
+                pages: vec![PageRecord {
+                    dimensions_pending: None,
+                    name: "01.jpg".into(),
+                    path: "Chapter 1/01.jpg".into(),
+                    width: 800,
+                    height: 1200,
+                    size: Some(100),
+                    modified: Some(10.0),
+                }],
+                read: false,
+                position: None,
+                bookmarks: Some(vec![PositionRecord {
+                    page: 0,
+                    path: Some("Chapter 1/01.jpg".into()),
+                    fraction: 0.5,
+                    manga_bookmark: Some(false),
+                    timestamp: Some(300.0),
+                }]),
+            }],
+        };
+
+        save_manga(&mut conn, &manga1).unwrap();
+        save_manga(&mut conn, &manga2).unwrap();
+
+        // 1. Query all
+        let all_res = query_bookmark_cards(&conn, &BookmarkCardsQuery::default()).unwrap();
+        assert_eq!(all_res.total, 3);
+        assert_eq!(all_res.cards.len(), 3);
+        // Default order: newest timestamp first (300, 200, 100)
+        assert_eq!(all_res.cards[0].manga_id, "manga-bm-2");
+        assert_eq!(all_res.cards[0].page_path, Some("Chapter 1/01.jpg".into()));
+
+        // 2. Query manga bookmarks only
+        let manga_tab = query_bookmark_cards(
+            &conn,
+            &BookmarkCardsQuery {
+                tab: Some("manga".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(manga_tab.total, 1);
+        assert_eq!(manga_tab.cards.len(), 1);
+        assert!(manga_tab.cards[0].manga_bookmark);
+
+        // 3. Query individual bookmarks with pagination
+        let ind_tab = query_bookmark_cards(
+            &conn,
+            &BookmarkCardsQuery {
+                tab: Some("individual".into()),
+                sort: Some("newest".into()),
+                limit: Some(1),
+                offset: Some(0),
+            },
+        )
+        .unwrap();
+        assert_eq!(ind_tab.total, 2);
+        assert_eq!(ind_tab.cards.len(), 1);
+        assert_eq!(ind_tab.cards[0].manga_id, "manga-bm-2");
+
+        let ind_page2 = query_bookmark_cards(
+            &conn,
+            &BookmarkCardsQuery {
+                tab: Some("individual".into()),
+                sort: Some("newest".into()),
+                limit: Some(1),
+                offset: Some(1),
+            },
+        )
+        .unwrap();
+        assert_eq!(ind_page2.total, 2);
+        assert_eq!(ind_page2.cards.len(), 1);
+        assert_eq!(ind_page2.cards[0].manga_id, "manga-bm-1");
     }
 }

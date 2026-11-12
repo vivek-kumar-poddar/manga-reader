@@ -343,6 +343,7 @@ export async function indexSource(
         {
           sort,
           previous,
+          targetId: previous?.id,
           title: confirmedTitle,
           jobId,
           signal: options.signal,
@@ -372,12 +373,12 @@ export async function indexSource(
         updatedAt: dto.updatedAt,
         revision: dto.revision,
         sort: dto.sort as 'natural' | 'name' | 'reverse',
-        chapters: dto.chapters.map((c) => ({
+        chapters: (dto.chapters || []).map((c) => ({
           name: c.name,
           read: c.read,
           position: c.position,
           bookmarks: c.bookmarks,
-          pages: c.pages.map((p) => ({
+          pages: (c.pages || []).map((p) => ({
             name: p.name,
             path: p.path,
             width: p.width,
@@ -390,7 +391,7 @@ export async function indexSource(
       };
 
       alive(options.signal);
-      await saveManga(m);
+      // Natively committed directly to SQLite in Rust index_title, avoiding redundant JS serialization
 
       return {
         m,

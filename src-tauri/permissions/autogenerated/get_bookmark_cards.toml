@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-bookmark-cards"
+description = "Enables the get_bookmark_cards command without any pre-configured scope."
+commands.allow = ["get_bookmark_cards"]
+
+[[permission]]
+identifier = "deny-get-bookmark-cards"
+description = "Denies the get_bookmark_cards command without any pre-configured scope."
+commands.deny = ["get_bookmark_cards"]

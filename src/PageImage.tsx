@@ -186,45 +186,50 @@ function PageImage({
           try {
             if (!live || !wanted || signal.aborted) return;
             assertImageDimensions(pageWidth, pageHeight);
-            let blob: Blob = await fileFor(m, page);
-            if (!live || !wanted || signal.aborted) return;
 
-            if (
+            const isLowQualityNeeded =
               lowQuality &&
               typeof matchMedia === 'function' &&
               matchMedia('(max-width:700px)').matches &&
               pageWidth > 1000 &&
               pageWidth * pageHeight <= limits.imagePixels &&
-              Math.max(pageWidth, pageHeight) <= limits.imageSide
+              Math.max(pageWidth, pageHeight) <= limits.imageSide;
+
+            if (
+              isLowQualityNeeded &&
+              desktopAPI.isDesktop &&
+              desktopAPI.generateImageVariant &&
+              m.localPath
             ) {
-              const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
-              let handled = false;
-              if (desktopAPI.isDesktop && desktopAPI.generateImageVariant && m.localPath) {
-                try {
-                  const absPath = `${m.localPath.replace(/[/\\]+$/, '')}/${page.path.replace(/^[/\\]+/, '')}`;
-                  const variantRes = await desktopAPI.generateImageVariant(
-                    absPath,
-                    1000,
-                    targetHeight,
-                  );
-                  if (variantRes?.url) {
-                    if (live && wanted && !signal.aborted) {
-                      setUrl(variantRes.url);
-                      setError('');
-                    }
-                    handled = true;
-                    return;
+              try {
+                const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
+                const absPath = `${m.localPath.replace(/[/\\]+$/, '')}/${page.path.replace(/^[/\\]+/, '')}`;
+                const variantRes = await desktopAPI.generateImageVariant(
+                  absPath,
+                  1000,
+                  targetHeight,
+                );
+                if (variantRes?.url) {
+                  if (live && wanted && !signal.aborted) {
+                    setUrl(variantRes.url);
+                    setError('');
                   }
-                } catch {
-                  /* Fallback to downscaleImage */
+                  return;
                 }
+              } catch {
+                /* Fallback to reading file and downscaling */
               }
-              if (!handled) {
-                try {
-                  blob = await downscaleImage(blob, 1000, targetHeight, signal);
-                } catch {
-                  /* Use original unmodified blob if downscaling is unavailable or fails */
-                }
+            }
+
+            let blob: Blob = await fileFor(m, page);
+            if (!live || !wanted || signal.aborted) return;
+
+            if (isLowQualityNeeded) {
+              const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
+              try {
+                blob = await downscaleImage(blob, 1000, targetHeight, signal);
+              } catch {
+                /* Use original unmodified blob if downscaling is unavailable or fails */
               }
             }
 
