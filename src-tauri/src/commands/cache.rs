@@ -328,11 +328,15 @@ pub async fn save_file_dialog(
     .await
     .map_err(|e| format!("Dialog task join error: {e}"))?;
 
-    if let Some(path) = path_opt {
-        let path_str = path.to_string();
-        tokio::fs::write(&path_str, content.as_bytes())
+    if let Some(file_path) = path_opt {
+        let pb = file_path
+            .into_path()
+            .map_err(|e| format!("Invalid selected file path: {e}"))?;
+        let bytes = content.into_bytes();
+        tokio::task::spawn_blocking(move || crate::commands::fs::write_atomic(&pb, &bytes))
             .await
-            .map_err(|e| format!("Failed to write file to {path_str}: {e}"))?;
+            .map_err(|e| format!("Write task join error: {e}"))?
+            .map_err(|e| format!("Failed to write file: {e}"))?;
         Ok(true)
     } else {
         Ok(false)

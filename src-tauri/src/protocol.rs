@@ -542,7 +542,15 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
             }
         };
 
-        let base_dir = PathBuf::from(&base_dir_str);
+        let base_dir = PathBuf::from(base_dir_str.trim());
+        let allowed = app.state::<AllowedRoots>();
+        if !allowed.is_allowed(&base_dir) {
+            return error_response(
+                StatusCode::FORBIDDEN,
+                "Base root is not under an authorized library root",
+                &req,
+            );
+        }
         let resolved =
             match crate::commands::fs::resolve_relative_path(&base_dir, &page_params.rel_path) {
                 Ok(p) => p,
@@ -555,7 +563,6 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
                 }
             };
 
-        let allowed = app.state::<AllowedRoots>();
         if !allowed.is_allowed(&resolved) {
             return error_response(
                 StatusCode::FORBIDDEN,

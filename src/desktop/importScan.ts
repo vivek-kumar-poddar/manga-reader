@@ -1,7 +1,8 @@
-import { uniqueSlug, normalizePath } from '../paths';
+import { uniqueSlug, normalizePath, normalizeRelativePath } from '../paths';
 import { type Directory, type Page, type Chapter, type Manga } from '../model';
 import { matchingPosition, isRecord } from './validation';
 import { limits, LimitError, assertAtMost, assertPathLimits, withinTime } from '../limits';
+import { imageFile } from '../images';
 import {
   desktopAPI,
   type FolderEntry,
@@ -82,7 +83,16 @@ export class DesktopHandle {
     readonly height?: number | null,
   ) { }
 
+  get absPath(): string {
+    return this.absolutePath;
+  }
+
+  get lastModified(): number {
+    return this.modified;
+  }
+
   async getFile(): Promise<File> {
+    if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
     const buffer = await desktopAPI.readFile(this.absolutePath);
     if (!buffer) {
       throw new Error(`Failed to read file from desktop path: ${this.absolutePath}`);
@@ -190,14 +200,16 @@ export async function fromDesktopFolder(
   let discovered = 0;
   for (const entry of entries) {
     alive(options.signal);
-    assertPathLimits(entry.relativePath);
+    const relPath = normalizeRelativePath(entry.relativePath);
+    if (ignored(relPath) || !imageFile({ name: relPath, type: '' })) continue;
+    assertPathLimits(relPath);
     assertAtMost(++discovered, limits.discoveryEntries, 'Discovered entries');
     assertAtMost(source.files.size + 1, limits.pagesPerTitle, 'Image candidates per title');
 
     source.files.set(
-      entry.relativePath,
+      relPath,
       new DesktopHandle(
-        entry.relativePath.split(/[\\/]/).at(-1) ?? entry.relativePath,
+        relPath.split('/').at(-1) ?? relPath,
         entry.absolutePath,
         entry.size,
         entry.modified,
@@ -541,7 +553,7 @@ async function runDrainPass(): Promise<void> {
         manga.updatedAt !== job.updatedAt ||
         (job.revision !== undefined && manga.revision !== job.revision)
       ) {
-        break;
+        continue; // <-- was: break;
       }
       let modified = false;
       for (let i = 0; i < manga.chapters.length; i++) {

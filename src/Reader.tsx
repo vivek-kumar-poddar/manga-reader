@@ -148,7 +148,11 @@ export default function Reader({
   cancelImport: () => void;
 }) {
   const { mangaId, slug, chapterSegment } = useParams();
-  const entrySearch = useRef(useLocation().search);
+  const location = useLocation();
+  const entrySearch = useRef(location.search);
+  if (location.search) {
+    entrySearch.current = location.search;
+  }
   const { library, notify } = useApp();
   const id = mangaId || library.find((m) => m.slug === slug)?.id;
   const resolvedId = useRef(id);
@@ -307,11 +311,11 @@ function ReaderView({ manga }: { manga: Manga }) {
           if (issues.length)
             setFailure(
               `${issues.length} page(s) could not be prepared. ` +
-                issues
-                  .slice(0, 3)
-                  .map((issue) => `${issue.path}: ${issue.reason}`)
-                  .join(' ') +
-                (issues.length > 3 ? ' More affected pages are marked below.' : ''),
+              issues
+                .slice(0, 3)
+                .map((issue) => `${issue.path}: ${issue.reason}`)
+                .join(' ') +
+              (issues.length > 3 ? ' More affected pages are marked below.' : ''),
             );
           setPrepared(ci);
           if (!issues.length) scheduleBackground(manga);
@@ -573,7 +577,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     goChapter,
     goPage,
     step,
-    pause: () => {},
+    pause: () => { },
     updateWindow,
     measure,
   });
@@ -583,7 +587,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     goChapter,
     goPage,
     step,
-    pause: () => {},
+    pause: () => { },
     updateWindow,
     measure,
   };
@@ -910,7 +914,9 @@ function ReaderView({ manga }: { manga: Manga }) {
     if (!c) return;
     const p = { ...position.current, timestamp: Date.now() };
     const marks = c.bookmarks || [];
-    const exists = marks.findIndex((b) => (p.path ? b.path === p.path : b.page === p.page));
+    const exists = marks.findIndex(
+      (b) => !b.mangaBookmark && (p.path ? b.path === p.path : b.page === p.page),
+    );
     if (exists < 0 && marks.length >= limits.bookmarksPerChapter) {
       notify(
         `Bookmark limit is ${limits.bookmarksPerChapter} per chapter. Remove one before adding another.`,
@@ -927,6 +933,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     notify(exists >= 0 ? 'Bookmark removed.' : 'Page bookmarked.');
   }
 
+  const [, setDimRevision] = useState(0);
   const onDimensionsResolved = (pageIndex: number, width: number, height: number) => {
     const c = metadata.current.chapters[ci];
     if (c && c.pages && c.pages[pageIndex]) {
@@ -936,6 +943,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         height,
         dimensionsPending: false,
       };
+      setDimRevision((v) => v + 1);
       actions.current.measure(false);
     }
   };
@@ -990,7 +998,7 @@ function ReaderView({ manga }: { manga: Manga }) {
   const barActive = (v: boolean) => (v || !s.autoHideBars ? '' : ' bar-hidden');
   const currentPage = s.mode === 'single' ? singlePage : pageStore.getPage();
   const bookmarked = metadata.current.chapters[ci].bookmarks?.some(
-    (b) => b.path === chapter.pages[currentPage]?.path,
+    (b) => !b.mangaBookmark && b.path === chapter.pages[currentPage]?.path,
   );
   void bookmarkRevision;
   void readRevision;

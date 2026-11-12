@@ -897,18 +897,17 @@ pub async fn index_title(
         .map(|p| p.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
+    let base_slug = generate_slug(&title_name);
     let slug = if let Some(ref prev) = previous_manga {
-        if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
-            || opts.title.is_none()
-        {
-            prev.slug
-                .clone()
-                .unwrap_or_else(|| generate_slug(&title_name))
+        if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str()) || opts.title.is_none() {
+            prev.slug.clone().unwrap_or_else(|| base_slug.clone())
         } else {
-            generate_slug(&title_name)
+            base_slug
         }
+    } else if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+        db_state.allocate_unique_slug_sync(&base_slug, &manga_id)
     } else {
-        generate_slug(&title_name)
+        base_slug
     };
 
     let now = SystemTime::now()
@@ -924,6 +923,7 @@ pub async fn index_title(
     let revision = previous_manga
         .as_ref()
         .and_then(|p| p.revision)
+        .map(|r| r + 1)
         .unwrap_or(1);
 
     let last_chapter = previous_manga

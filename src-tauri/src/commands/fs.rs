@@ -962,7 +962,10 @@ pub fn parse_image_dimensions(path: &Path) -> (Option<u32>, Option<u32>) {
 
 #[tauri::command]
 pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
-    let folder = app.dialog().file().blocking_pick_folder();
+    let app_clone = app.clone();
+    let folder = tokio::task::spawn_blocking(move || app_clone.dialog().file().blocking_pick_folder())
+        .await
+        .map_err(|e| FsError::Io(format!("Dialog task join error: {e}")))?;
     if let Some(ref path) = folder {
         let pb = PathBuf::from(path.to_string());
         let allowed = app.state::<AllowedRoots>();
@@ -1546,7 +1549,8 @@ pub async fn discover_library(
                     .map(|p| p.absolute_path.clone())
             });
 
-        let title_root = if has_nested_titles {
+        let root_pages_label = format!("{} — root pages", root_folder_name);
+        let title_root = if has_nested_titles && title_name != root_pages_label {
             root.join(&title_name).to_string_lossy().to_string()
         } else {
             root.to_string_lossy().to_string()

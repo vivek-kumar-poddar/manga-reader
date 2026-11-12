@@ -157,19 +157,33 @@ function alive(signal?: AbortSignal) {
 
 // Lazily reads a local file through the desktop IPC bridge (no browser permission needed).
 export class DesktopHandle {
+  readonly kind = 'file';
   constructor(
     readonly name: string,
-    readonly absPath: string,
+    readonly absolutePath: string,
     readonly size: number,
-    readonly lastModified: number,
+    readonly modified: number,
     readonly width?: number | null,
     readonly height?: number | null,
   ) { }
+
+  get absPath(): string {
+    return this.absolutePath;
+  }
+
+  get lastModified(): number {
+    return this.modified;
+  }
+
   async getFile(): Promise<File> {
     if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
-    const buf = await desktopAPI.readFile(this.absPath);
-    if (!buf) throw new Error('File not found on disk. The folder may have moved.');
-    return new File([buf], this.name, { lastModified: this.lastModified });
+    const buffer = await desktopAPI.readFile(this.absolutePath);
+    if (!buffer) {
+      throw new Error(`Failed to read file from desktop path: ${this.absolutePath}`);
+    }
+    return new File([buffer], this.name, {
+      lastModified: this.modified,
+    });
   }
 }
 
@@ -1229,7 +1243,10 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
   const remainingPending = pages.filter((p) => p.dimensionsPending);
   if (!remainingPending.length) {
     alive(options.signal);
-    if (database) {
+    m.chapters[index] = { ...chapter, pages };
+    if (desktopAPI.isDesktop) {
+      await saveManga(m);
+    } else if (database) {
       const tx = database.transaction('manga', 'readwrite');
       const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
       if (
@@ -1243,8 +1260,6 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
       }
       await tx.done;
     }
-    alive(options.signal);
-    m.chapters[index] = { ...chapter, pages };
     return [];
   }
 
@@ -1306,7 +1321,10 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
     options.signal,
   );
   alive(options.signal);
-  if (database) {
+  m.chapters[index] = { ...chapter, pages };
+  if (desktopAPI.isDesktop) {
+    await saveManga(m);
+  } else if (database) {
     const tx = database.transaction('manga', 'readwrite');
     const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
     if (
@@ -1320,8 +1338,6 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
     }
     await tx.done;
   }
-  alive(options.signal);
-  m.chapters[index] = { ...chapter, pages };
   return issues;
 }
 
@@ -1381,7 +1397,7 @@ async function runDrainPass() {
         manga.updatedAt !== job.updatedAt ||
         (job.revision !== undefined && manga.revision !== job.revision)
       ) {
-        break;
+        continue;
       }
       for (let i = 0; i < manga.chapters.length; i++) {
         alive(job.controller.signal);
@@ -1389,7 +1405,7 @@ async function runDrainPass() {
         await new Promise<void>((r) => setTimeout(r, 100));
         alive(job.controller.signal);
         if (!(await access(manga))) break;
-        const stored = await (await db).get('manga', id);
+        const stored = await getManga(id);
         if (
           !stored ||
           stored.updatedAt !== job.updatedAt ||

@@ -161,6 +161,36 @@ impl DbState {
             .map_err(|e| DbError::Lock(e.to_string()))?;
         save_manga(&mut conn, manga)
     }
+    
+    pub fn allocate_unique_slug_sync(&self, base_slug: &str, manga_id: &str) -> String {
+        let reserved = ["read", "assets", "api"];
+        let used: std::collections::HashSet<String> = self
+            .reader
+            .lock()
+            .ok()
+            .and_then(|conn| {
+                let mut stmt = conn
+                    .prepare_cached("SELECT slug FROM manga WHERE id != ?1")
+                    .ok()?;
+                let rows = stmt
+                    .query_map([manga_id], |row| row.get::<_, String>(0))
+                    .ok()?;
+                Some(rows.flatten().collect())
+            })
+            .unwrap_or_default();
+
+        for attempt in 0..=(used.len() + reserved.len()) {
+            let candidate = if attempt == 0 {
+                base_slug.to_string()
+            } else {
+                format!("{}-{}", base_slug, attempt + 1)
+            };
+            if !used.contains(&candidate) && !reserved.contains(&candidate.as_str()) {
+                return candidate;
+            }
+        }
+        format!("{}-{}", base_slug, uuid::Uuid::new_v4())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1244,14 +1274,14 @@ pub fn add_bookmark(
         .unwrap_or(false)
     } else if let Some(path) = &position.path {
         tx.query_row(
-            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4 LIMIT 1",
+            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4 AND manga_bookmark = 0 LIMIT 1",
             params![manga_id, chapter_id, chapter_name, path],
             |_| Ok(true),
         )
         .unwrap_or(false)
     } else {
         tx.query_row(
-            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4 LIMIT 1",
+            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4 AND manga_bookmark = 0 LIMIT 1",
             params![manga_id, chapter_id, chapter_name, position.page as i64],
             |_| Ok(true),
         )
@@ -1334,12 +1364,12 @@ pub fn remove_bookmark(
         )?;
     } else if let Some(path) = &position.path {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4",
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4 AND manga_bookmark = 0",
             params![manga_id, chapter_id, chapter_name, path],
         )?;
     } else {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4",
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4 AND manga_bookmark = 0",
             params![manga_id, chapter_id, chapter_name, position.page as i64],
         )?;
     }
@@ -1636,14 +1666,14 @@ pub fn restore_backup_tx(
     }
 
     // Clear existing library tables
-    tx.execute_batch(
-        r#"
-        DELETE FROM chapters;
-        DELETE FROM progress;
-        DELETE FROM bookmarks;
-        DELETE FROM manga;
-        "#,
-    )?;
+    // tx.execute_batch(
+    //     r#"
+    //     DELETE FROM chapters;
+    //     DELETE FROM progress;
+    //     DELETE FROM bookmarks;
+    //     DELETE FROM manga;
+    //     "#,
+    // )?;
 
     for valid_m in &payload.manga {
         let mut m_rec = MangaRecord::from(valid_m.clone());

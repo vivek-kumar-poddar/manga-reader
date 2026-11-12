@@ -213,14 +213,14 @@ export function BookmarkShelf({
     }
     loadBookmarks();
     const onSync = (e: MessageEvent) => {
-      if (e.data?.type === 'progress') loadBookmarks();
+      if (e.data?.type === 'progress' || e.data?.type === 'library') loadBookmarks();
     };
     syncChannel?.addEventListener('message', onSync);
     return () => {
       live = false;
       syncChannel?.removeEventListener('message', onSync);
     };
-  }, [carousel, sortBy]);
+  }, [carousel, sortBy, library]);
 
   useEffect(() => {
     // Web fallback: load full Manga objects from IndexedDB via getManga().
@@ -437,11 +437,11 @@ export function BookmarkShelf({
             isMangaBookmark
               ? 'Remove bookmark: ' + mark.manga.title + ' (Manga Bookmarked)'
               : 'Remove bookmark: ' +
-                mark.manga.title +
-                ', ' +
-                getChapterName(mark) +
-                ', page ' +
-                (mark.position.page + 1)
+              mark.manga.title +
+              ', ' +
+              getChapterName(mark) +
+              ', page ' +
+              (mark.position.page + 1)
           }
           title="Remove bookmark"
           onClick={() => {

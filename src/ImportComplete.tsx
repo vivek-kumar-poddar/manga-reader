@@ -1,17 +1,39 @@
+// Replace lines 1-14 in src/ImportComplete.tsx:
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { BookOpen, Download, X } from 'lucide-react';
-import type { Manga, Issue } from './data';
+import { getCover, type Manga, type Issue } from './data';
+import { desktopAPI } from './tauriBridge';
+
 function ImportedTitle({ manga, onClose }: { manga: Manga; onClose: () => void }) {
   const [url, setUrl] = useState('');
+  const chapters = manga.chapters.length;
+  const pages = manga.chapters.reduce((n, c) => n + c.pages.length, 0);
+
   useEffect(() => {
-    if (!manga.cover) return;
-    const u = URL.createObjectURL(manga.cover);
-    setUrl(u);
-    return () => URL.revokeObjectURL(u);
-  }, [manga.cover]);
-  const chapters = manga.chapters.length,
-    pages = manga.chapters.reduce((n, c) => n + c.pages.length, 0);
+    let live = true;
+    let objectUrl = '';
+    if (desktopAPI.isDesktop && desktopAPI.getCoverImageUrl) {
+      setUrl(desktopAPI.getCoverImageUrl(manga.id, manga.updatedAt));
+      return;
+    }
+    if (manga.cover) {
+      objectUrl = URL.createObjectURL(manga.cover);
+      setUrl(objectUrl);
+    } else {
+      void getCover(manga.id).then((blob) => {
+        if (live && blob) {
+          objectUrl = URL.createObjectURL(blob);
+          setUrl(objectUrl);
+        }
+      });
+    }
+    return () => {
+      live = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [manga.id, manga.updatedAt, manga.cover]);
+
   return (
     <article className="import-success-title">
       <div className="import-success-cover">

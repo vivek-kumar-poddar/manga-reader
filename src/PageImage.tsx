@@ -80,9 +80,6 @@ function PageImage({
         .getImageDimensions(absPath)
         .then((dim) => {
           if (!live || !dim || dim.width <= 0 || dim.height <= 0) return;
-          page.width = dim.width;
-          page.height = dim.height;
-          page.dimensionsPending = false;
           onDimensionsResolved?.(index, dim.width, dim.height);
           setRetry((r) => r + 1);
         })
@@ -120,30 +117,30 @@ function PageImage({
       const transform = lowQuality ? 'low' : 'full';
       const nativeSrc = desktopAPI.getPageImageUrl
         ? desktopAPI.getPageImageUrl({
-            mangaId,
-            pagePath,
-            version: mangaUpdatedAt,
-            transform,
-            localPath: mangaLocalPath,
-          })
+          mangaId,
+          pagePath,
+          version: mangaUpdatedAt,
+          transform,
+          localPath: mangaLocalPath,
+        })
         : desktopAPI.convertFileSrc!(
-            mangaLocalPath +
-              (mangaLocalPath.includes('\\') ? '\\' : '/') +
-              pagePath.split('/').join(mangaLocalPath.includes('\\') ? '\\' : '/'),
-            'mangaimg',
-          );
+          mangaLocalPath +
+          (mangaLocalPath.includes('\\') ? '\\' : '/') +
+          pagePath.split('/').join(mangaLocalPath.includes('\\') ? '\\' : '/'),
+          'mangaimg',
+        );
 
       const stop = host.current
         ? observe(host.current, (visible) => {
-            if (!live) return;
-            if (visible) {
-              setUrl(nativeSrc);
-              setError('');
-            } else {
-              setUrl('');
-            }
-          })
-        : () => {};
+          if (!live) return;
+          if (visible) {
+            setUrl(nativeSrc);
+            setError('');
+          } else {
+            setUrl('');
+          }
+        })
+        : () => { };
 
       return () => {
         live = false;
@@ -279,11 +276,11 @@ function PageImage({
 
     const stop = host.current
       ? observe(host.current, (v) => {
-          wanted = v;
-          if (v) load();
-          else release();
-        })
-      : () => {};
+        wanted = v;
+        if (v) load();
+        else release();
+      })
+      : () => { };
 
     return () => {
       live = false;

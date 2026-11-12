@@ -8,8 +8,7 @@ import {
 } from 'react';
 import type { Settings, Manga } from './model';
 import type { PageOffset } from './readerGeometry';
-import type { SaveProgressResult } from './storage';
-import { errorMessage } from './storage';
+import { errorMessage, type SaveProgressResult } from './data';
 
 export interface UseAutoplayOptions {
   allowed: boolean | null;

@@ -8,7 +8,7 @@ import {
 import type { Manga, Position, Settings } from './model';
 import type { PageOffset } from './readerGeometry';
 import type { PageStore } from './Reader';
-import { saveProgress, errorMessage, type SaveProgressResult } from './storage';
+import { saveProgress, errorMessage, type SaveProgressResult } from './data';
 
 export interface UseProgressSaveOptions {
   metadata: MutableRefObject<Manga>;

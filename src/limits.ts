@@ -68,7 +68,9 @@ export function assertMangaLimits(manga: Manga): number {
     );
     for (const page of chapter.pages) {
       assertPathLimits(page.path);
-      assertImageDimensions(page.width, page.height);
+      if (!(page.dimensionsPending && page.width === 0 && page.height === 0)) {
+        assertImageDimensions(page.width, page.height);
+      }
     }
   }
   return pages;

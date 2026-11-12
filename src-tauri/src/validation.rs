@@ -407,14 +407,7 @@ pub fn validate_manga(
     }
 
     if manga.slug.as_ref().is_none_or(|s| s.trim().is_empty()) {
-        manga.slug = Some(
-            manga
-                .title
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                .collect::<String>(),
-        );
+        manga.slug = Some(crate::commands::indexing::generate_slug(&manga.title));
     }
 
     Ok(total_pages)

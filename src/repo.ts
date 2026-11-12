@@ -102,7 +102,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
             void blob
               .arrayBuffer()
               .then((ab) => desktopAPI.saveThumbnail?.(id, ab))
-              .catch(() => {});
+              .catch(() => { });
           }
           return blob;
         }
@@ -119,20 +119,30 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     return results.filter((m): m is Manga => Boolean(m));
   }
 
+  // Replace lines 122-136 in src/repo.ts:
   async saveManga(manga: Manga): Promise<void> {
     assertMangaLimits(manga);
     if (!desktopAPI.sqliteSaveManga) {
       throw new Error('desktopAPI.sqliteSaveManga is required on desktop');
     }
-    const revision = (manga.revision ?? 0) + 1;
+    const existingSummaries = await this.listLibrary();
+    const existing = existingSummaries.find((x) => x.id === manga.id);
+    const revision = (existing?.revision ?? manga.revision ?? 0) + 1;
     const now = Date.now();
+    const usedSlugs = new Set(
+      existingSummaries.filter((x) => x.id !== manga.id).map((x) => x.slug || ''),
+    );
+    const slug = manga.slug || existing?.slug || uniqueSlug(manga.title, usedSlugs);
     const m: Manga = {
       ...manga,
       revision,
       updatedAt: now,
-      slug: manga.slug || uniqueSlug(manga.title, new Set()),
+      slug,
     };
     await desktopAPI.sqliteSaveManga(m);
+    manga.updatedAt = now;
+    manga.revision = revision;
+    manga.slug = slug;
     if (m.cover instanceof Blob && desktopAPI.saveThumbnail) {
       void m.cover
         .arrayBuffer()
@@ -261,7 +271,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     }
     await desktopAPI.sqliteDeleteManga(id);
     if (desktopAPI.deleteThumbnail) {
-      void desktopAPI.deleteThumbnail(id).catch(() => {});
+      void desktopAPI.deleteThumbnail(id).catch(() => { });
     }
     this.invalidateCaches();
     notifyDelete(id);
@@ -274,7 +284,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     }
     await desktopAPI.sqliteClearLibrary();
     if (desktopAPI.clearThumbnails) {
-      void desktopAPI.clearThumbnails().catch(() => {});
+      void desktopAPI.clearThumbnails().catch(() => { });
     }
     this.invalidateCaches();
     notifyDelete();
@@ -488,7 +498,7 @@ export async function readLegacyIndexedDB(): Promise<LegacyReadResult> {
       } catch (err) {
         try {
           db.close();
-        } catch {}
+        } catch { }
         return resolve({
           status: 'failed',
           error: err instanceof Error ? err : new Error(String(err)),

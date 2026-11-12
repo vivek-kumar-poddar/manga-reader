@@ -914,40 +914,44 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   }
 }
 
-let activeRepo: LibraryRepo = desktopAPI.isDesktop
-  ? new TauriSqliteLibraryRepo()
-  : new IndexedDBLibraryRepo();
+// Replace lines 917-951 in src/web/storage.ts:
+let activeRepo: LibraryRepo | null = null;
 
 export function setRepo(newRepo: LibraryRepo): void {
   activeRepo = newRepo;
 }
 
 export function getRepo(): LibraryRepo {
+  if (!activeRepo) {
+    activeRepo = desktopAPI.isDesktop
+      ? new TauriSqliteLibraryRepo()
+      : new IndexedDBLibraryRepo();
+  }
   return activeRepo;
 }
 
 export const repo: LibraryRepo = {
-  listLibrary: () => activeRepo.listLibrary(),
-  getManga: (id) => activeRepo.getManga(id),
-  getCover: (id) => activeRepo.getCover(id),
-  allManga: () => activeRepo.allManga(),
-  saveManga: (m) => activeRepo.saveManga(m),
+  listLibrary: () => getRepo().listLibrary(),
+  getManga: (id) => getRepo().getManga(id),
+  getCover: (id) => getRepo().getCover(id),
+  allManga: () => getRepo().allManga(),
+  saveManga: (m) => getRepo().saveManga(m),
   saveProgress: (m, index, position, read, bookmarks, updateLast) =>
-    activeRepo.saveProgress(m, index, position, read, bookmarks, updateLast),
-  getBookmarkedMangaIds: () => activeRepo.getBookmarkedMangaIds(),
-  getMangaBookmarkedIds: () => activeRepo.getMangaBookmarkedIds(),
+    getRepo().saveProgress(m, index, position, read, bookmarks, updateLast),
+  getBookmarkedMangaIds: () => getRepo().getBookmarkedMangaIds(),
+  getMangaBookmarkedIds: () => getRepo().getMangaBookmarkedIds(),
   addBookmark: (mangaId, chapterName, position) =>
-    activeRepo.addBookmark(mangaId, chapterName, position),
+    getRepo().addBookmark(mangaId, chapterName, position),
   removeBookmark: (mangaId, chapterName, position) =>
-    activeRepo.removeBookmark(mangaId, chapterName, position),
-  deleteManga: (id) => activeRepo.deleteManga(id),
-  clearLibrary: () => activeRepo.clearLibrary(),
-  resetProgress: () => activeRepo.resetProgress(),
-  getStoredSettings: () => activeRepo.getStoredSettings(),
-  saveStoredSettings: (s) => activeRepo.saveStoredSettings(s),
-  exportBackup: () => (activeRepo.exportBackup ? activeRepo.exportBackup() : Promise.resolve('')),
-  restoreBackup: (b) => activeRepo.restoreBackup(b),
-  invalidateCaches: () => activeRepo.invalidateCaches?.(),
+    getRepo().removeBookmark(mangaId, chapterName, position),
+  deleteManga: (id) => getRepo().deleteManga(id),
+  clearLibrary: () => getRepo().clearLibrary(),
+  resetProgress: () => getRepo().resetProgress(),
+  getStoredSettings: () => getRepo().getStoredSettings(),
+  saveStoredSettings: (s) => getRepo().saveStoredSettings(s),
+  exportBackup: () => (getRepo().exportBackup ? getRepo().exportBackup!() : Promise.resolve('')),
+  restoreBackup: (b) => getRepo().restoreBackup(b),
+  invalidateCaches: () => getRepo().invalidateCaches?.(),
 };
 
 export const listLibrary = async (): Promise<Summary[]> => repo.listLibrary();
@@ -984,7 +988,7 @@ export const getStoredSettings = async (): Promise<Settings | undefined> =>
 export const saveStoredSettings = async (settings: Settings): Promise<Settings> =>
   repo.saveStoredSettings(settings);
 export const exportBackup = async (): Promise<string> =>
-  activeRepo.exportBackup ? activeRepo.exportBackup() : '';
+  repo.exportBackup ? repo.exportBackup() : '';
 export const restoreBackup = async (
   backup: { manga: Manga[]; settings: Settings } | string,
 ): Promise<Settings> => repo.restoreBackup(backup);
