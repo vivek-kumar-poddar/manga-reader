@@ -16,6 +16,9 @@ import {
   listLibrary,
   errorMessage,
   onMangaDelete,
+  invalidateSummaryCache,
+  invalidateBookmarkCache,
+  broadcastSync,
 } from './storage';
 
 export function naturalOrder(a: string, b: string): number {
@@ -39,7 +42,7 @@ export const ignored = (path: string): boolean =>
   /(^|\/)Thumbs\.db$/i.test(path) ||
   /(^|\/)desktop\.ini$/i.test(path);
 
-export function clearSessionDimensions(): void {}
+export function clearSessionDimensions(): void { }
 
 export interface Issue {
   path: string;
@@ -77,7 +80,7 @@ export class DesktopHandle {
     readonly modified: number,
     readonly width?: number | null,
     readonly height?: number | null,
-  ) {}
+  ) { }
 
   async getFile(): Promise<File> {
     const buffer = await desktopAPI.readFile(this.absolutePath);
@@ -215,7 +218,10 @@ export async function fromHandle(_handle: Directory, _options: ScanOptions = {})
   throw new Error('fromHandle is not supported in desktop builds');
 }
 
-export function droppedSources(): () => Promise<Source[]> {
+export function droppedSources(
+  _items?: DataTransferItem[],
+  _options?: ScanOptions,
+): () => Promise<Source[]> {
   return async () => [];
 }
 
@@ -391,7 +397,10 @@ export async function indexSource(
       };
 
       alive(options.signal);
-      // Natively committed directly to SQLite in Rust index_title, avoiding redundant JS serialization
+      // Natively committed directly to SQLite in Rust index_title; invalidate JS caches
+      invalidateSummaryCache();
+      invalidateBookmarkCache();
+      broadcastSync({ type: 'library', id: m.id });
 
       return {
         m,
@@ -596,7 +605,7 @@ export async function resumeBackground(): Promise<void> {
 export function scanImage(_entry: SourceFile, _signal?: AbortSignal) {
   return Promise.resolve({ width: 0, height: 0 });
 }
-export function discardScan(_sources: Source[]): void {}
+export function discardScan(_sources: Source[]): void { }
 export async function warmSources(
   sources: Source[],
   options: ScanOptions = {},

@@ -131,6 +131,7 @@ let bookmarkGeneration = 0;
 
 export function invalidateSummaryCache(): void {
   cachedSummaries = null;
+  activeRepo?.invalidateCaches?.();
 }
 
 export function invalidateBookmarkCache(): void {
@@ -138,6 +139,7 @@ export function invalidateBookmarkCache(): void {
   cachedBookmarkedMangaIds = null;
   cachedMangaBookmarkedIds = null;
   bookmarkCachePromise = null;
+  activeRepo?.invalidateCaches?.();
 }
 
 syncChannel?.addEventListener('message', () => {
@@ -190,35 +192,35 @@ export async function migrateV1ToV2(tx: any, _d?: IDBPDatabase<MangaDB>): Promis
 export const db: Promise<IDBPDatabase<MangaDB>> =
   typeof indexedDB !== 'undefined'
     ? openDB<MangaDB>('manga-reader', 2, {
-        async upgrade(d, old, _new, tx) {
-          if (old < 1) {
-            d.createObjectStore('manga', { keyPath: 'id' });
-            d.createObjectStore('settings');
+      async upgrade(d, old, _new, tx) {
+        if (old < 1) {
+          d.createObjectStore('manga', { keyPath: 'id' });
+          d.createObjectStore('settings');
+        }
+        if (old < 2) {
+          d.createObjectStore('summaries', { keyPath: 'id' });
+          d.createObjectStore('covers');
+          const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
+          p.createIndex('mangaId', 'mangaId');
+          try {
+            await migrateV1ToV2(tx, d);
+          } catch (err) {
+            console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
+            tx.abort();
+            throw err;
           }
-          if (old < 2) {
-            d.createObjectStore('summaries', { keyPath: 'id' });
-            d.createObjectStore('covers');
-            const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
-            p.createIndex('mangaId', 'mangaId');
-            try {
-              await migrateV1ToV2(tx, d);
-            } catch (err) {
-              console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
-              tx.abort();
-              throw err;
-            }
-          }
-        },
-        blocking() {
-          void db.then((d) => d.close());
-        },
-        blocked() {
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
-          }
-        },
-      })
-    : (new Promise(() => {}) as unknown as Promise<IDBPDatabase<MangaDB>>);
+        }
+      },
+      blocking() {
+        void db.then((d) => d.close());
+      },
+      blocked() {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
+        }
+      },
+    })
+    : (new Promise(() => { }) as unknown as Promise<IDBPDatabase<MangaDB>>);
 
 export const listLibraryIdb = async (): Promise<Summary[]> => {
   if (cachedSummaries !== null) {
@@ -286,7 +288,7 @@ export async function getCoverIdb(id: string): Promise<Blob | undefined> {
         void blob
           .arrayBuffer()
           .then((ab) => desktopAPI.saveThumbnail?.(id, ab))
-          .catch(() => {});
+          .catch(() => { });
       }
       return blob;
     }
@@ -330,8 +332,8 @@ export async function getMangaIdb(id: string): Promise<Manga | undefined> {
         position: p?.position ? parsePosition(p.position, c.pages) : undefined,
         bookmarks: Array.isArray(p?.bookmarks)
           ? p.bookmarks
-              .map((bm) => parsePosition(bm, c.pages))
-              .filter((bm): bm is Position => Boolean(bm))
+            .map((bm) => parsePosition(bm, c.pages))
+            .filter((bm): bm is Position => Boolean(bm))
           : c.bookmarks || [],
       };
     }),
@@ -351,7 +353,7 @@ export async function saveMangaIdb(m: Manga): Promise<void> {
   const existing = (await tx.objectStore('summaries').get(m.id)) as Summary | undefined;
   if (!existing && (await tx.objectStore('summaries').count()) >= limits.titles) {
     tx.abort();
-    await tx.done.catch(() => {}); // Expected rejection from our explicit abort.
+    await tx.done.catch(() => { }); // Expected rejection from our explicit abort.
     throw new LimitError(
       `Library title limit is ${limits.titles}. Remove a title before importing.`,
     );
@@ -443,11 +445,11 @@ export async function saveProgressIdb(
     ...s,
     ...(updateLast
       ? {
-          lastChapter: index,
-          lastChapterName: chapter.name,
-          hasProgress: true,
-          updatedAt: Date.now(),
-        }
+        lastChapter: index,
+        lastChapterName: chapter.name,
+        hasProgress: true,
+        updatedAt: Date.now(),
+      }
       : {}),
     chaptersRead: s.chaptersRead + (!old?.read && isRead ? 1 : 0),
   });
@@ -460,11 +462,11 @@ export async function saveProgressIdb(
         ...cur,
         ...(updateLast
           ? {
-              lastChapter: index,
-              lastChapterName: chapter.name,
-              hasProgress: true,
-              updatedAt: Date.now(),
-            }
+            lastChapter: index,
+            lastChapterName: chapter.name,
+            hasProgress: true,
+            updatedAt: Date.now(),
+          }
           : {}),
         chaptersRead: cur.chaptersRead + (!old?.read && isRead ? 1 : 0),
       };
@@ -780,7 +782,7 @@ export async function restoreBackupIdb(backup: {
     } catch (err) {
       try {
         tx.abort();
-      } catch {}
+      } catch { }
       throw err;
     }
 
@@ -825,7 +827,7 @@ export async function resetProgressIdb(): Promise<void> {
   } catch (err) {
     try {
       tx.abort();
-    } catch {}
+    } catch { }
     throw err;
   }
 }

@@ -14,9 +14,34 @@ const isTauri = Boolean(process.env.TAURI_ENV_PLATFORM);
 const isDesktop = process.env.VITE_TARGET === 'desktop' || isTauri;
 const host = process.env.TAURI_DEV_HOST;
 
+const srcDir = path.resolve(__dirname, 'src');
+
 function platformEntryPlugin(desktop: boolean): Plugin {
+  const desktopMap: Record<string, string> = {
+    [path.resolve(srcDir, 'data')]: path.resolve(srcDir, 'data.desktop.ts'),
+    [path.resolve(srcDir, 'storage')]: path.resolve(srcDir, 'desktop/storage.ts'),
+    [path.resolve(srcDir, 'importScan')]: path.resolve(srcDir, 'desktop/importScan.ts'),
+    [path.resolve(srcDir, 'validation')]: path.resolve(srcDir, 'desktop/validation.ts'),
+  };
+
+  const webMap: Record<string, string> = {
+    [path.resolve(srcDir, 'data')]: path.resolve(srcDir, 'data.web.ts'),
+    [path.resolve(srcDir, 'storage')]: path.resolve(srcDir, 'web/storage.ts'),
+    [path.resolve(srcDir, 'importScan')]: path.resolve(srcDir, 'web/importScan.ts'),
+    [path.resolve(srcDir, 'validation')]: path.resolve(srcDir, 'web/validation.ts'),
+  };
+
+  const activeMap = desktop ? desktopMap : webMap;
+
   return {
     name: 'platform-entry',
+    enforce: 'pre',
+    resolveId(source, importer) {
+      if (!importer || !source.startsWith('.')) return null;
+      const cleanImporter = importer.split('?')[0];
+      const resolved = path.resolve(path.dirname(cleanImporter), source).replace(/\.(ts|tsx)$/, '');
+      return activeMap[resolved] ?? null;
+    },
     transformIndexHtml(html) {
       const entry = desktop ? '/src/main.desktop.tsx' : '/src/main.web.tsx';
       return html.replace('/src/main.tsx', entry);
@@ -34,29 +59,29 @@ export default defineConfig({
   resolve: {
     alias: isDesktop
       ? [
-          {
-            find: /^\.\/data$/,
-            replacement: path.resolve(__dirname, 'src/data.desktop.ts'),
-          },
-          {
-            find: /^\.\/storage$/,
-            replacement: path.resolve(__dirname, 'src/desktop/storage.ts'),
-          },
-          {
-            find: /^\.\/importScan$/,
-            replacement: path.resolve(__dirname, 'src/desktop/importScan.ts'),
-          },
-          {
-            find: /^\.\/validation$/,
-            replacement: path.resolve(__dirname, 'src/desktop/validation.ts'),
-          },
-        ]
+        {
+          find: /^\.\/data$/,
+          replacement: path.resolve(__dirname, 'src/data.desktop.ts'),
+        },
+        {
+          find: /^\.\/storage$/,
+          replacement: path.resolve(__dirname, 'src/desktop/storage.ts'),
+        },
+        {
+          find: /^\.\/importScan$/,
+          replacement: path.resolve(__dirname, 'src/desktop/importScan.ts'),
+        },
+        {
+          find: /^\.\/validation$/,
+          replacement: path.resolve(__dirname, 'src/desktop/validation.ts'),
+        },
+      ]
       : [
-          {
-            find: /^\.\/data$/,
-            replacement: path.resolve(__dirname, 'src/data.web.ts'),
-          },
-        ],
+        {
+          find: /^\.\/data$/,
+          replacement: path.resolve(__dirname, 'src/data.web.ts'),
+        },
+      ],
   },
   server: {
     port: 5173,
@@ -64,10 +89,10 @@ export default defineConfig({
     host: host || false,
     hmr: host
       ? {
-          protocol: 'ws',
-          host,
-          port: 5183,
-        }
+        protocol: 'ws',
+        host,
+        port: 5183,
+      }
       : undefined,
     watch: {
       ignored: ['**/src-tauri/**'],
@@ -107,61 +132,61 @@ export default defineConfig({
     tailwind(),
     process.env.ANALYZE
       ? ({
-          name: 'bundle-visualizer',
-          generateBundle(_options, bundle) {
-            console.log('\n=== BUNDLE ANALYSIS ===');
-            for (const [name, file] of Object.entries(bundle)) {
-              if (file.type === 'chunk') {
-                const modSummary: Record<string, number> = {};
-                for (const [id, mod] of Object.entries(file.modules)) {
-                  let pkg = 'app: ' + id.replace(/.*\/src\//, 'src/');
-                  const nmIdx = id.indexOf('node_modules/');
-                  if (nmIdx >= 0) {
-                    const sub = id.slice(nmIdx + 'node_modules/'.length);
-                    pkg = sub.startsWith('@')
-                      ? sub.split('/').slice(0, 2).join('/')
-                      : sub.split('/')[0];
-                  }
-                  const len = mod.renderedLength || 0;
-                  modSummary[pkg] = (modSummary[pkg] || 0) + len;
+        name: 'bundle-visualizer',
+        generateBundle(_options, bundle) {
+          console.log('\n=== BUNDLE ANALYSIS ===');
+          for (const [name, file] of Object.entries(bundle)) {
+            if (file.type === 'chunk') {
+              const modSummary: Record<string, number> = {};
+              for (const [id, mod] of Object.entries(file.modules)) {
+                let pkg = 'app: ' + id.replace(/.*\/src\//, 'src/');
+                const nmIdx = id.indexOf('node_modules/');
+                if (nmIdx >= 0) {
+                  const sub = id.slice(nmIdx + 'node_modules/'.length);
+                  pkg = sub.startsWith('@')
+                    ? sub.split('/').slice(0, 2).join('/')
+                    : sub.split('/')[0];
                 }
-                console.log(`\nChunk: ${name} (${(file.code.length / 1024).toFixed(2)} KB)`);
-                const sorted = Object.entries(modSummary).sort((a, b) => b[1] - a[1]);
-                for (const [pkg, bytes] of sorted.slice(0, 10)) {
-                  console.log(`  - ${pkg.padEnd(30)} ${(bytes / 1024).toFixed(2)} KB`);
-                }
+                const len = mod.renderedLength || 0;
+                modSummary[pkg] = (modSummary[pkg] || 0) + len;
+              }
+              console.log(`\nChunk: ${name} (${(file.code.length / 1024).toFixed(2)} KB)`);
+              const sorted = Object.entries(modSummary).sort((a, b) => b[1] - a[1]);
+              for (const [pkg, bytes] of sorted.slice(0, 10)) {
+                console.log(`  - ${pkg.padEnd(30)} ${(bytes / 1024).toFixed(2)} KB`);
               }
             }
-          },
-        } as Plugin)
+          }
+        },
+      } as Plugin)
       : null,
     !isDesktop &&
-      VitePWA({
-        registerType: 'prompt',
-        injectRegister: false,
-        manifest: {
-          name: 'Manga Reader',
-          short_name: 'Reader',
-          theme_color: '#fafafa',
-          background_color: '#fafafa',
-          display: 'standalone',
-          start_url: './',
-        },
-        workbox: {
-          skipWaiting: false,
-          clientsClaim: true,
-          globPatterns: ['**/*.{js,css,html,woff2}'],
-          // Always boot Reader for chapter navigations, including denied access.
-          // A network 200 can be the parent site's fallback HTML, not our app.
-          navigateFallback: 'index.html',
-          navigateFallbackDenylist: [
-            /\/assets\//,
-            /\/[^/?]+\.[^/]+$/,
-            // The widened hosted scope must not serve Reader for sibling apps.
-            /\/manga-reader[^/?#]/,
-          ],
-          maximumFileSizeToCacheInBytes: 4000000,
-        },
-      }),
+    VitePWA({
+      registerType: 'prompt',
+      injectRegister: false,
+      manifest: {
+        name: 'Manga Reader',
+        short_name: 'Reader',
+        theme_color: '#fafafa',
+        background_color: '#fafafa',
+        display: 'standalone',
+        start_url: './',
+      },
+      workbox: {
+        skipWaiting: false,
+        clientsClaim: true,
+        globPatterns: ['**/*.{js,css,html,woff2}'],
+        // Always boot Reader for chapter navigations, including denied access.
+        // A network 200 can be the parent site's fallback HTML, not our app.
+        navigateFallback: 'index.html',
+        navigateFallbackDenylist: [
+          /\/assets\//,
+          /\/[^/?]+\.[^/]+$/,
+          // The widened hosted scope must not serve Reader for sibling apps.
+          /\/manga-reader[^/?#]/,
+        ],
+        maximumFileSizeToCacheInBytes: 4000000,
+      },
+    }),
   ].filter(Boolean),
 });

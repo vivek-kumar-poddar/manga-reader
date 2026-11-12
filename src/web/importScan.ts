@@ -21,6 +21,9 @@ import {
   errorMessage,
   onMangaDelete,
   sessionFiles,
+  invalidateSummaryCache,
+  invalidateBookmarkCache,
+  broadcastSync,
   type SourceFile,
 } from './storage';
 
@@ -161,7 +164,7 @@ export class DesktopHandle {
     readonly lastModified: number,
     readonly width?: number | null,
     readonly height?: number | null,
-  ) {}
+  ) { }
   async getFile(): Promise<File> {
     if (!desktopAPI.isDesktop) throw new Error('Desktop API not available.');
     const buf = await desktopAPI.readFile(this.absPath);
@@ -321,8 +324,8 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
       active++;
       const task = scanImage(entry, options.signal)
         .then(
-          () => {},
-          () => {},
+          () => { },
+          () => { },
         )
         .finally(() => {
           active--;
@@ -626,11 +629,11 @@ export function droppedSources(
         file: item.getAsFile(),
         handle: typed.getAsFileSystemHandle
           ? withinTime(
-              typed.getAsFileSystemHandle(),
-              limits.ioTimeoutMs,
-              'Reading dropped handle',
-              options.signal,
-            ).catch(() => null)
+            typed.getAsFileSystemHandle(),
+            limits.ioTimeoutMs,
+            'Reading dropped handle',
+            options.signal,
+          ).catch(() => null)
           : undefined,
       };
     });
@@ -837,56 +840,84 @@ export async function indexSource(
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
     alive(options.signal);
     const confirmedTitle = source.title?.trim() || undefined;
-    const dto = await desktopAPI.indexTitle(
-      source.localPath,
-      { sort, previous, title: confirmedTitle, signal: options.signal },
-      (progress) => {
-        alive(options.signal);
-        options.update?.({
-          phase: progress.phase as 'discover' | 'index',
-          done: progress.done,
-          total: progress.total,
-          title: confirmedTitle || progress.title,
-        });
-        if (progress.total > 0) {
-          desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
-        }
-      },
-    );
-    alive(options.signal);
+    const jobId = `index-${Math.random().toString(36).slice(2)}`;
 
-    const m: Manga = {
-      id: dto.id,
-      title: confirmedTitle || dto.title,
-      slug: dto.slug,
-      localPath: dto.localPath,
-      lastChapter: dto.lastChapter,
-      addedAt: dto.addedAt,
-      updatedAt: dto.updatedAt,
-      revision: dto.revision,
-      sort: dto.sort as 'natural' | 'name' | 'reverse',
-      chapters: dto.chapters.map((c) => ({
-        name: c.name,
-        read: c.read,
-        position: c.position,
-        bookmarks: c.bookmarks,
-        pages: c.pages.map((p) => ({
-          name: p.name,
-          path: p.path,
-          width: p.width,
-          height: p.height,
-          size: p.size,
-          modified: p.modified,
-          dimensionsPending: p.dimensionsPending,
+    let abortHandler: (() => void) | undefined;
+    if (options.signal) {
+      abortHandler = () => {
+        void desktopAPI.cancelScan?.(jobId);
+      };
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    try {
+      const dto = await desktopAPI.indexTitle(
+        source.localPath,
+        {
+          sort,
+          previous,
+          targetId: previous?.id,
+          title: confirmedTitle,
+          jobId,
+          signal: options.signal,
+        },
+        (progress) => {
+          alive(options.signal);
+          options.update?.({
+            phase: progress.phase as 'discover' | 'index',
+            done: progress.done,
+            total: progress.total,
+            title: confirmedTitle || progress.title,
+          });
+          if (progress.total > 0) {
+            desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+          }
+        },
+      );
+      alive(options.signal);
+
+      const m: Manga = {
+        id: dto.id,
+        title: confirmedTitle || dto.title,
+        slug: dto.slug,
+        localPath: dto.localPath,
+        lastChapter: dto.lastChapter,
+        addedAt: dto.addedAt,
+        updatedAt: dto.updatedAt,
+        revision: dto.revision,
+        sort: dto.sort as 'natural' | 'name' | 'reverse',
+        chapters: (dto.chapters || []).map((c) => ({
+          name: c.name,
+          read: c.read,
+          position: c.position,
+          bookmarks: c.bookmarks,
+          pages: (c.pages || []).map((p) => ({
+            name: p.name,
+            path: p.path,
+            width: p.width,
+            height: p.height,
+            size: p.size,
+            modified: p.modified,
+            dimensionsPending: p.dimensionsPending,
+          })),
         })),
-      })),
-    };
+      };
 
-    return {
-      m,
-      issues: [...source.issues, ...dto.issues],
-      reused: dto.reused,
-    };
+      alive(options.signal);
+      invalidateSummaryCache();
+      invalidateBookmarkCache();
+      broadcastSync({ type: 'library', id: m.id });
+
+      return {
+        m,
+        issues: [...source.issues, ...dto.issues],
+        reused: dto.reused,
+      };
+    } finally {
+      if (abortHandler && options.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+    }
   }
 
   const issues = [...source.issues];
@@ -1029,9 +1060,9 @@ export async function indexSource(
   const sortedNames =
     naturalSort && sort !== 'name'
       ? await (async () => {
-          const names = await naturalSort([...grouped.keys()]);
-          return sort === 'reverse' ? names.reverse() : names;
-        })()
+        const names = await naturalSort([...grouped.keys()]);
+        return sort === 'reverse' ? names.reverse() : names;
+      })()
       : [...grouped.keys()].sort(compare);
 
   const chapters = await Promise.all(
