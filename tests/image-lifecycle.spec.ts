@@ -2,6 +2,7 @@ import { expect, test } from '@playwright/test';
 import { ImageQueue, enqueueImage, clearImageQueue } from '../src/imageQueue';
 import { dimensions, thumbnail, downscaleImage } from '../src/images';
 import { limits } from '../src/limits';
+import { ObjectUrlPool } from '../src/objectUrlPool';
 
 test.describe('Step 12 — Removable Page-Image Task Lifecycle (imageQueue.ts)', () => {
   test('enqueue runs task and releases concurrency slot upon completion', async () => {
@@ -326,5 +327,138 @@ test.describe('Step 13 — Safe Image Decoding & Resource Cleanup (images.ts)', 
     controller.abort();
 
     await expect(thumbnail(file, controller.signal)).rejects.toThrow();
+  });
+});
+
+test.describe('Step 40 — 1.9 Queue and Object-URL Lifecycle (imageQueue.ts & objectUrlPool.ts)', () => {
+  test('duplicate keys notify all subscribers upon completion without duplicate worker runs', async () => {
+    const queue = new ImageQueue();
+    let runs = 0;
+    let sub1Done = false;
+    let sub2Done = false;
+
+    queue.enqueue({
+      key: 'shared-page-key',
+      priority: 1,
+      run: async () => {
+        runs++;
+      },
+      onComplete: () => {
+        sub1Done = true;
+      },
+    });
+
+    queue.enqueue({
+      key: 'shared-page-key',
+      priority: 2,
+      run: async () => {
+        runs++;
+      },
+      onComplete: () => {
+        sub2Done = true;
+      },
+    });
+
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(runs).toBe(1);
+    expect(sub1Done).toBe(true);
+    expect(sub2Done).toBe(true);
+  });
+
+  test('individual cancellation unregisters subscriber; task continues until all cancel', async () => {
+    const queue = new ImageQueue();
+    let runs = 0;
+    let sub2Done = false;
+    const blockers: (() => void)[] = [];
+
+    // Fill concurrency
+    for (let i = 0; i < 4; i++) {
+      queue.enqueue({
+        key: `b-${i}`,
+        run: () => new Promise<void>((res) => blockers.push(res)),
+      });
+    }
+
+    const cancel1 = queue.enqueue({
+      key: 'contested-task',
+      priority: 1,
+      run: async () => {
+        runs++;
+      },
+    });
+
+    const cancel2 = queue.enqueue({
+      key: 'contested-task',
+      priority: 5,
+      run: async () => {
+        runs++;
+      },
+      onComplete: () => {
+        sub2Done = true;
+      },
+    });
+
+    // Caller 1 cancels its handle
+    expect(cancel1).not.toBeNull();
+    cancel1!();
+
+    // The task should still be pending because subscriber 2 remains
+    expect(queue.pendingCount).toBe(1);
+
+    // Release blockers so contested-task can run
+    blockers.forEach((b) => b());
+    await new Promise((r) => setTimeout(r, 30));
+
+    expect(runs).toBe(1);
+    expect(sub2Done).toBe(true);
+  });
+
+  test('ObjectUrlPool revokes replaced URL when key is overwritten with different URL', () => {
+    const revoked: string[] = [];
+    const origRevoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (u: string) => revoked.push(u);
+
+    try {
+      const pool = new ObjectUrlPool(5);
+      pool.set('page:1', 'blob:http://localhost/first');
+      expect(pool.get('page:1')).toBe('blob:http://localhost/first');
+
+      // Overwrite with a different URL
+      pool.set('page:1', 'blob:http://localhost/second');
+      expect(pool.get('page:1')).toBe('blob:http://localhost/second');
+      expect(revoked).toContain('blob:http://localhost/first');
+    } finally {
+      URL.revokeObjectURL = origRevoke;
+    }
+  });
+
+  test('ObjectUrlPool pins consumers: retained URL is not revoked on LRU eviction until released', () => {
+    const revoked: string[] = [];
+    const origRevoke = URL.revokeObjectURL;
+    URL.revokeObjectURL = (u: string) => revoked.push(u);
+
+    try {
+      const pool = new ObjectUrlPool(2);
+      pool.set('img:1', 'blob:http://localhost/1');
+      pool.set('img:2', 'blob:http://localhost/2');
+
+      // Consumer retains img:1
+      const release1 = pool.retain('img:1');
+
+      // Adding img:3 causes LRU eviction of img:1 from cache
+      pool.set('img:3', 'blob:http://localhost/3');
+      expect(pool.get('img:1')).toBeUndefined(); // evicted from cache
+
+      // But img:1 was retained by consumer, so it MUST NOT be revoked yet!
+      expect(revoked).not.toContain('blob:http://localhost/1');
+
+      // When consumer unmounts and releases:
+      release1();
+      // Now it must be revoked!
+      expect(revoked).toContain('blob:http://localhost/1');
+    } finally {
+      URL.revokeObjectURL = origRevoke;
+    }
   });
 });

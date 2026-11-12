@@ -21,6 +21,7 @@ export interface Position {
   timestamp?: number;
 }
 export interface Chapter {
+  id?: string;
   name: string;
   pages: Page[];
   read: boolean;

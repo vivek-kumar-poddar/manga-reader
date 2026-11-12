@@ -28,6 +28,7 @@ export function useReaderKeys({
   toggleBookmark,
 }: UseReaderKeysOptions) {
   const keysHeld = useRef(new Set<string>());
+  const navigatingRef = useRef(false);
 
   const onKeyDown = (e: KeyboardEvent) => {
     keysHeld.current.add(e.code);
@@ -45,9 +46,21 @@ export function useReaderKeys({
     if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
       e.preventDefault();
       const delta = e.key === 'ArrowRight' ? 1 : -1;
-      if (latest.current.s.mode === 'single')
+      if (latest.current.s.mode === 'single') {
         actions.current.step(delta * (latest.current.s.direction === 'rtl' ? -1 : 1));
-      else actions.current.goChapter(latest.current.ci + delta);
+      } else {
+        // Serialize navigation: ignore repeated keystrokes while chapter transition is active
+        if (navigatingRef.current) return;
+        navigatingRef.current = true;
+        actions.current
+          .goChapter(latest.current.ci + delta)
+          .catch((err) => {
+            console.warn('Chapter navigation failed:', err);
+          })
+          .finally(() => {
+            navigatingRef.current = false;
+          });
+      }
     }
     if (e.key === 'Escape') {
       setPlaying(false);
@@ -70,4 +83,3 @@ export function useReaderKeys({
     onKeyUp,
   };
 }
-

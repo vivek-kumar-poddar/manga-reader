@@ -1,0 +1,122 @@
+// Web platform data facade re-exporting model, web validation, web storage, images, and web importScan.
+export { defaults } from './model';
+export type {
+  Directory,
+  Page,
+  Position,
+  Chapter,
+  Manga,
+  Summary,
+  Progress,
+  Settings,
+} from './model';
+
+export {
+  matchingPosition,
+  validateBackup,
+  ValidationError,
+  parsePosition,
+  parseSettings,
+  parseManga,
+  parseSummary,
+  validateRelativePath,
+} from './web/validation';
+
+export {
+  db,
+  summary,
+  listLibrary,
+  invalidateSummaryCache,
+  invalidateBookmarkCache,
+  getManga,
+  getCover,
+  allManga,
+  saveManga,
+  saveProgress,
+  getBookmarkedMangaIds,
+  getMangaBookmarkedIds,
+  addBookmark,
+  removeBookmark,
+  syncChannel,
+  broadcastSync,
+  onStorageSync,
+  type StorageSyncMessage,
+  deleteManga,
+  onMangaDelete,
+  clearLibrary,
+  migrateV1ToV2,
+  exportBackup,
+  restoreBackup,
+  resetProgress,
+  getStoredSettings,
+  saveStoredSettings,
+  ensureLibraryMigrated,
+  repo,
+  setRepo,
+  getRepo,
+  type LibraryRepo,
+  TauriSqliteLibraryRepo,
+  IndexedDBLibraryRepo,
+  errorMessage,
+  fileFor,
+  dirHandleCache,
+  clearDirHandleCache,
+  accessCache,
+  clearAccessCache,
+  ACCESS_CACHE_TTL_MS,
+  access,
+  sessionFiles,
+  type AccessCacheEntry,
+  type SaveProgressResult,
+  type MangaDB,
+  type SourceFile,
+} from './web/storage';
+
+export { dimensions, thumbnail, imageFile, downscaleImage } from './images';
+export {
+  enqueueImage,
+  clearImageQueue,
+  reprioritizeImage,
+  ImageQueue,
+  defaultImageQueue,
+} from './imageQueue';
+export {
+  getObjectUrl,
+  storeObjectUrl,
+  retainObjectUrl,
+  releaseObjectUrl,
+  clearObjectUrlPool,
+  ObjectUrlPool,
+  defaultObjectUrlPool,
+} from './objectUrlPool';
+
+export { normalizePath } from './paths';
+
+export { getPageImageUrl, getCoverImageUrl, type PageImageResourceOptions } from './tauriBridge';
+
+export {
+  DesktopHandle,
+  naturalOrder,
+  naturalSortPaths,
+  ignored,
+  fromDesktopFolder,
+  fromFiles,
+  fromHandle,
+  droppedSources,
+  splitSource,
+  chapterGroups,
+  chapterPreviews,
+  indexSource,
+  prepareChapter,
+  stopBackground,
+  scheduleBackground,
+  resumeBackground,
+  discardScan,
+  warmSources,
+  type Issue,
+  type ScanState,
+  type ScanOptions,
+  type PrepareChapterOptions,
+  type ChapterPreview,
+  type Source,
+} from './web/importScan';

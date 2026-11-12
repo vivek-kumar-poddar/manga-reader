@@ -10,6 +10,7 @@
     "opener:default",
     "dialog:default",
     "dialog:allow-open",
+    "dialog:allow-save",
     "window-state:default",
     "updater:default",
     "allow-select-folder",
@@ -20,6 +21,11 @@
     "allow-natural-sort-paths",
     "allow-prepare-chapter-headers",
     "allow-discover-library",
+    "allow-is-same-path",
+    "allow-resolve-manga-path",
+    "allow-check-access",
+    "allow-revoke-root",
+    "allow-get-authorized-roots",
     "allow-set-progress-bar",
     "allow-show-main-window",
     "allow-save-thumbnail",
@@ -53,6 +59,8 @@
     "allow-validate-library-backup",
     "allow-export-library-backup",
     "allow-restore-library-backup",
-    "allow-index-title"
+    "allow-index-title",
+    "allow-get-storage-stats",
+    "allow-save-file-dialog"
   ]
 }

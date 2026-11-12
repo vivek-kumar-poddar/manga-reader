@@ -3,7 +3,7 @@ import { fileFor, errorMessage, type Manga, type Page } from './data';
 import { limits, assertImageDimensions } from './limits';
 import { enqueueImage, reprioritizeImage, type CancelHandle } from './imageQueue';
 import { downscaleImage } from './images';
-import { getObjectUrl, storeObjectUrl } from './objectUrlPool';
+import { getObjectUrl, storeObjectUrl, retainObjectUrl } from './objectUrlPool';
 import { desktopAPI } from './tauriBridge';
 
 const watched = new Map<Element, (visible: boolean) => void>();
@@ -36,6 +36,7 @@ interface PageImageProps {
   lowQuality: boolean;
   report: (message: string) => void;
   retryPreparation: () => void;
+  onDimensionsResolved?: (pageIndex: number, width: number, height: number) => void;
 }
 
 function PageImage({
@@ -46,6 +47,7 @@ function PageImage({
   lowQuality,
   report,
   retryPreparation,
+  onDimensionsResolved,
 }: PageImageProps) {
   const host = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState('');
@@ -81,6 +83,7 @@ function PageImage({
           page.width = dim.width;
           page.height = dim.height;
           page.dimensionsPending = false;
+          onDimensionsResolved?.(index, dim.width, dim.height);
           setRetry((r) => r + 1);
         })
         .catch(() => {
@@ -90,7 +93,7 @@ function PageImage({
     return () => {
       live = false;
     };
-  }, [dimensionsPending, mangaLocalPath, pagePath, page]);
+  }, [dimensionsPending, mangaLocalPath, pagePath, page, index, onDimensionsResolved]);
 
   // Dynamically update priority for waiting tasks as user scrolls near/far
   useEffect(() => {
@@ -104,19 +107,37 @@ function PageImage({
     let live = true,
       wanted = false,
       cancelTask: CancelHandle | null = null,
-      objectUrl = '';
+      objectUrl = '',
+      unpinTask: (() => void) | null = null;
 
-    // Fast zero-copy path on desktop: use native custom URI scheme mangaimg:
-    if (!useBlobFallback && desktopAPI.isDesktop && desktopAPI.convertFileSrc && mangaLocalPath) {
-      const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
-      const absPath = mangaLocalPath + sep + pagePath.split('/').join(sep);
-      const customSrc = desktopAPI.convertFileSrc(absPath, 'mangaimg');
+    // Fast zero-copy path on desktop: use native resource URL (page ID + version + transform)
+    if (
+      !useBlobFallback &&
+      desktopAPI.isDesktop &&
+      (desktopAPI.getPageImageUrl || desktopAPI.convertFileSrc) &&
+      mangaLocalPath
+    ) {
+      const transform = lowQuality ? 'low' : 'full';
+      const nativeSrc = desktopAPI.getPageImageUrl
+        ? desktopAPI.getPageImageUrl({
+            mangaId,
+            pagePath,
+            version: mangaUpdatedAt,
+            transform,
+            localPath: mangaLocalPath,
+          })
+        : desktopAPI.convertFileSrc!(
+            mangaLocalPath +
+              (mangaLocalPath.includes('\\') ? '\\' : '/') +
+              pagePath.split('/').join(mangaLocalPath.includes('\\') ? '\\' : '/'),
+            'mangaimg',
+          );
 
       const stop = host.current
         ? observe(host.current, (visible) => {
             if (!live) return;
             if (visible) {
-              setUrl(customSrc);
+              setUrl(nativeSrc);
               setError('');
             } else {
               setUrl('');
@@ -135,6 +156,10 @@ function PageImage({
         cancelTask();
         cancelTask = null;
       }
+      if (unpinTask) {
+        unpinTask();
+        unpinTask = null;
+      }
       objectUrl = '';
       if (live) setUrl('');
     };
@@ -146,6 +171,8 @@ function PageImage({
       // Check LRU Object URL Pool first for instant scroll-back
       const cached = getObjectUrl(taskKey);
       if (cached) {
+        if (unpinTask) unpinTask();
+        unpinTask = retainObjectUrl(taskKey);
         objectUrl = cached;
         setUrl(cached);
         setError('');
@@ -204,6 +231,8 @@ function PageImage({
             if (live && wanted && !signal.aborted) {
               objectUrl = URL.createObjectURL(blob);
               storeObjectUrl(taskKey, objectUrl);
+              if (unpinTask) unpinTask();
+              unpinTask = retainObjectUrl(taskKey);
               setUrl(objectUrl);
               setError('');
             }
@@ -214,6 +243,23 @@ function PageImage({
               reportRef.current(message);
             }
           }
+        },
+        onComplete: () => {
+          if (!live || !wanted) return;
+          const cached = getObjectUrl(taskKey);
+          if (cached) {
+            if (unpinTask) unpinTask();
+            unpinTask = retainObjectUrl(taskKey);
+            objectUrl = cached;
+            setUrl(cached);
+            setError('');
+          }
+        },
+        onError: (err) => {
+          if (!live || !wanted) return;
+          const message = errorMessage(err);
+          setError(message);
+          reportRef.current(message);
         },
       });
 

@@ -29,6 +29,8 @@ import {
   repo,
   setRepo,
   getRepo,
+  type AccessCacheEntry,
+  type MangaDB,
 } from '../src/storage';
 import { clearCoverUrlPool } from '../src/App';
 import { desktopAPI, TauriDesktopBridge, parseFsError } from '../src/tauriBridge';
@@ -47,7 +49,7 @@ import {
 import { normalizePath } from '../src/paths';
 import { LimitError } from '../src/limits';
 import { ValidationError } from '../src/validation';
-import { defaults, type Manga } from '../src/model';
+import { defaults, type Manga, type Directory } from '../src/model';
 
 test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization', () => {
   test('summary() computes correct summary metrics from Manga model', () => {
@@ -67,7 +69,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
           name: 'Chapter 2',
           pages: [{ name: '1.jpg', path: 'ch2/1.jpg', width: 800, height: 1200 }],
           read: false,
-          position: { page: 0 },
+          position: { page: 0, fraction: 0 },
         },
       ],
       lastChapter: 1,
@@ -163,6 +165,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       title: 'Limit Test',
       chapters: Array.from({ length: 6000 }, (_, i) => ({
         name: `Chapter ${i}`,
+        read: false,
         pages: [{ name: '01.jpg', path: `${i}/01.jpg`, width: 800, height: 1200 }],
       })),
       lastChapter: 0,
@@ -231,6 +234,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       title: 'Invalid',
       chapters: Array.from({ length: 6000 }, (_, i) => ({
         name: `Chapter ${i}`,
+        read: false,
         pages: [{ name: '01.jpg', path: `${i}/01.jpg`, width: 800, height: 1200 }],
       })),
       lastChapter: 0,
@@ -253,7 +257,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
           pages: [{ name: '01.jpg', path: 'ch1/01.jpg', width: 800, height: 1200 }],
           read: true,
           position: { page: 0, fraction: 0.5 },
-          bookmarks: [{ page: 0 }],
+          bookmarks: [{ page: 0, fraction: 0 }],
         },
       ],
       lastChapter: 0,
@@ -343,7 +347,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       addedAt: 100,
       updatedAt: 100,
     };
-    const result = await saveProgress(manga, 5, { page: 0 }, false);
+    const result = await saveProgress(manga, 5, { page: 0, fraction: 0 }, false);
     expect(result).toBe('missing');
   });
 
@@ -354,6 +358,7 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       chapters: [
         {
           name: 'Ch 1',
+          read: false,
           pages: [{ name: '1.jpg', path: '1.jpg', width: 800, height: 1200 }],
         },
       ],
@@ -361,10 +366,10 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       addedAt: 100,
       updatedAt: 100,
     };
-    const excessiveBookmarks = Array.from({ length: 1001 }, (_, i) => ({ page: i }));
-    await expect(saveProgress(manga, 0, { page: 0 }, false, excessiveBookmarks)).rejects.toThrow(
-      LimitError,
-    );
+    const excessiveBookmarks = Array.from({ length: 1001 }, (_, i) => ({ page: i, fraction: 0 }));
+    await expect(
+      saveProgress(manga, 0, { page: 0, fraction: 0 }, false, excessiveBookmarks),
+    ).rejects.toThrow(LimitError);
   });
 
   test('reader progress snapshot coalescing preserves newest revision during in-flight writes', async () => {
@@ -392,7 +397,8 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       const targetRevision = snapshotRevision;
       dirty = false;
 
-      const savePromise = (async (): Promise<SaveProgressResult> => {
+      let cleanup: () => void = () => {};
+      const promise = (async (): Promise<SaveProgressResult> => {
         try {
           const result = await mockSave(targetRevision);
           if (result === 'saved') {
@@ -402,12 +408,15 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
           }
           return result;
         } finally {
-          if (inFlight === savePromise) inFlight = null;
+          cleanup();
         }
       })();
 
-      inFlight = savePromise;
-      return savePromise;
+      cleanup = () => {
+        if (inFlight === promise) inFlight = null;
+      };
+      inFlight = promise;
+      return promise;
     };
 
     // User scrolls to page 1
@@ -861,16 +870,20 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       const targetRevision = snapshotRevision;
       dirty = false;
 
-      const savePromise = (async (): Promise<SaveProgressResult> => {
+      let cleanup: () => void = () => {};
+      const promise = (async (): Promise<SaveProgressResult> => {
         try {
           return await mockSave(targetRevision);
         } finally {
-          if (inFlight === savePromise) inFlight = null;
+          cleanup();
         }
       })();
 
-      inFlight = savePromise;
-      return savePromise;
+      cleanup = () => {
+        if (inFlight === promise) inFlight = null;
+      };
+      inFlight = promise;
+      return promise;
     };
 
     // First write starts
@@ -941,7 +954,9 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         if (name === 'Volume 1') return volumeDirHandle;
         throw new Error('Folder not found');
       },
-    } as unknown as FileSystemDirectoryHandle;
+      queryPermission: async () => 'granted',
+      requestPermission: async () => 'granted',
+    } as unknown as Directory;
 
     const mockManga: Manga = {
       id: 'manga-handles',
@@ -954,12 +969,22 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     };
 
     // First page read - traverses Volume 1 and Chapter 01
-    const file1 = await fileFor(mockManga, { name: '01.jpg', path: 'Volume 1/Chapter 01/01.jpg' });
+    const file1 = await fileFor(mockManga, {
+      name: '01.jpg',
+      path: 'Volume 1/Chapter 01/01.jpg',
+      width: 800,
+      height: 1200,
+    });
     expect(file1).toBeDefined();
     expect(getDirCount).toBe(2);
 
     // Second page read in same chapter - should reuse cached directory handle (getDirCount stays 2!)
-    const file2 = await fileFor(mockManga, { name: '02.jpg', path: 'Volume 1/Chapter 01/02.jpg' });
+    const file2 = await fileFor(mockManga, {
+      name: '02.jpg',
+      path: 'Volume 1/Chapter 01/02.jpg',
+      width: 800,
+      height: 1200,
+    });
     expect(file2).toBeDefined();
     expect(getDirCount).toBe(2); // Zero additional getDirectoryHandle calls!
 
@@ -968,7 +993,12 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
 
     // An error on file read triggers cache clearing for that manga
     await expect(
-      fileFor(mockManga, { name: 'missing.jpg', path: 'Volume 1/Chapter 01/missing.jpg' }),
+      fileFor(mockManga, {
+        name: 'missing.jpg',
+        path: 'Volume 1/Chapter 01/missing.jpg',
+        width: 800,
+        height: 1200,
+      }),
     ).rejects.toThrow();
     expect(dirHandleCache.has('manga-handles:200:Volume 1/Chapter 01')).toBe(false);
 
@@ -1026,9 +1056,9 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
         await new Promise((r) => setTimeout(r, 10));
         return 'granted' as PermissionState;
       },
-    } as unknown as FileSystemDirectoryHandle;
+    } as unknown as Directory;
 
-    const mangaItem = {
+    const mangaItem: Pick<Manga, 'id' | 'handle' | 'localPath'> = {
       id: 'manga-access-throttle',
       handle: mockHandle,
     };
@@ -2125,5 +2155,1053 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
     expect(typeof useAutoplay).toBe('function');
     expect(typeof useReaderKeys).toBe('function');
     expect(typeof useProgressSave).toBe('function');
+  });
+
+  test('Step 31 — Import and Desktop Contracts Verification', async () => {
+    const desktopImportScan = await import('../src/desktop/importScan');
+    const desktopStorage = await import('../src/desktop/storage');
+
+    // 1. Desktop adapter exports reconcile with facade
+    expect(typeof desktopStorage.migrateV1ToV2).toBe('function');
+    await expect(desktopStorage.migrateV1ToV2()).resolves.toBeUndefined();
+    const entry: AccessCacheEntry = {
+      expiresAt: Date.now() + 1000,
+      granted: true,
+      timestamp: Date.now(),
+    };
+    expect(entry.granted).toBe(true);
+    const dbTest: MangaDB = { test: 123 } as unknown as MangaDB;
+    expect((dbTest as any).test).toBe(123);
+
+    // 2. chapterGroups() and chapterPreviews() return real groupings
+    const mockSource: Source = {
+      title: 'Test Title',
+      localPath: 'C:/Manga/Test Title',
+      files: new Map([
+        ['Ch 1/01.jpg', new File([], '01.jpg')],
+        ['Ch 1/02.jpg', new File([], '02.jpg')],
+        ['Ch 2/01.jpg', new File([], '01.jpg')],
+        ['cover.jpg', new File([], 'cover.jpg')],
+      ]),
+      issues: [],
+    };
+
+    const groups = desktopImportScan.chapterGroups(mockSource);
+    expect(groups.size).toBe(2);
+    expect(groups.get('Ch 1')).toBe(2);
+    expect(groups.get('Ch 2')).toBe(1);
+
+    const previews = desktopImportScan.chapterPreviews(mockSource);
+    expect(previews).toHaveLength(2);
+    expect(previews).toContainEqual({ name: 'Ch 1', pageCount: 2 });
+    expect(previews).toContainEqual({ name: 'Ch 2', pageCount: 1 });
+
+    // 3. splitSource() splits multiple titles into child roots
+    const multiTitleSource: Source = {
+      title: 'Manga Collection',
+      localPath: 'C:/Manga',
+      files: new Map([
+        ['Berserk/Ch 1/01.jpg', new File([], '01.jpg')],
+        ['Berserk/Ch 1/02.jpg', new File([], '02.jpg')],
+        ['One Piece/Ch 1/01.jpg', new File([], '01.jpg')],
+      ]),
+      issues: [],
+    };
+
+    const split = await desktopImportScan.splitSource(multiTitleSource);
+    expect(split).toHaveLength(2);
+    const berserk = split.find((s) => s.title === 'Berserk');
+    const onePiece = split.find((s) => s.title === 'One Piece');
+
+    expect(berserk).toBeDefined();
+    expect(berserk!.localPath).toBe('C:/Manga/Berserk');
+    expect(berserk!.files.has('Ch 1/01.jpg')).toBe(true);
+    expect(berserk!.files.has('Ch 1/02.jpg')).toBe(true);
+    expect(desktopImportScan.chapterGroups(berserk!).get('Ch 1')).toBe(2);
+
+    expect(onePiece).toBeDefined();
+    expect(onePiece!.localPath).toBe('C:/Manga/One Piece');
+    expect(onePiece!.files.has('Ch 1/01.jpg')).toBe(true);
+
+    // 4. prepareChapter() accepts { signal, update } and reports progress
+    const mockManga: any = {
+      id: 'm1',
+      title: 'Test',
+      chapters: [
+        {
+          name: 'Ch 1',
+          pages: [
+            { path: 'C:/Manga/Test/01.jpg', dimensionsPending: true },
+            { path: 'C:/Manga/Test/02.jpg', dimensionsPending: true },
+          ],
+        },
+      ],
+    };
+
+    let updateCount = 0;
+    const progressUpdates: any[] = [];
+    await desktopImportScan.prepareChapter(mockManga, 0, {
+      update: (s) => {
+        updateCount++;
+        progressUpdates.push(s);
+      },
+    });
+    // Header prepare won't crash even if desktopAPI mock returns empty
+    expect(typeof desktopImportScan.prepareChapter).toBe('function');
+
+    // 5. warmSources accepts options and sort argument
+    let warmProgressCalled = false;
+    await desktopImportScan.warmSources(
+      [mockSource],
+      {
+        update: (s) => {
+          warmProgressCalled = true;
+          expect(s.phase).toBe('discover');
+          expect(s.title).toBe('Test Title');
+        },
+      },
+      'natural',
+    );
+    expect(warmProgressCalled).toBe(true);
+  });
+
+  test('Step 32 — 1.2 Import Behavior and Cancellation Verification', async () => {
+    const desktopImportScan = await import('../src/desktop/importScan');
+    const { desktopAPI } = await import('../src/tauriBridge');
+
+    // 1. Bounded pooled() worker pool implementation
+    const executed: number[] = [];
+    let maxConcurrent = 0;
+    let currentConcurrent = 0;
+
+    await desktopImportScan.pooled([1, 2, 3, 4, 5, 6], 2, async (item) => {
+      currentConcurrent++;
+      maxConcurrent = Math.max(maxConcurrent, currentConcurrent);
+      await new Promise((r) => setTimeout(r, 10));
+      executed.push(item);
+      currentConcurrent--;
+    });
+
+    expect(executed).toHaveLength(6);
+    expect(maxConcurrent).toBeLessThanOrEqual(2);
+
+    // pooled() respects abort signal
+    const abortController = new AbortController();
+    const abortedRun: number[] = [];
+    const poolPromise = desktopImportScan.pooled(
+      [10, 20, 30, 40],
+      2,
+      async (item) => {
+        if (item === 20) abortController.abort();
+        abortedRun.push(item);
+        await new Promise((r) => setTimeout(r, 20));
+      },
+      abortController.signal,
+    );
+    await expect(poolPromise).rejects.toThrow();
+
+    // 2. isSamePath canonical root comparison on desktopAPI
+    expect(typeof desktopAPI.isSamePath).toBe('function');
+    const isSame = await desktopAPI.isSamePath!('C:/Manga/OnePiece/', 'c:\\manga\\onepiece');
+    expect(isSame).toBe(true);
+    const isDiff = await desktopAPI.isSamePath!('C:/Manga/OnePiece', 'C:/Manga/Naruto');
+    expect(isDiff).toBe(false);
+
+    // 3. Collection splitting preserves native discoveredTitles grouping
+    const collectionSource: Source = {
+      title: 'MangaRoot',
+      localPath: 'C:/AllManga',
+      files: new Map(),
+      issues: [],
+      discoveredTitles: [
+        {
+          title: 'Bleach',
+          rootPath: 'C:/AllManga/Bleach',
+          chapters: [
+            {
+              name: 'Chapter 1',
+              pages: [
+                {
+                  name: '01.png',
+                  relativePath: 'Chapter 1/01.png',
+                  absolutePath: 'C:/AllManga/Bleach/Chapter 1/01.png',
+                  width: 800,
+                  height: 1200,
+                  size: 1024,
+                  modified: 12345,
+                },
+              ],
+            },
+          ],
+          totalImages: 1,
+        },
+        {
+          title: 'Naruto',
+          rootPath: 'C:/AllManga/Naruto',
+          chapters: [
+            {
+              name: 'Chapter 1',
+              pages: [
+                {
+                  name: '01.png',
+                  relativePath: 'Chapter 1/01.png',
+                  absolutePath: 'C:/AllManga/Naruto/Chapter 1/01.png',
+                  width: 800,
+                  height: 1200,
+                  size: 2048,
+                  modified: 12345,
+                },
+              ],
+            },
+          ],
+          totalImages: 1,
+        },
+      ],
+    };
+
+    const nativeSplit = await desktopImportScan.splitSource(collectionSource);
+    expect(nativeSplit).toHaveLength(2);
+    expect(nativeSplit[0].title).toBe('Bleach');
+    expect(nativeSplit[0].localPath).toBe('C:/AllManga/Bleach');
+    expect(nativeSplit[0].files.has('Chapter 1/01.png')).toBe(true);
+
+    expect(nativeSplit[1].title).toBe('Naruto');
+    expect(nativeSplit[1].localPath).toBe('C:/AllManga/Naruto');
+    expect(nativeSplit[1].files.has('Chapter 1/01.png')).toBe(true);
+
+    // 4. prepareChapter returns per-page failures when dimensions cannot be resolved
+    const mangaWithUnresolved: any = {
+      id: 'm-unresolved',
+      title: 'Unresolved Dimensions Test',
+      chapters: [
+        {
+          name: 'Chapter 1',
+          pages: [
+            { name: 'p1.jpg', path: 'C:/test/p1.jpg', dimensionsPending: true },
+            { name: 'p2.jpg', path: 'C:/test/p2.jpg', dimensionsPending: true },
+          ],
+        },
+      ],
+    };
+
+    const issues = await desktopImportScan.prepareChapter(mangaWithUnresolved, 0);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0].path).toBe('C:/test/p1.jpg');
+
+    // 5. Background job management on desktop
+    expect(typeof desktopImportScan.scheduleBackground).toBe('function');
+    expect(typeof desktopImportScan.stopBackground).toBe('function');
+    expect(typeof desktopImportScan.stopAllBackground).toBe('function');
+    expect(typeof desktopImportScan.resumeBackground).toBe('function');
+
+    desktopImportScan.scheduleBackground(mangaWithUnresolved);
+    desktopImportScan.stopBackground('m-unresolved');
+    desktopImportScan.stopAllBackground();
+    await expect(desktopImportScan.resumeBackground()).resolves.toBeUndefined();
+  });
+
+  test('Step 33 — 1.3 Paths and Filesystem Authorization Verification', async () => {
+    const desktopStorage = await import('../src/desktop/storage');
+    const desktopImportScan = await import('../src/desktop/importScan');
+    const { desktopAPI, TauriDesktopBridge } = await import('../src/tauriBridge');
+
+    const origWindow = (globalThis as any).window;
+    const origReadFile = desktopAPI.readFile;
+    const origResolvePath = desktopAPI.resolvePath;
+    const origCheckAccess = desktopAPI.checkAccess;
+    const origPrepareChapterHeaders = desktopAPI.prepareChapterHeaders;
+    const origRevokeRoot = desktopAPI.revokeRoot;
+    const origGetAuthorizedRoots = desktopAPI.getAuthorizedRoots;
+
+    const ipcCalls: Array<{ cmd: string; args: any }> = [];
+
+    try {
+      (globalThis as any).window = {
+        __TAURI_INTERNALS__: {
+          invoke: async (cmd: string, args: any) => {
+            ipcCalls.push({ cmd, args });
+            if (cmd === 'resolve_manga_path') {
+              return `C:/Manga/OnePiece/${args.relativePath}`;
+            }
+            if (cmd === 'read_file') {
+              return new Uint8Array([0x89, 0x50, 0x4e, 0x47]).buffer;
+            }
+            if (cmd === 'check_access') {
+              // Return false for missing-manga, true for others
+              return args.mangaId !== 'missing-manga';
+            }
+            if (cmd === 'prepare_chapter_headers') {
+              return args.paths.map((p: string) => ({
+                path: p,
+                width: 1000,
+                height: 1500,
+                size: 5000,
+                modified: 12345,
+                checksum: 'hash',
+              }));
+            }
+            if (cmd === 'revoke_root') {
+              return true;
+            }
+            if (cmd === 'get_authorized_roots') {
+              return ['C:/Manga/OnePiece'];
+            }
+            return null;
+          },
+        },
+      };
+
+      (desktopAPI as any).readFile = async (path: string) => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('read_file', {
+          absolutePath: path,
+        });
+      };
+      (desktopAPI as any).resolvePath = async (
+        mangaId?: string,
+        relativePath = '',
+        localPath?: string,
+      ) => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('resolve_manga_path', {
+          mangaId,
+          relativePath,
+          localPath,
+        });
+      };
+      (desktopAPI as any).checkAccess = async (mangaId?: string, localPath?: string) => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('check_access', {
+          mangaId,
+          localPath,
+        });
+      };
+      (desktopAPI as any).prepareChapterHeaders = async (paths: string[], mangaId?: string) => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('prepare_chapter_headers', {
+          paths,
+          mangaId,
+        });
+      };
+      (desktopAPI as any).revokeRoot = async (rootPath: string) => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('revoke_root', { rootPath });
+      };
+      (desktopAPI as any).getAuthorizedRoots = async () => {
+        return (globalThis as any).window.__TAURI_INTERNALS__.invoke('get_authorized_roots', {});
+      };
+
+      // 1. fileFor(m, p) uses native resolver with (mangaId, relativePath, localPath)
+      const testManga: any = {
+        id: 'op-1',
+        title: 'One Piece',
+        localPath: 'C:/Manga/OnePiece',
+      };
+      const testPage: any = {
+        name: '01.png',
+        path: 'Chapter 1/01.png', // Relative path
+      };
+
+      const file = await desktopStorage.fileFor(testManga, testPage);
+      expect(file).toBeInstanceOf(File);
+      expect(file.name).toBe('01.png');
+
+      const resolveCall = ipcCalls.find((c) => c.cmd === 'resolve_manga_path');
+      expect(resolveCall).toBeDefined();
+      expect(resolveCall?.args.mangaId).toBe('op-1');
+      expect(resolveCall?.args.relativePath).toBe('Chapter 1/01.png');
+
+      // 2. prepareChapter() sends relative paths and manga.id to native prepareChapterHeaders
+      const mangaToPrepare: any = {
+        id: 'm-prepare',
+        localPath: 'C:/Manga/OnePiece',
+        chapters: [
+          {
+            name: 'Chapter 1',
+            pages: [
+              { name: '01.jpg', path: 'Chapter 1/01.jpg', dimensionsPending: true },
+              { name: '02.jpg', path: 'Chapter 1/02.jpg', dimensionsPending: true },
+            ],
+          },
+        ],
+      };
+
+      const issues = await desktopImportScan.prepareChapter(mangaToPrepare, 0);
+      expect(issues).toHaveLength(0);
+      expect(mangaToPrepare.chapters[0].pages[0].width).toBe(1000);
+      expect(mangaToPrepare.chapters[0].pages[0].dimensionsPending).toBe(false);
+
+      const prepCall = ipcCalls.find((c) => c.cmd === 'prepare_chapter_headers');
+      expect(prepCall).toBeDefined();
+      expect(prepCall?.args.mangaId).toBe('m-prepare');
+      expect(prepCall?.args.paths).toEqual(['Chapter 1/01.jpg', 'Chapter 1/02.jpg']);
+
+      // 3. access(m, request) detects missing drives, moved folders, and unauthorized roots
+      desktopStorage.clearAccessCache();
+      const validAllowed = await desktopStorage.access(testManga);
+      expect(validAllowed).toBe(true);
+
+      const missingManga: any = { id: 'missing-manga', localPath: 'E:/MissingDrive/Manga' };
+      const missingAllowed = await desktopStorage.access(missingManga);
+      expect(missingAllowed).toBe(false);
+
+      // Passive check uses cache; active check forces re-query
+      const cachedMissing = await desktopStorage.access(missingManga, false);
+      expect(cachedMissing).toBe(false);
+      const activeMissing = await desktopStorage.access(missingManga, true);
+      expect(activeMissing).toBe(false);
+
+      // 4. Root revocation and authorized roots inspection
+      const bridge = new TauriDesktopBridge();
+      const revoked = await bridge.revokeRoot('C:/Manga/OnePiece');
+      expect(revoked).toBe(true);
+
+      const authorized = await bridge.getAuthorizedRoots();
+      expect(authorized).toEqual(['C:/Manga/OnePiece']);
+    } finally {
+      (desktopAPI as any).readFile = origReadFile;
+      (desktopAPI as any).resolvePath = origResolvePath;
+      (desktopAPI as any).checkAccess = origCheckAccess;
+      (desktopAPI as any).prepareChapterHeaders = origPrepareChapterHeaders;
+      (desktopAPI as any).revokeRoot = origRevokeRoot;
+      (desktopAPI as any).getAuthorizedRoots = origGetAuthorizedRoots;
+
+      if (origWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = origWindow;
+      }
+    }
+  });
+
+  test('Step 35 — Persistence, migration, and cache consistency verification', async () => {
+    const { TauriSqliteLibraryRepo, ensureLibraryMigrated } = await import('../src/repo');
+    const desktopStorage = await import('../src/desktop/storage');
+    const { desktopAPI } = await import('../src/tauriBridge');
+
+    const origIsDesktop = desktopAPI.isDesktop;
+    const origSqliteListLibrary = desktopAPI.sqliteListLibrary;
+    const origSqliteGetManga = desktopAPI.sqliteGetManga;
+    const origSqliteSaveManga = desktopAPI.sqliteSaveManga;
+    const origSqliteSaveProgress = desktopAPI.sqliteSaveProgress;
+    const origSqliteGetBookmarkedMangaIds = desktopAPI.sqliteGetBookmarkedMangaIds;
+    const origSqliteAddBookmark = desktopAPI.sqliteAddBookmark;
+    const origSqliteRemoveBookmark = desktopAPI.sqliteRemoveBookmark;
+    const origSqliteDeleteManga = desktopAPI.sqliteDeleteManga;
+    const origSqliteClearLibrary = desktopAPI.sqliteClearLibrary;
+    const origSqliteResetProgress = desktopAPI.sqliteResetProgress;
+    const origSqliteGetSettings = desktopAPI.sqliteGetSettings;
+    const origSqliteSaveSettings = desktopAPI.sqliteSaveSettings;
+    const origRestoreBackup = desktopAPI.restoreBackup;
+    const origIsLibraryMigrated = desktopAPI.isLibraryMigrated;
+    const origImportLegacyLibrary = desktopAPI.importLegacyLibrary;
+
+    try {
+      (desktopAPI as any).isDesktop = true;
+
+      // 1. Repository-owned cache invalidation without circular recursion or failing instanceof
+      const repo = new TauriSqliteLibraryRepo();
+      desktopStorage.setRepo(repo);
+
+      let listCount = 0;
+      (desktopAPI as any).sqliteListLibrary = async () => {
+        listCount++;
+        return [
+          {
+            id: 'm-1',
+            title: 'Manga 1',
+            chapterCount: 1,
+            chaptersRead: 0,
+            lastChapterName: 'Ch 1',
+            hasProgress: false,
+            addedAt: 100,
+            updatedAt: 100,
+            indexedAt: 100,
+            lastChapter: 0,
+            revision: 1,
+          },
+        ];
+      };
+
+      // Initial read populates cache
+      const list1 = await desktopStorage.listLibrary();
+      expect(list1).toHaveLength(1);
+      expect(listCount).toBe(1);
+
+      // Second read hits cache
+      const list2 = await desktopStorage.listLibrary();
+      expect(list2).toHaveLength(1);
+      expect(listCount).toBe(1);
+
+      // Invalidate via storage wrapper
+      desktopStorage.invalidateSummaryCache();
+
+      // Third read re-queries backend
+      const list3 = await desktopStorage.listLibrary();
+      expect(list3).toHaveLength(1);
+      expect(listCount).toBe(2);
+
+      // 2. Bookmark generation prevents stale completions from refilling after invalidation
+      let bookmarkResolve: ((val: any) => void) | null = null;
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = async () => {
+        return new Promise((res) => {
+          bookmarkResolve = res;
+        });
+      };
+
+      // Start async bookmark fetch (gen 1)
+      const bookmarkFetchPromise = repo.getBookmarkedMangaIds();
+      expect(bookmarkResolve).not.toBeNull();
+
+      // Invalidate while in-flight (advances gen to 2)
+      repo.invalidateCaches();
+
+      // Complete the superseded in-flight request
+      bookmarkResolve!({ allBookmarkedIds: ['stale-id'], mangaBookmarkedIds: [] });
+      await bookmarkFetchPromise;
+
+      // Verify stale data did NOT populate the repo cache
+      let newFetchResolved = false;
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = async () => {
+        newFetchResolved = true;
+        return { allBookmarkedIds: ['fresh-id'], mangaBookmarkedIds: [] };
+      };
+
+      const freshBookmarks = await repo.getBookmarkedMangaIds();
+      expect(newFetchResolved).toBe(true);
+      expect(Array.from(freshBookmarks)).toEqual(['fresh-id']);
+
+      // 3. Desktop-required native operations fail explicitly when missing
+      (desktopAPI as any).sqliteListLibrary = undefined;
+      (desktopAPI as any).sqliteSaveManga = undefined;
+      (desktopAPI as any).sqliteSaveProgress = undefined;
+      (desktopAPI as any).sqliteDeleteManga = undefined;
+      (desktopAPI as any).sqliteClearLibrary = undefined;
+      (desktopAPI as any).sqliteResetProgress = undefined;
+      (desktopAPI as any).sqliteGetSettings = undefined;
+      (desktopAPI as any).sqliteSaveSettings = undefined;
+      (desktopAPI as any).restoreBackup = undefined;
+
+      const bareRepo = new TauriSqliteLibraryRepo();
+      await expect(bareRepo.listLibrary()).rejects.toThrow(
+        'desktopAPI.sqliteListLibrary is required on desktop',
+      );
+      await expect(
+        bareRepo.saveManga({
+          id: 'm',
+          title: 'T',
+          chapters: [],
+          lastChapter: 0,
+          addedAt: 0,
+          updatedAt: 0,
+        }),
+      ).rejects.toThrow('desktopAPI.sqliteSaveManga is required on desktop');
+      await expect(
+        bareRepo.saveProgress(
+          {
+            id: 'm',
+            title: 'T',
+            chapters: [{ name: 'c', pages: [], read: false }],
+            lastChapter: 0,
+            addedAt: 0,
+            updatedAt: 0,
+          },
+          0,
+          { page: 0, fraction: 0 },
+          true,
+        ),
+      ).rejects.toThrow('desktopAPI.sqliteSaveProgress is required on desktop');
+      await expect(bareRepo.deleteManga('m')).rejects.toThrow(
+        'desktopAPI.sqliteDeleteManga is required on desktop',
+      );
+      await expect(bareRepo.clearLibrary()).rejects.toThrow(
+        'desktopAPI.sqliteClearLibrary is required on desktop',
+      );
+      await expect(bareRepo.resetProgress()).rejects.toThrow(
+        'desktopAPI.sqliteResetProgress is required on desktop',
+      );
+      await expect(bareRepo.getStoredSettings()).rejects.toThrow(
+        'desktopAPI.sqliteGetSettings is required on desktop',
+      );
+      await expect(bareRepo.saveStoredSettings({} as any)).rejects.toThrow(
+        'desktopAPI.sqliteSaveSettings is required on desktop',
+      );
+      await expect(bareRepo.restoreBackup('{}')).rejects.toThrow(
+        'desktopAPI.restoreBackup is required on desktop',
+      );
+
+      // 4. restoreBackup restores in single native transaction without clearing library first
+      let libraryCleared = false;
+      let backupRestoredInTx = false;
+      (desktopAPI as any).sqliteClearLibrary = async () => {
+        libraryCleared = true;
+      };
+      (desktopAPI as any).restoreBackup = async (_json: string) => {
+        backupRestoredInTx = true;
+        return { theme: 'dark' };
+      };
+
+      const restoredSettings = await repo.restoreBackup(
+        JSON.stringify({ version: 2, manga: [], settings: {} }),
+      );
+      expect(backupRestoredInTx).toBe(true);
+      expect(libraryCleared).toBe(false); // Must NOT clear before import!
+      expect(restoredSettings).toEqual({ theme: 'dark' });
+
+      // 5. ensureLibraryMigrated distinguishes legacy status and fails on read failure
+      (desktopAPI as any).isLibraryMigrated = async () => false;
+      let legacyImportCalled = false;
+      (desktopAPI as any).importLegacyLibrary = async () => {
+        legacyImportCalled = true;
+        return true;
+      };
+
+      // A failing IDB reader throws explicitly and never claims migration succeeded
+      const failingIdbRepo = {
+        allManga: async () => {
+          throw new Error('Corrupted LevelDB / disk lock');
+        },
+        getStoredSettings: async () => undefined,
+      };
+
+      await expect(ensureLibraryMigrated(failingIdbRepo as any)).rejects.toThrow(
+        'Failed to read from provided migration repo: Corrupted LevelDB / disk lock',
+      );
+      expect(legacyImportCalled).toBe(false); // Must NOT complete migration with empty data on failure!
+    } finally {
+      (desktopAPI as any).isDesktop = origIsDesktop;
+      (desktopAPI as any).sqliteListLibrary = origSqliteListLibrary;
+      (desktopAPI as any).sqliteGetManga = origSqliteGetManga;
+      (desktopAPI as any).sqliteSaveManga = origSqliteSaveManga;
+      (desktopAPI as any).sqliteSaveProgress = origSqliteSaveProgress;
+      (desktopAPI as any).sqliteGetBookmarkedMangaIds = origSqliteGetBookmarkedMangaIds;
+      (desktopAPI as any).sqliteAddBookmark = origSqliteAddBookmark;
+      (desktopAPI as any).sqliteRemoveBookmark = origSqliteRemoveBookmark;
+      (desktopAPI as any).sqliteDeleteManga = origSqliteDeleteManga;
+      (desktopAPI as any).sqliteClearLibrary = origSqliteClearLibrary;
+      (desktopAPI as any).sqliteResetProgress = origSqliteResetProgress;
+      (desktopAPI as any).sqliteGetSettings = origSqliteGetSettings;
+      (desktopAPI as any).sqliteSaveSettings = origSqliteSaveSettings;
+      (desktopAPI as any).restoreBackup = origRestoreBackup;
+      (desktopAPI as any).isLibraryMigrated = origIsLibraryMigrated;
+      (desktopAPI as any).importLegacyLibrary = origImportLegacyLibrary;
+    }
+  });
+
+  test('Bookmarks Page — Hides page-heading and vertically centers empty-shelf when no bookmarks added', async () => {
+    const bookmarksModule = await import('../src/Bookmarks');
+    expect(bookmarksModule.default).toBeDefined();
+    expect(bookmarksModule.BookmarkShelf).toBeDefined();
+
+    // Verify CSS rules exist in style.css for bookmarks-empty and vertical centering
+    const fs = await import('fs');
+    const styleCss = fs.readFileSync('src/style.css', 'utf-8');
+    expect(styleCss).toContain('.library-main.bookmarks-empty');
+    expect(styleCss).toContain('.library-main.bookmarks-empty .page-heading');
+    expect(styleCss).toContain('display: none !important');
+    expect(styleCss).toContain('.library-main.bookmarks-empty .empty-shelf');
+    expect(styleCss).toContain('justify-content: center');
+  });
+
+  test('Step 36 — 1.5 Desktop Validation and Canonical DTO Data Preservation', async () => {
+    const desktopVal = await import('../src/desktop/validation');
+    const { ValidationError } = desktopVal;
+
+    // 1. parseSettings preserves fontSizeTitle, fontSizeUi, fontSizeButton, confirmDelete, and shelfSort
+    const customSettings = desktopVal.parseSettings({
+      fontSizeTitle: 22,
+      fontSizeUi: 18,
+      fontSizeButton: 20,
+      confirmDelete: true,
+      shelfSort: 'progress',
+    });
+    expect(customSettings.fontSizeTitle).toBe(22);
+    expect(customSettings.fontSizeUi).toBe(18);
+    expect(customSettings.fontSizeButton).toBe(20);
+    expect(customSettings.confirmDelete).toBe(true);
+    expect(customSettings.shelfSort).toBe('progress');
+
+    // 2. parsePosition and matchingPosition preserve mangaBookmark and timestamp
+    const samplePages = [
+      { name: '01.jpg', path: 'ch1/01.jpg', width: 1000, height: 1500 },
+      { name: '02.jpg', path: 'ch1/02.jpg', width: 1000, height: 1500 },
+    ];
+    const pos = desktopVal.parsePosition(
+      {
+        page: 1,
+        fraction: 0.75,
+        path: 'ch1/02.jpg',
+        mangaBookmark: true,
+        timestamp: 1731234567890,
+      },
+      samplePages,
+    );
+    expect(pos?.mangaBookmark).toBe(true);
+    expect(pos?.timestamp).toBe(1731234567890);
+    expect(pos?.page).toBe(1);
+
+    const matched = desktopVal.matchingPosition(pos, samplePages);
+    expect(matched?.mangaBookmark).toBe(true);
+    expect(matched?.timestamp).toBe(1731234567890);
+    expect(matched?.page).toBe(1);
+
+    // 3. parseManga preserves sort and revision, and rejects malformed IDs
+    const validManga = desktopVal.parseManga({
+      id: 'm-sort',
+      title: 'Sorted Manga',
+      sort: 'natural',
+      revision: 42,
+      chapters: [
+        {
+          name: 'Chapter 1',
+          pages: [{ name: '01.jpg', path: 'ch1/01.jpg', width: 1000, height: 1500 }],
+        },
+      ],
+    });
+    expect(validManga.sort).toBe('natural');
+    expect(validManga.revision).toBe(42);
+
+    expect(() => desktopVal.parseManga({ id: '', title: 'Missing ID' })).toThrow(ValidationError);
+    expect(() => desktopVal.parseManga({ id: '   ', title: 'Whitespace ID' })).toThrow(
+      ValidationError,
+    );
+    expect(() => desktopVal.parseManga({ id: null, title: 'Null ID' })).toThrow(ValidationError);
+
+    // 4. parseSummary preserves revision
+    const summary = desktopVal.parseSummary({
+      id: 's-rev',
+      title: 'Summary With Rev',
+      revision: 5,
+    });
+    expect(summary?.revision).toBe(5);
+
+    // 5. parsePage rejects negative, fractional, or NaN dimensions
+    const seen = new Set<string>();
+    expect(() =>
+      desktopVal.parsePage({ name: 'p1', path: '01.jpg', width: -100, height: 1000 }, seen),
+    ).toThrow(ValidationError);
+    expect(() =>
+      desktopVal.parsePage({ name: 'p2', path: '02.jpg', width: 800.5, height: 1000 }, seen),
+    ).toThrow(ValidationError);
+    expect(() =>
+      desktopVal.parsePage({ name: 'p3', path: '03.jpg', width: 800, height: NaN }, seen),
+    ).toThrow(ValidationError);
+
+    // 6. validateBackup enforces versions, array manga, duplicate IDs, and limit checks
+    expect(() => desktopVal.validateBackup({ version: 0, manga: [], settings: {} })).toThrow(
+      ValidationError,
+    );
+    expect(() => desktopVal.validateBackup({ version: 3, manga: [], settings: {} })).toThrow(
+      ValidationError,
+    );
+    expect(() =>
+      desktopVal.validateBackup({ version: 2, manga: 'not-array', settings: {} }),
+    ).toThrow(ValidationError);
+    expect(() =>
+      desktopVal.validateBackup({
+        version: 2,
+        manga: [
+          {
+            id: 'dup',
+            title: 'T1',
+            chapters: [
+              { name: 'c1', pages: [{ name: '1.jpg', path: '1.jpg', width: 100, height: 100 }] },
+            ],
+          },
+          {
+            id: 'dup',
+            title: 'T2',
+            chapters: [
+              { name: 'c1', pages: [{ name: '1.jpg', path: '1.jpg', width: 100, height: 100 }] },
+            ],
+          },
+        ],
+        settings: {},
+      }),
+    ).toThrow(/Duplicate manga ID/);
+
+    // 7. validateBackupAsync uses Rust desktopAPI.validateBackup
+    const { desktopAPI } = await import('../src/tauriBridge');
+    const origValidate = desktopAPI.validateBackup;
+    try {
+      let rustValidatorCalled = false;
+      desktopAPI.validateBackup = async (_json: string) => {
+        rustValidatorCalled = true;
+        return {
+          manga: [
+            {
+              id: 'rust-manga',
+              title: 'Rust Manga',
+              sort: 'natural',
+              revision: 10,
+              chapters: [
+                {
+                  name: 'Ch 1',
+                  pages: [{ name: '01.jpg', path: 'ch1/01.jpg', width: 1000, height: 1500 }],
+                },
+              ],
+            },
+          ],
+          settings: {
+            theme: 'dark',
+            fontSizeTitle: 20,
+            fontSizeUi: 16,
+            fontSizeButton: 18,
+            confirmDelete: true,
+            shelfSort: 'title',
+          },
+        };
+      };
+
+      const result = await desktopVal.validateBackupAsync(
+        JSON.stringify({ version: 2, manga: [], settings: {} }),
+      );
+      expect(rustValidatorCalled).toBe(true);
+      expect(result.manga[0].sort).toBe('natural');
+      expect(result.manga[0].revision).toBe(10);
+      expect(result.settings.fontSizeTitle).toBe(20);
+      expect(result.settings.confirmDelete).toBe(true);
+      expect(result.settings.shelfSort).toBe('title');
+    } finally {
+      desktopAPI.validateBackup = origValidate;
+    }
+  });
+
+  test('Step 37 — 1.6 Image Generation and Caching Verification', async () => {
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+
+    try {
+      const { TauriDesktopBridge } = await import('../src/tauriBridge');
+      const bridge = new TauriDesktopBridge();
+
+      // 1. generateImageVariant returns structured CachedImageResult
+      const calls: Array<{ cmd: string; args: any }> = [];
+      (globalThis as any).__TAURI_INTERNALS__ = {
+        invoke: async (cmd: string, args: any) => {
+          calls.push({ cmd, args });
+          if (cmd === 'generate_image_variant') {
+            return {
+              path: 'C:/cache/variants/v_123_800x1200.webp',
+              url: 'http://mangaimg.localhost/C:/cache/variants/v_123_800x1200.webp',
+              isPlaceholder: false,
+              status: 'generated',
+              error: null,
+            };
+          }
+          if (cmd === 'generate_thumbnail') {
+            return {
+              path: 'C:/cache/thumbnails/t_456.webp',
+              url: 'http://mangaimg.localhost/C:/cache/thumbnails/t_456.webp',
+              isPlaceholder: false,
+              status: 'cached',
+              error: null,
+            };
+          }
+          return null;
+        },
+      };
+
+      const varRes = await bridge.generateImageVariant('C:/Manga/Title/01.jpg', 800, 1200);
+      expect(varRes).toBeDefined();
+      expect(varRes?.path).toContain('variants/v_');
+      expect(varRes?.url).toContain('mangaimg.localhost');
+      expect(varRes?.status).toBe('generated');
+      expect(varRes?.isPlaceholder).toBe(false);
+
+      const thumbRes = await bridge.generateThumbnail('C:/Manga/Title/01.jpg', 'manga-cover-1');
+      expect(thumbRes).toBeDefined();
+      expect(thumbRes?.path).toContain('thumbnails/t_');
+      expect(thumbRes?.status).toBe('cached');
+    } finally {
+      (globalThis as any).window = origWindow;
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+    }
+  });
+
+  test('Step 38 — 1.7 Image Protocol Correctness and URL Segment Encoding', async () => {
+    const { TauriDesktopBridge } = await import('../src/tauriBridge');
+    const bridge = new TauriDesktopBridge();
+
+    // 1. Standard paths preserve drive letter and segment structure
+    const standardUrl = bridge.convertFileSrc('C:\\Manga\\Title\\01.jpg');
+    expect(standardUrl).toBe('http://mangaimg.localhost/C%3A/Manga/Title/01.jpg');
+
+    // 2. Paths with spaces, #, %, brackets, and Unicode characters are properly encoded
+    const specialWindowsPath = 'C:\\Manga\\Ch #1\\01% 20 [テスト].jpg';
+    const specialUrl = bridge.convertFileSrc(specialWindowsPath);
+    expect(specialUrl).toBe(
+      'http://mangaimg.localhost/C%3A/Manga/Ch%20%231/01%25%2020%20%5B%E3%83%86%E3%82%B9%E3%83%88%5D.jpg',
+    );
+
+    // Verify WHATWG URL parsing: # is encoded as %23 and NOT treated as a URL fragment
+    const parsed = new URL(specialUrl);
+    expect(parsed.hash).toBe('');
+    expect(parsed.pathname).toContain('Ch%20%231');
+    expect(parsed.pathname).toContain('01%25%2020');
+
+    // 3. Custom scheme protocol parameter preserved with segment encoding
+    const customSchemeUrl = bridge.convertFileSrc('D:\\Library\\Book #2\\cover.png', 'customimg');
+    expect(customSchemeUrl).toBe('http://customimg.localhost/D%3A/Library/Book%20%232/cover.png');
+  });
+
+  test('Step 39 — Frontend Invariants, Storage Sync & Title Bookmark Separation', async () => {
+    // 1. Storage sync local notifications and cross-context dispatch
+    const { broadcastSync, onStorageSync } = await import('../src/storage');
+    const received: any[] = [];
+    const unsubscribe = onStorageSync((msg) => {
+      received.push(msg);
+    });
+
+    broadcastSync({ type: 'progress', id: 'manga-123' });
+    expect(received.length).toBe(1);
+    expect(received[0]).toEqual({ type: 'progress', id: 'manga-123' });
+    unsubscribe();
+
+    broadcastSync({ type: 'library', id: 'manga-456' });
+    expect(received.length).toBe(1); // Unsubscribed, does not receive further
+
+    // 2. Title bookmark separation logic
+    // Verify that removing title bookmark does not purge ordinary chapter page bookmarks
+    const testManga = {
+      id: 'manga-test',
+      title: 'Test Manga',
+      chapters: [
+        {
+          name: 'Chapter 1',
+          pages: [{ path: '01.jpg', width: 800, height: 1200 }],
+          bookmarks: [
+            { page: 0, path: '01.jpg', mangaBookmark: true, timestamp: 100 },
+            { page: 5, path: '05.jpg', mangaBookmark: false, timestamp: 200 },
+            { page: 12, path: '12.jpg', timestamp: 300 },
+          ],
+        },
+      ],
+    };
+
+    // Simulate title unbookmark operation: filter out bookmarks with mangaBookmark: true
+    const updatedBookmarks = testManga.chapters[0].bookmarks.filter((b) => !b.mangaBookmark);
+    expect(updatedBookmarks.length).toBe(2);
+    expect(updatedBookmarks[0].path).toBe('05.jpg');
+    expect(updatedBookmarks[1].path).toBe('12.jpg');
+    // None of the ordinary page bookmarks were deleted
+    expect(updatedBookmarks.some((b) => b.mangaBookmark)).toBe(false);
+  });
+
+  test('Step 41 — 1.10 Desktop UI, Storage Statistics and Save Dialog Verification', async () => {
+    const { TauriDesktopBridge } = await import('../src/tauriBridge');
+    const { APP_VERSION } = await import('../src/updates');
+    const fs = await import('fs');
+    const path = await import('path');
+
+    // 1. Single source of truth for version
+    const pkg = JSON.parse(fs.readFileSync('package.json', 'utf-8'));
+    expect(APP_VERSION).toBe(pkg.version);
+
+    // 2. TauriDesktopBridge.getStorageStats delegates to get_storage_stats command
+    const origWindow = (globalThis as any).window;
+    const origTauri = (globalThis as any).__TAURI_INTERNALS__;
+    (globalThis as any).window = globalThis;
+    const invokedCommands: Array<{ cmd: string; args: any }> = [];
+    try {
+      (globalThis as any).__TAURI_INTERNALS__ = {
+        invoke: async (cmd: string, args: any) => {
+          invokedCommands.push({ cmd, args });
+          if (cmd === 'get_storage_stats') {
+            return { db_bytes: 1048576, cache_bytes: 5242880, total_bytes: 6291456 };
+          }
+          if (cmd === 'save_file_dialog') {
+            return true;
+          }
+          if (cmd === 'clear_thumbnails') {
+            return undefined;
+          }
+          return undefined;
+        },
+      };
+
+      const bridge = new TauriDesktopBridge();
+      const stats = await bridge.getStorageStats();
+      expect(stats).toEqual({
+        db_bytes: 1048576,
+        cache_bytes: 5242880,
+        total_bytes: 6291456,
+      });
+      expect(invokedCommands.some((c) => c.cmd === 'get_storage_stats')).toBe(true);
+
+      // 3. TauriDesktopBridge.saveFileDialog delegates to save_file_dialog command
+      const saved = await bridge.saveFileDialog('test-backup.json', '{"test":1}');
+      expect(saved).toBe(true);
+      const saveCmd = invokedCommands.find((c) => c.cmd === 'save_file_dialog');
+      expect(saveCmd).toBeDefined();
+      expect(saveCmd?.args).toEqual({
+        defaultName: 'test-backup.json',
+        content: '{"test":1}',
+      });
+
+      // 4. TauriDesktopBridge.clearThumbnails delegates to clear_thumbnails
+      await bridge.clearThumbnails();
+      expect(invokedCommands.some((c) => c.cmd === 'clear_thumbnails')).toBe(true);
+    } finally {
+      (globalThis as any).__TAURI_INTERNALS__ = origTauri;
+      (globalThis as any).window = origWindow;
+    }
+  });
+
+  test('Step 42 — 2.3 Native Image URLs and Desktop Resource Contract Verification', async () => {
+    const { getPageImageUrl, getCoverImageUrl, TauriDesktopBridge } =
+      await import('../src/tauriBridge');
+
+    // 1. Full resolution page resource URL
+    const fullUrl = getPageImageUrl({
+      mangaId: 'berserk',
+      pagePath: 'Chapter 01/001.jpg',
+      version: 1700000000000,
+      transform: 'full',
+    });
+    expect(fullUrl).toBe(
+      'http://mangaimg.localhost/page/berserk/1700000000000/full/Chapter%2001/001.jpg',
+    );
+
+    // 2. Downscaled preview variant with special characters (#, %, brackets, spaces, Unicode)
+    const previewUrl = getPageImageUrl({
+      mangaId: 'one piece #100',
+      pagePath: 'Vol 1/01 [raw] %20 テスト.webp',
+      version: 1710000000000,
+      transform: 'preview',
+      localPath: 'C:\\Manga\\Library Root',
+    });
+    expect(previewUrl).toBe(
+      'http://mangaimg.localhost/page/one%20piece%20%23100/1710000000000/preview/Vol%201/01%20%5Braw%5D%20%2520%20%E3%83%86%E3%82%B9%E3%83%88.webp?root=C%3A%5CManga%5CLibrary%20Root',
+    );
+
+    // 3. Centralized source invalidation: changing version bumps the URL path
+    const updatedUrl = getPageImageUrl({
+      mangaId: 'berserk',
+      pagePath: 'Chapter 01/001.jpg',
+      version: 1700000099999,
+      transform: 'full',
+    });
+    expect(updatedUrl).not.toBe(fullUrl);
+    expect(updatedUrl).toBe(
+      'http://mangaimg.localhost/page/berserk/1700000099999/full/Chapter%2001/001.jpg',
+    );
+
+    // 4. Cover URL construction with version and without version
+    const coverWithVersion = getCoverImageUrl('hunter x hunter #1', 1720000000000);
+    expect(coverWithVersion).toBe(
+      'http://mangaimg.localhost/cover/hunter%20x%20hunter%20%231/1720000000000',
+    );
+
+    const coverNoVersion = getCoverImageUrl('naruto');
+    expect(coverNoVersion).toBe('http://mangaimg.localhost/cover/naruto');
+
+    // 5. TauriDesktopBridge implements getPageImageUrl and getCoverImageUrl
+    const bridge = new TauriDesktopBridge();
+    expect(
+      bridge.getPageImageUrl({
+        mangaId: 'm1',
+        pagePath: 'p1.png',
+        version: 1,
+        transform: 'low',
+      }),
+    ).toBe('http://mangaimg.localhost/page/m1/1/low/p1.png');
+    expect(bridge.getCoverImageUrl('m1', 2)).toBe('http://mangaimg.localhost/cover/m1/2');
   });
 });

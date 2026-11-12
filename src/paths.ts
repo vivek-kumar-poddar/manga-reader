@@ -1,6 +1,26 @@
-/** Normalizes path separators to forward slashes and removes redundant slashes. */
+/**
+ * Normalizes absolute or system paths, preserving leading `//` for UNC network paths
+ * while converting backslashes to forward slashes and stripping redundant slashes.
+ */
 export function normalizePath(path: string): string {
-  return path.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/\/+$/, '');
+  if (!path) return '';
+  const isUnc = path.startsWith('\\\\') || path.startsWith('//');
+  const converted = path.replace(/\\/g, '/');
+  if (isUnc) {
+    const withoutUncPrefix = converted.replace(/^\/\/+/, '');
+    const cleaned = withoutUncPrefix.replace(/\/+/g, '/').replace(/\/+$/, '');
+    return '//' + cleaned;
+  }
+  return converted.replace(/\/+/g, '/').replace(/\/+$/, '');
+}
+
+/**
+ * Normalizes a logical relative manga/page path.
+ * Strips leading/trailing slashes and collapses internal redundant slashes.
+ */
+export function normalizeRelativePath(path: string): string {
+  if (!path) return '';
+  return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
 }
 
 /** Keep native-script letters while removing emoji, unsafe punctuation and Latin accents. */

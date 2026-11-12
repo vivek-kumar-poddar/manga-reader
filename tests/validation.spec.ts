@@ -8,6 +8,7 @@ import {
   parseSummary,
   ValidationError,
 } from '../src/validation';
+import { normalizePath, normalizeRelativePath } from '../src/paths';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { shelfCollator, sortLibraryEntries } from '../src/App';
@@ -64,6 +65,44 @@ test.describe('Step 04 — Input and Backup Validation', () => {
     expect(() => validateRelativePath('chapter\\windows\\path.jpg')).toThrow(ValidationError);
     expect(() => validateRelativePath('chapter//double-slash.jpg')).toThrow(ValidationError);
     expect(() => validateRelativePath('')).toThrow(ValidationError);
+  });
+
+  test('validateRelativePath allows legitimate double-dot filenames and rejects Windows drive/DOS prefixes', () => {
+    // Legitimate double-dot filenames must be accepted
+    expect(validateRelativePath('ch1/chapter..jpg')).toBe('ch1/chapter..jpg');
+    expect(validateRelativePath('chapter..01.png')).toBe('chapter..01.png');
+    expect(validateRelativePath('sub/folder/page..clean.webp')).toBe('sub/folder/page..clean.webp');
+
+    // Windows drive prefixes, rooted paths, and colons must be rejected
+    expect(() => validateRelativePath('C:/escaped.jpg')).toThrow(ValidationError);
+    expect(() => validateRelativePath('D:/manga/ch1.png')).toThrow(ValidationError);
+    expect(() => validateRelativePath('ch1/01.jpg:stream')).toThrow(ValidationError);
+
+    // UNC prefixes must be rejected
+    expect(() => validateRelativePath('//server/share/01.jpg')).toThrow(ValidationError);
+
+    // Reserved DOS device names must be rejected
+    expect(() => validateRelativePath('nul.jpg')).toThrow(ValidationError);
+    expect(() => validateRelativePath('con.png')).toThrow(ValidationError);
+    expect(() => validateRelativePath('aux')).toThrow(ValidationError);
+    expect(() => validateRelativePath('ch1/prn.jpg')).toThrow(ValidationError);
+    expect(() => validateRelativePath('com1.png')).toThrow(ValidationError);
+
+    // Trailing dots and spaces must be rejected
+    expect(() => validateRelativePath('ch1/01.jpg.')).toThrow(ValidationError);
+    expect(() => validateRelativePath('ch1/01.jpg ')).toThrow(ValidationError);
+  });
+
+  test('normalizePath preserves UNC leading slashes and normalizeRelativePath strips boundary slashes', () => {
+    expect(normalizePath('C:\\Manga\\Ch1')).toBe('C:/Manga/Ch1');
+    expect(normalizePath('folder///sub///file.jpg')).toBe('folder/sub/file.jpg');
+    expect(normalizePath('\\\\server\\share\\manga')).toBe('//server/share/manga');
+    expect(normalizePath('//server/share/manga')).toBe('//server/share/manga');
+    expect(normalizePath('//server///share//manga/')).toBe('//server/share/manga');
+
+    expect(normalizeRelativePath('/ch1//01.jpg/')).toBe('ch1/01.jpg');
+    expect(normalizeRelativePath('ch1\\01.jpg')).toBe('ch1/01.jpg');
+    expect(normalizeRelativePath('ch1/01.jpg')).toBe('ch1/01.jpg');
   });
 
   test('fractional position page index throws ValidationError', () => {
@@ -244,6 +283,8 @@ test.describe('Step 04 — Input and Backup Validation', () => {
       id: 'desktop-manga',
       title: 'Desktop Manga',
       localPath: 'C:\\Manga\\DesktopTitle',
+      sort: 'natural',
+      revision: 3,
       chapters: [
         {
           name: 'Chapter 1',
@@ -252,26 +293,32 @@ test.describe('Step 04 — Input and Backup Validation', () => {
       ],
     });
     expect(manga.localPath).toBe('C:\\Manga\\DesktopTitle');
+    expect(manga.sort).toBe('natural');
+    expect(manga.revision).toBe(3);
   });
 
-  test('parseSummary preserves handle when preserveHardwarePointers is true', () => {
+  test('parseSummary preserves revision and handle when preserveHardwarePointers is true', () => {
     const fakeHandle = { kind: 'directory', name: 'MangaFolder' };
     const stripped = parseSummary({
       id: 'manga-handle',
       title: 'Manga Handle',
       handle: fakeHandle,
+      revision: 8,
     });
     expect(stripped?.handle).toBeUndefined();
+    expect(stripped?.revision).toBe(8);
 
     const preserved = parseSummary(
       {
         id: 'manga-handle',
         title: 'Manga Handle',
         handle: fakeHandle,
+        revision: 8,
       },
       { preserveHardwarePointers: true },
     );
     expect(preserved?.handle).toBe(fakeHandle);
+    expect(preserved?.revision).toBe(8);
   });
 
   test('sortLibraryEntries and shelfCollator naturally sort titles with numeric collation', () => {

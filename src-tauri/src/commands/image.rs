@@ -1,6 +1,6 @@
 use fast_image_resize as fr;
-use fast_image_resize::images::Image;
 use fast_image_resize::PixelType;
+use fast_image_resize::images::Image;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
@@ -9,16 +9,139 @@ use tauri::{AppHandle, Manager};
 
 pub const MAX_IMAGE_PIXELS: u64 = 16_000_000; // 16M pixels
 pub const MAX_IMAGE_SIDE: u32 = 32_768; // 32,768 per side
+pub const MAX_IMAGE_JOB_MEMORY_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB total job memory budget
 pub const THUMBNAIL_MAX_WIDTH: u32 = 160;
 pub const THUMBNAIL_MAX_HEIGHT: u32 = 320;
+pub const IMAGE_ENCODER_VERSION: &str = "v1";
 
-pub fn calculate_fitted_dimensions(
-    src_w: u32,
-    src_h: u32,
-    max_w: u32,
-    max_h: u32,
-) -> (u32, u32) {
-    if src_w == 0 || src_h == 0 {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageFormatCapabilities {
+    pub extension: &'static str,
+    pub recognized_extension: bool,
+    pub header_readable: bool,
+    pub webview_displayable: bool,
+    pub rust_decodable: bool,
+}
+
+pub const FORMAT_MATRIX: &[ImageFormatCapabilities] = &[
+    ImageFormatCapabilities {
+        extension: "jpg",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "jpeg",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "png",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "webp",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "gif",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "bmp",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: true,
+    },
+    ImageFormatCapabilities {
+        extension: "avif",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "svg",
+        recognized_extension: true,
+        header_readable: false,
+        webview_displayable: true,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "ico",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: true,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "heic",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: false,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "heif",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: false,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "tif",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: false,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "tiff",
+        recognized_extension: true,
+        header_readable: true,
+        webview_displayable: false,
+        rust_decodable: false,
+    },
+    ImageFormatCapabilities {
+        extension: "jxl",
+        recognized_extension: true,
+        header_readable: false,
+        webview_displayable: false,
+        rust_decodable: false,
+    },
+];
+
+pub fn get_format_capabilities(ext: &str) -> ImageFormatCapabilities {
+    let clean = ext.trim_start_matches('.').to_ascii_lowercase();
+    FORMAT_MATRIX
+        .iter()
+        .find(|f| f.extension == clean)
+        .copied()
+        .unwrap_or(ImageFormatCapabilities {
+            extension: "unknown",
+            recognized_extension: false,
+            header_readable: false,
+            webview_displayable: false,
+            rust_decodable: false,
+        })
+}
+
+pub fn calculate_fitted_dimensions(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    if src_w == 0 || src_h == 0 || max_w == 0 || max_h == 0 {
         return (1, 1);
     }
     let scale = (max_w as f64 / src_w as f64)
@@ -46,6 +169,20 @@ pub fn resize_image_fir(
     target_width: u32,
     target_height: u32,
 ) -> Result<Vec<u8>, String> {
+    if target_width == 0 || target_height == 0 {
+        return Err("Target dimensions must be greater than zero".into());
+    }
+    if target_width > MAX_IMAGE_SIDE || target_height > MAX_IMAGE_SIDE {
+        return Err("Target dimensions exceed maximum allowed image side".into());
+    }
+    let target_area = (target_width as u64) * (target_height as u64);
+    if target_area > MAX_IMAGE_PIXELS {
+        return Err("Target pixel area exceeds limit".into());
+    }
+    if target_area * 4 > MAX_IMAGE_JOB_MEMORY_BYTES {
+        return Err("Target buffer exceeds job memory budget".into());
+    }
+
     let rgba = src_img.to_rgba8();
     let (src_w, src_h) = (rgba.width(), rgba.height());
 
@@ -65,47 +202,85 @@ pub fn resize_image_fir(
     let mut out = Vec::new();
     let mut cursor = Cursor::new(&mut out);
 
-    // Try WebP first; fallback to JPEG if WebP encoding fails
-    if dyn_dst.write_to(&mut cursor, ImageFormat::WebP).is_err() {
-        out.clear();
-        let rgb_img = dyn_dst.to_rgb8();
-        let mut cursor = Cursor::new(&mut out);
-        DynamicImage::ImageRgb8(rgb_img)
-            .write_to(&mut cursor, ImageFormat::Jpeg)
-            .map_err(|e| format!("Failed to encode image to JPEG: {e}"))?;
-    }
+    // Fail WebP encoding explicitly rather than writing JPEG bytes into a .webp file
+    dyn_dst
+        .write_to(&mut cursor, ImageFormat::WebP)
+        .map_err(|e| format!("Failed to encode resized image to WebP: {e}"))?;
 
     Ok(out)
 }
 
-/// Creates a neutral placeholder image in WebP format when decoding is unsupported
-/// (e.g. AVIF, JXL, HEIC, SVG) or when image data is corrupted.
+/// Creates a neutral placeholder image in WebP format when requested.
+/// Strictly validates width, height, pixel area, and memory budget before allocation.
 pub fn create_placeholder_webp(width: u32, height: u32) -> Result<Vec<u8>, String> {
-    let w = width.clamp(1, MAX_IMAGE_SIDE);
-    let h = height.clamp(1, MAX_IMAGE_SIDE);
+    if width == 0 || height == 0 {
+        return Err("Placeholder dimensions must be greater than zero".into());
+    }
+    if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+        return Err(format!(
+            "Placeholder dimensions ({width}x{height}) exceed maximum allowed side of {MAX_IMAGE_SIDE}"
+        ));
+    }
+    let pixel_area = (width as u64) * (height as u64);
+    if pixel_area > MAX_IMAGE_PIXELS {
+        return Err(format!(
+            "Placeholder pixel area ({pixel_area}) exceeds limit of {MAX_IMAGE_PIXELS}"
+        ));
+    }
+    let estimated_bytes = pixel_area
+        .checked_mul(4)
+        .ok_or_else(|| "Estimated bytes overflow".to_string())?;
+    if estimated_bytes > MAX_IMAGE_JOB_MEMORY_BYTES {
+        return Err(format!(
+            "Placeholder estimated memory ({estimated_bytes} bytes) exceeds job budget of {MAX_IMAGE_JOB_MEMORY_BYTES} bytes"
+        ));
+    }
+
     let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-        w,
-        h,
+        width,
+        height,
         image::Rgba([39, 39, 42, 255]), // #27272a neutral gray
     ));
     let mut out = Vec::new();
     let mut cursor = Cursor::new(&mut out);
-    if img.write_to(&mut cursor, ImageFormat::WebP).is_err() {
-        out.clear();
-        let rgb_img = img.to_rgb8();
-        let mut cursor = Cursor::new(&mut out);
-        DynamicImage::ImageRgb8(rgb_img)
-            .write_to(&mut cursor, ImageFormat::Jpeg)
-            .map_err(|e| format!("Failed to encode placeholder to JPEG: {e}"))?;
-    }
+    img.write_to(&mut cursor, ImageFormat::WebP)
+        .map_err(|e| format!("Failed to encode placeholder to WebP: {e}"))?;
     Ok(out)
 }
 
-/// Safely decodes an image with strict memory limits and catch_unwind protection
-/// against decoder panics.
+/// Safely decodes an image with total job memory budget enforcement and catch_unwind
+/// protection against decoder panics.
 pub fn safe_decode_image(path: &Path) -> Result<DynamicImage, String> {
+    let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let caps = get_format_capabilities(ext);
+    if !caps.rust_decodable {
+        return Err(format!(
+            "Format '.{}' is recognized by library allowlist but not decodable in native Rust pipeline (WebView displayable: {}, header readable: {})",
+            ext, caps.webview_displayable, caps.header_readable
+        ));
+    }
+
+    // Check header dimensions before reading file body to enforce job budget
+    if let (Some(w), Some(h)) = crate::commands::fs::parse_image_dimensions(path) {
+        if w == 0 || h == 0 || w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE {
+            return Err(format!("Image dimensions ({w}x{h}) exceed limits"));
+        }
+        let pixel_area = (w as u64) * (h as u64);
+        if pixel_area > MAX_IMAGE_PIXELS {
+            return Err(format!(
+                "Image pixel area ({pixel_area}) exceeds limit of {MAX_IMAGE_PIXELS}"
+            ));
+        }
+        let raw_bytes = pixel_area * 4;
+        if raw_bytes > MAX_IMAGE_JOB_MEMORY_BYTES {
+            return Err(format!(
+                "Estimated uncompressed RGBA image memory ({raw_bytes} bytes) exceeds total job budget of {MAX_IMAGE_JOB_MEMORY_BYTES} bytes"
+            ));
+        }
+    }
+
     let mut limits = image::Limits::default();
-    limits.max_alloc = Some(64 * 1024 * 1024); // 64 MiB allocation ceiling
+    limits.max_alloc = Some(MAX_IMAGE_JOB_MEMORY_BYTES);
     limits.max_image_width = Some(MAX_IMAGE_SIDE);
     limits.max_image_height = Some(MAX_IMAGE_SIDE);
 
@@ -121,8 +296,12 @@ pub fn safe_decode_image(path: &Path) -> Result<DynamicImage, String> {
     match decode_result {
         Ok(Ok(img)) => {
             let (w, h) = (img.width(), img.height());
-            if w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || (w as u64 * h as u64) > MAX_IMAGE_PIXELS {
+            let pixel_area = (w as u64) * (h as u64);
+            if w > MAX_IMAGE_SIDE || h > MAX_IMAGE_SIDE || pixel_area > MAX_IMAGE_PIXELS {
                 return Err("Decoded image exceeds size or pixel limits".into());
+            }
+            if pixel_area * 4 > MAX_IMAGE_JOB_MEMORY_BYTES {
+                return Err("Decoded image RGBA size exceeds job memory budget".into());
             }
             Ok(img)
         }
@@ -136,6 +315,12 @@ pub fn safe_decode_image(path: &Path) -> Result<DynamicImage, String> {
 pub struct CachedImageResult {
     pub path: String,
     pub url: String,
+    #[serde(default)]
+    pub is_placeholder: bool,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 #[tauri::command]
@@ -160,53 +345,53 @@ pub async fn generate_thumbnail(
         ));
     }
 
-    // Check header dimensions first to respect limits before decoding
-    let (w, h) = crate::commands::fs::parse_image_dimensions(&resolved);
-    if let (Some(width), Some(height)) = (w, h) {
-        if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
-            return Err(format!(
-                "Image dimensions ({width}x{height}) exceed maximum allowed side of {MAX_IMAGE_SIDE}"
-            ));
-        }
-        if (width as u64 * height as u64) > MAX_IMAGE_PIXELS {
-            return Err("Image pixel area exceeds 16M pixel limit".into());
-        }
-    }
-
     let thumb_path = crate::commands::cache::get_thumbnail_path(&app, &id)?;
 
-    if thumb_path.exists() {
+    // Check if cached thumbnail exists and is still fresh compared to source file
+    let should_regenerate = if thumb_path.exists() {
+        match (std::fs::metadata(&resolved), std::fs::metadata(&thumb_path)) {
+            (Ok(src_meta), Ok(thumb_meta)) => match (src_meta.modified(), thumb_meta.modified()) {
+                (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
+                _ => false,
+            },
+            _ => true,
+        }
+    } else {
+        true
+    };
+
+    if !should_regenerate {
         return Ok(CachedImageResult {
             path: thumb_path.to_string_lossy().to_string(),
             url: crate::protocol::path_to_mangaimg_url(&thumb_path),
+            is_placeholder: false,
+            status: "cached".into(),
+            error: None,
         });
     }
 
     let thumb_path_clone = thumb_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-            let bytes = match safe_decode_image(&resolved) {
-                Ok(decoded) => {
-                    let (src_w, src_h) = (decoded.width(), decoded.height());
-                    let (target_w, target_h) = calculate_fitted_dimensions(
-                        src_w,
-                        src_h,
-                        THUMBNAIL_MAX_WIDTH,
-                        THUMBNAIL_MAX_HEIGHT,
-                    );
-                    resize_image_fir(decoded, target_w, target_h)?
-                }
-                Err(_) => {
-                    // Fall back to clean placeholder for unsupported codecs (avif, jxl, heic) or decode errors
-                    create_placeholder_webp(THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT)?
-                }
-            };
+            let decoded = safe_decode_image(&resolved)?;
+            let (src_w, src_h) = (decoded.width(), decoded.height());
+            let (target_w, target_h) = calculate_fitted_dimensions(
+                src_w,
+                src_h,
+                THUMBNAIL_MAX_WIDTH,
+                THUMBNAIL_MAX_HEIGHT,
+            );
+            let bytes = resize_image_fir(decoded, target_w, target_h)?;
 
             if let Some(parent) = thumb_path_clone.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
             crate::commands::fs::write_atomic(&thumb_path_clone, &bytes)
                 .map_err(|e| format!("Failed to write thumbnail: {e}"))?;
+
+            if !thumb_path_clone.exists() {
+                return Err("Failed to verify thumbnail file on disk".into());
+            }
 
             Ok(())
         })
@@ -217,6 +402,9 @@ pub async fn generate_thumbnail(
     Ok(CachedImageResult {
         path: thumb_path.to_string_lossy().to_string(),
         url: crate::protocol::path_to_mangaimg_url(&thumb_path),
+        is_placeholder: false,
+        status: "generated".into(),
+        error: None,
     })
 }
 
@@ -225,46 +413,122 @@ pub fn generate_thumbnail_direct(
     resolved: &Path,
     id: &str,
 ) -> Result<PathBuf, String> {
-    let (w, h) = crate::commands::fs::parse_image_dimensions(resolved);
-    if let (Some(width), Some(height)) = (w, h) {
-        if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
-            return Err(format!(
-                "Image dimensions ({width}x{height}) exceed maximum allowed side of {MAX_IMAGE_SIDE}"
-            ));
-        }
-        if (width as u64 * height as u64) > MAX_IMAGE_PIXELS {
-            return Err("Image pixel area exceeds 16M pixel limit".into());
-        }
-    }
-
     let thumb_path = crate::commands::cache::get_thumbnail_path(app, id)?;
 
+    let should_regenerate = if thumb_path.exists() {
+        match (std::fs::metadata(resolved), std::fs::metadata(&thumb_path)) {
+            (Ok(src_meta), Ok(thumb_meta)) => match (src_meta.modified(), thumb_meta.modified()) {
+                (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
+                _ => false,
+            },
+            _ => true,
+        }
+    } else {
+        true
+    };
+
+    if !should_regenerate {
+        return Ok(thumb_path);
+    }
+
     IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-        let bytes = match safe_decode_image(resolved) {
-            Ok(decoded) => {
-                let (src_w, src_h) = (decoded.width(), decoded.height());
-                let (target_w, target_h) = calculate_fitted_dimensions(
-                    src_w,
-                    src_h,
-                    THUMBNAIL_MAX_WIDTH,
-                    THUMBNAIL_MAX_HEIGHT,
-                );
-                resize_image_fir(decoded, target_w, target_h)?
-            }
-            Err(_) => {
-                create_placeholder_webp(THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT)?
-            }
-        };
+        let decoded = safe_decode_image(resolved)?;
+        let (src_w, src_h) = (decoded.width(), decoded.height());
+        let (target_w, target_h) =
+            calculate_fitted_dimensions(src_w, src_h, THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT);
+        let bytes = resize_image_fir(decoded, target_w, target_h)?;
 
         if let Some(parent) = thumb_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = crate::commands::fs::write_atomic(&thumb_path, &bytes);
+        crate::commands::fs::write_atomic(&thumb_path, &bytes)
+            .map_err(|e| format!("Failed to write direct thumbnail: {e}"))?;
+
+        if !thumb_path.exists() {
+            return Err("Failed to verify direct thumbnail on disk".into());
+        }
 
         Ok(())
     })?;
 
     Ok(thumb_path)
+}
+
+pub fn generate_image_variant_direct(
+    app: &AppHandle,
+    resolved: &Path,
+    max_width: u32,
+    max_height: u32,
+) -> Result<PathBuf, String> {
+    // 1. Validate output bounds upfront before cache lookup or decode
+    if max_width == 0 || max_height == 0 {
+        return Err("Target dimensions must be greater than zero".into());
+    }
+    if max_width > MAX_IMAGE_SIDE || max_height > MAX_IMAGE_SIDE {
+        return Err(format!(
+            "Target dimensions ({max_width}x{max_height}) exceed maximum allowed side of {MAX_IMAGE_SIDE}"
+        ));
+    }
+    let target_area = (max_width as u64) * (max_height as u64);
+    if target_area > MAX_IMAGE_PIXELS {
+        return Err(format!(
+            "Target pixel area ({target_area}) exceeds limit of {MAX_IMAGE_PIXELS}"
+        ));
+    }
+    if target_area * 4 > MAX_IMAGE_JOB_MEMORY_BYTES {
+        return Err("Target dimensions exceed job memory budget".into());
+    }
+
+    // 2. Include source identity, size, modification timestamp, transform parameters, and encoder version in cache key
+    let metadata = std::fs::metadata(resolved)
+        .map_err(|e| format!("Failed to read metadata for '{}': {e}", resolved.display()))?;
+    let file_size = metadata.len();
+    let mtime_millis = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+
+    let variant_cache_key = format!(
+        "{}:{}:{}:fit_{}x{}:{}",
+        resolved.to_string_lossy(),
+        file_size,
+        mtime_millis,
+        max_width,
+        max_height,
+        IMAGE_ENCODER_VERSION
+    );
+
+    let variant_cache_path =
+        crate::commands::cache::get_variant_path(app, &variant_cache_key, max_width, max_height)?;
+
+    if variant_cache_path.exists() {
+        return Ok(variant_cache_path);
+    }
+
+    let variant_cache_path_clone = variant_cache_path.clone();
+    let resolved_clone = resolved.to_path_buf();
+    IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
+        let decoded = safe_decode_image(&resolved_clone)?;
+        let (src_w, src_h) = (decoded.width(), decoded.height());
+        let (target_w, target_h) = calculate_fitted_dimensions(src_w, src_h, max_width, max_height);
+        let bytes = resize_image_fir(decoded, target_w, target_h)?;
+
+        if let Some(parent) = variant_cache_path_clone.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        crate::commands::fs::write_atomic(&variant_cache_path_clone, &bytes)
+            .map_err(|e| format!("Failed to write image variant: {e}"))?;
+
+        if !variant_cache_path_clone.exists() {
+            return Err("Failed to verify image variant file on disk".into());
+        }
+
+        Ok(())
+    })?;
+
+    Ok(variant_cache_path)
 }
 
 #[tauri::command]
@@ -290,55 +554,10 @@ pub async fn generate_image_variant(
         ));
     }
 
-    // Check header dimensions first
-    let (w, h) = crate::commands::fs::parse_image_dimensions(&resolved);
-    if let (Some(width), Some(height)) = (w, h) {
-        if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
-            return Err("Image side exceeds limit".into());
-        }
-        if (width as u64 * height as u64) > MAX_IMAGE_PIXELS {
-            return Err("Image pixel area exceeds 16M pixel limit".into());
-        }
-    }
-
-    let variant_cache_path = crate::commands::cache::get_variant_path(
-        &app,
-        &resolved.to_string_lossy(),
-        max_width,
-        max_height,
-    )?;
-
-    // Check if variant already cached on disk
-    if variant_cache_path.exists() {
-        return Ok(CachedImageResult {
-            path: variant_cache_path.to_string_lossy().to_string(),
-            url: crate::protocol::path_to_mangaimg_url(&variant_cache_path),
-        });
-    }
-
-    let variant_cache_path_clone = variant_cache_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-            let bytes = match safe_decode_image(&resolved) {
-                Ok(decoded) => {
-                    let (src_w, src_h) = (decoded.width(), decoded.height());
-                    let (target_w, target_h) = calculate_fitted_dimensions(
-                        src_w,
-                        src_h,
-                        max_width,
-                        max_height,
-                    );
-                    resize_image_fir(decoded, target_w, target_h)?
-                }
-                Err(_) => {
-                    create_placeholder_webp(max_width, max_height)?
-                }
-            };
-
-            let _ = crate::commands::fs::write_atomic(&variant_cache_path_clone, &bytes);
-
-            Ok(())
-        })
+    let app_clone = app.clone();
+    let resolved_clone = resolved.clone();
+    let variant_cache_path = tauri::async_runtime::spawn_blocking(move || {
+        generate_image_variant_direct(&app_clone, &resolved_clone, max_width, max_height)
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
@@ -346,6 +565,9 @@ pub async fn generate_image_variant(
     Ok(CachedImageResult {
         path: variant_cache_path.to_string_lossy().to_string(),
         url: crate::protocol::path_to_mangaimg_url(&variant_cache_path),
+        is_placeholder: false,
+        status: "generated".into(),
+        error: None,
     })
 }
 
@@ -378,27 +600,42 @@ mod tests {
 
     #[test]
     fn test_resize_image_fir() {
-        // Create an in-memory 200x200 red RGBA image
         let img = DynamicImage::ImageRgba8(RgbaImage::from_fn(200, 200, |_, _| {
             image::Rgba([255, 0, 0, 255])
         }));
 
         let resized_bytes = resize_image_fir(img, 100, 100).expect("Image resize must succeed");
-        assert!(!resized_bytes.is_empty(), "Resized image bytes must not be empty");
+        assert!(
+            !resized_bytes.is_empty(),
+            "Resized image bytes must not be empty"
+        );
 
         // Verify the decoded output has the target dimensions
-        let decoded = image::load_from_memory(&resized_bytes).expect("Output bytes must be valid image format");
+        let decoded = image::load_from_memory(&resized_bytes)
+            .expect("Output bytes must be valid image format");
         assert_eq!(decoded.width(), 100);
         assert_eq!(decoded.height(), 100);
     }
 
     #[test]
-    fn test_create_placeholder_webp() {
-        let bytes = create_placeholder_webp(160, 320).expect("Placeholder WebP must encode cleanly");
+    fn test_create_placeholder_webp_limits() {
+        // Valid placeholder within limits succeeds
+        let bytes =
+            create_placeholder_webp(160, 320).expect("Placeholder WebP must encode cleanly");
         assert!(!bytes.is_empty());
         let decoded = image::load_from_memory(&bytes).expect("Placeholder must be decodable");
         assert_eq!(decoded.width(), 160);
         assert_eq!(decoded.height(), 320);
+
+        // Zero dimensions rejected
+        assert!(create_placeholder_webp(0, 100).is_err());
+        assert!(create_placeholder_webp(100, 0).is_err());
+
+        // Extreme dimensions exceeding MAX_IMAGE_SIDE rejected
+        assert!(create_placeholder_webp(32_769, 100).is_err());
+
+        // Excessive pixel area exceeding memory budget rejected
+        assert!(create_placeholder_webp(10_000, 10_000).is_err());
     }
 
     #[test]
@@ -406,5 +643,53 @@ mod tests {
         let nonexistent = Path::new("nonexistent-image-path-12345.jpg");
         let result = safe_decode_image(nonexistent);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_format_matrix_capabilities() {
+        // Rust decodable raster formats
+        for ext in &["jpg", "jpeg", "png", "webp", "gif", "bmp"] {
+            let caps = get_format_capabilities(ext);
+            assert!(caps.recognized_extension);
+            assert!(caps.header_readable);
+            assert!(caps.webview_displayable);
+            assert!(
+                caps.rust_decodable,
+                "Format {} should be rust decodable",
+                ext
+            );
+        }
+
+        // AVIF: recognized, header readable, webview displayable, but NOT rust decodable
+        let avif = get_format_capabilities("avif");
+        assert!(avif.recognized_extension);
+        assert!(avif.header_readable);
+        assert!(avif.webview_displayable);
+        assert!(!avif.rust_decodable);
+
+        // SVG: recognized, vector (no fixed raster header), webview displayable, not rust decodable
+        let svg = get_format_capabilities("svg");
+        assert!(svg.recognized_extension);
+        assert!(!svg.header_readable);
+        assert!(svg.webview_displayable);
+        assert!(!svg.rust_decodable);
+
+        // HEIC / TIFF: recognized, header readable, but NOT natively webview displayable and NOT rust decodable
+        let heic = get_format_capabilities("heic");
+        assert!(heic.recognized_extension);
+        assert!(heic.header_readable);
+        assert!(!heic.webview_displayable);
+        assert!(!heic.rust_decodable);
+
+        let tiff = get_format_capabilities("tiff");
+        assert!(tiff.recognized_extension);
+        assert!(tiff.header_readable);
+        assert!(!tiff.webview_displayable);
+        assert!(!tiff.rust_decodable);
+
+        // Unrecognized format
+        let unknown = get_format_capabilities("xyz");
+        assert!(!unknown.recognized_extension);
+        assert!(!unknown.rust_decodable);
     }
 }

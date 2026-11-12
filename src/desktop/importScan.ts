@@ -2,12 +2,18 @@ import { uniqueSlug, normalizePath } from '../paths';
 import { type Directory, type Page, type Chapter, type Manga } from '../model';
 import { matchingPosition, isRecord } from './validation';
 import { limits, LimitError, assertAtMost, assertPathLimits, withinTime } from '../limits';
-import { desktopAPI, type FolderEntry, type PageHeader } from '../tauriBridge';
+import {
+  desktopAPI,
+  type FolderEntry,
+  type PageHeader,
+  type LibraryDiscovery,
+} from '../tauriBridge';
 import {
   type SourceFile,
   summary,
   saveManga,
   getManga,
+  listLibrary,
   errorMessage,
   onMangaDelete,
 } from './storage';
@@ -44,12 +50,22 @@ export interface ScanState {
   phase: 'discover' | 'index';
   done: number;
   total: number;
-  title: string;
+  title?: string;
 }
 
 export interface ScanOptions {
   update?: (state: ScanState) => void;
   signal?: AbortSignal;
+}
+
+export interface PrepareChapterOptions {
+  signal?: AbortSignal;
+  update?: (state: ScanState) => void;
+}
+
+export interface ChapterPreview {
+  name: string;
+  pageCount: number;
 }
 
 export class DesktopHandle {
@@ -82,6 +98,7 @@ export type Source = {
   localPath?: string;
   files: Map<string, SourceFile>;
   issues: Issue[];
+  discoveredTitles?: LibraryDiscovery['titles'];
 };
 
 function alive(signal?: AbortSignal) {
@@ -114,6 +131,7 @@ export async function fromDesktopFolder(
       );
 
       if (discovery && discovery.titles.length > 0) {
+        source.discoveredTitles = discovery.titles;
         let discovered = 0;
         for (const title of discovery.titles) {
           for (const ch of title.chapters) {
@@ -202,29 +220,100 @@ export function droppedSources(): () => Promise<Source[]> {
 }
 
 export async function splitSource(source: Source): Promise<Source[]> {
-  return [source];
+  if (source.discoveredTitles && source.discoveredTitles.length > 0) {
+    const splitTitles: Source[] = [];
+    for (const dt of source.discoveredTitles) {
+      const s: Source = {
+        title: dt.title,
+        localPath: dt.rootPath,
+        files: new Map(),
+        issues: [],
+      };
+      for (const ch of dt.chapters) {
+        for (const p of ch.pages) {
+          s.files.set(
+            p.relativePath,
+            new DesktopHandle(
+              p.name,
+              p.absolutePath,
+              p.size,
+              p.modified,
+              p.width,
+              p.height,
+            ) as unknown as FileSystemFileHandle,
+          );
+        }
+      }
+      splitTitles.push(s);
+      assertAtMost(splitTitles.length, limits.titles, 'Selected titles');
+    }
+    return splitTitles.length > 0 ? splitTitles : [source];
+  }
+
+  const result = new Map<string, Source>();
+  for (const [path, file] of source.files) {
+    const parts = path.split('/');
+    const title = parts.length > 1 ? parts.shift()! : `${source.title} — root pages`;
+    let s = result.get(title);
+    if (!s) {
+      const childLocalPath =
+        source.localPath && title !== `${source.title} — root pages`
+          ? `${source.localPath.replace(/[\\/]+$/, '')}/${title}`
+          : source.localPath;
+      s = {
+        title,
+        localPath: childLocalPath,
+        files: new Map(),
+        issues: [],
+      };
+      result.set(title, s);
+      assertAtMost(result.size, limits.titles, 'Selected titles');
+    }
+    s.files.set(parts.join('/'), file);
+  }
+  return result.size > 0 ? [...result.values()] : [source];
 }
 
-export function chapterGroups(_source: Source): Map<string, [string, SourceFile][]> {
-  return new Map();
+export function chapterGroups(source: Source): Map<string, number> {
+  const groups = new Map<string, number>();
+  for (const path of source.files.keys()) {
+    const parts = path.split('/');
+    const name = parts.length === 1 ? 'Root pages' : parts.slice(0, -1).join(' / ');
+    if (parts.length === 1 && /^(thumbnail|cover)\./i.test(path) && source.files.size > 1) continue;
+    groups.set(name, (groups.get(name) || 0) + 1);
+  }
+  return groups;
+}
+
+export function chapterPreviews(source: Source): ChapterPreview[] {
+  const groups = chapterGroups(source);
+  return Array.from(groups.entries(), ([name, pageCount]) => ({ name, pageCount }));
 }
 
 export async function pooled<T>(
   items: T[],
-  limit: number,
-  fn: (item: T) => Promise<void>,
+  limitOrFn: number | ((item: T) => Promise<void>),
+  fnOrSignal?: ((item: T) => Promise<void>) | AbortSignal,
+  signal?: AbortSignal,
 ): Promise<void> {
-  const executing: Promise<void>[] = [];
-  for (const item of items) {
-    const p = Promise.resolve().then(() => fn(item));
-    executing.push(p);
-    if (limit <= items.length) {
-      const e: Promise<void> = p.then(() => {
-        executing.splice(executing.indexOf(e), 1);
-      });
+  const limit = typeof limitOrFn === 'number' ? limitOrFn : 4;
+  const fn =
+    typeof limitOrFn === 'function' ? limitOrFn : (fnOrSignal as (item: T) => Promise<void>);
+  const sig = fnOrSignal instanceof AbortSignal ? fnOrSignal : signal;
+
+  if (items.length === 0) return;
+  const poolLimit = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+
+  const workers = Array.from({ length: poolLimit }, async () => {
+    while (next < items.length) {
+      if (sig?.aborted) throw new DOMException('Operation cancelled', 'AbortError');
+      const idx = next++;
+      await fn(items[idx]);
     }
-  }
-  await Promise.all(executing);
+  });
+
+  await Promise.all(workers);
 }
 
 export async function indexSource(
@@ -237,52 +326,82 @@ export async function indexSource(
 
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
     alive(options.signal);
-    const dto = await desktopAPI.indexTitle(source.localPath, { sort, previous }, (progress) => {
+    const confirmedTitle = source.title?.trim() || undefined;
+    const jobId = `index-${Math.random().toString(36).slice(2)}`;
+
+    let abortHandler: (() => void) | undefined;
+    if (options.signal) {
+      abortHandler = () => {
+        void desktopAPI.cancelScan?.(jobId);
+      };
+      options.signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    try {
+      const dto = await desktopAPI.indexTitle(
+        source.localPath,
+        {
+          sort,
+          previous,
+          title: confirmedTitle,
+          jobId,
+          signal: options.signal,
+        },
+        (progress) => {
+          alive(options.signal);
+          options.update?.({
+            phase: progress.phase as 'discover' | 'index',
+            done: progress.done,
+            total: progress.total,
+            title: confirmedTitle || progress.title,
+          });
+          if (progress.total > 0) {
+            desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+          }
+        },
+      );
       alive(options.signal);
-      options.update?.({
-        phase: progress.phase as 'discover' | 'index',
-        done: progress.done,
-        total: progress.total,
-        title: progress.title,
-      });
-      if (progress.total > 0) {
-        desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
-      }
-    });
-    alive(options.signal);
 
-    const m: Manga = {
-      id: dto.id,
-      title: dto.title,
-      slug: dto.slug,
-      localPath: dto.localPath,
-      lastChapter: dto.lastChapter,
-      addedAt: dto.addedAt,
-      updatedAt: dto.updatedAt,
-      revision: dto.revision,
-      sort: dto.sort as 'natural' | 'name' | 'reverse',
-      chapters: dto.chapters.map((c) => ({
-        name: c.name,
-        read: c.read,
-        position: c.position,
-        bookmarks: c.bookmarks,
-        pages: c.pages.map((p) => ({
-          name: p.name,
-          path: p.path,
-          width: p.width,
-          height: p.height,
-          size: p.size,
-          modified: p.modified,
-          dimensionsPending: p.dimensionsPending,
+      const m: Manga = {
+        id: dto.id,
+        title: confirmedTitle || dto.title,
+        slug: dto.slug,
+        localPath: dto.localPath,
+        lastChapter: dto.lastChapter,
+        addedAt: dto.addedAt,
+        updatedAt: dto.updatedAt,
+        revision: dto.revision,
+        sort: dto.sort as 'natural' | 'name' | 'reverse',
+        chapters: dto.chapters.map((c) => ({
+          name: c.name,
+          read: c.read,
+          position: c.position,
+          bookmarks: c.bookmarks,
+          pages: c.pages.map((p) => ({
+            name: p.name,
+            path: p.path,
+            width: p.width,
+            height: p.height,
+            size: p.size,
+            modified: p.modified,
+            dimensionsPending: p.dimensionsPending,
+          })),
         })),
-      })),
-    };
+      };
 
-    return {
-      m,
-      issues: [...source.issues, ...dto.issues],
-      reused: dto.reused,
-    };
+      alive(options.signal);
+      await saveManga(m);
+
+      return {
+        m,
+        issues: [...source.issues, ...dto.issues],
+        reused: dto.reused,
+      };
+    } finally {
+      if (abortHandler && options.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+    }
   }
 
   throw new Error('Desktop indexing requires native indexTitle and localPath');
@@ -291,47 +410,204 @@ export async function indexSource(
 export async function prepareChapter(
   manga: Manga,
   chapterIndex: number,
-  _signal?: AbortSignal,
+  options: PrepareChapterOptions = {},
 ): Promise<Issue[]> {
+  alive(options.signal);
   const ch = manga.chapters[chapterIndex];
   if (!ch) return [];
 
   const unmeasured = ch.pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
   if (!unmeasured.length) return [];
 
+  const issues: Issue[] = [];
+
   if (desktopAPI.prepareChapterHeaders) {
     const paths = unmeasured.map((p) => p.path).filter((p): p is string => Boolean(p));
     if (paths.length > 0) {
       try {
-        const headers = await desktopAPI.prepareChapterHeaders(paths);
+        alive(options.signal);
+        const headers = await desktopAPI.prepareChapterHeaders(paths, manga.id);
+        alive(options.signal);
         const headerMap = new Map<string, PageHeader>();
         for (const h of headers) {
           headerMap.set(h.path, h);
         }
+        let done = 0;
         for (const p of unmeasured) {
           const found = p.path ? headerMap.get(p.path) : undefined;
           if (found && found.width > 0 && found.height > 0) {
             p.width = found.width;
             p.height = found.height;
             p.dimensionsPending = false;
+          } else {
+            issues.push({
+              path: p.path || p.name,
+              reason: 'Could not resolve image dimensions',
+            });
           }
+          done++;
+          options.update?.({
+            phase: 'index',
+            done,
+            total: unmeasured.length,
+            title: manga.title,
+          });
         }
-        return [];
+        return issues;
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err;
         console.warn('Native prepareChapterHeaders failed:', err);
+        return unmeasured.map((p) => ({
+          path: p.path || p.name,
+          reason: `Failed to prepare chapter headers: ${errorMessage(err)}`,
+        }));
       }
     }
   }
 
-  return [];
+  return unmeasured.map((p) => ({
+    path: p.path || p.name,
+    reason: 'Header preparation unavailable or paths missing',
+  }));
 }
 
-export function stopBackground(_id: string): void {}
-export function stopAllBackground(): void {}
-export function scheduleBackground(_manga: Manga): void {}
-export async function resumeBackground(): Promise<void> {}
+interface BackgroundJob {
+  id: string;
+  revision?: number;
+  updatedAt?: number;
+  controller: AbortController;
+}
+
+const backgroundJobs = new Map<string, BackgroundJob>();
+let backgroundRunning = false;
+
+export function stopBackground(id: string): void {
+  const job = backgroundJobs.get(id);
+  if (job) {
+    job.controller.abort();
+    backgroundJobs.delete(id);
+  }
+}
+
+export function stopAllBackground(): void {
+  for (const job of backgroundJobs.values()) {
+    job.controller.abort();
+  }
+  backgroundJobs.clear();
+}
+
+onMangaDelete((id) => {
+  if (id) stopBackground(id);
+  else stopAllBackground();
+});
+
+export function scheduleBackground(manga: Manga): void {
+  if (
+    backgroundJobs.has(manga.id) ||
+    !manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))
+  ) {
+    return;
+  }
+  if (backgroundJobs.size >= limits.queuedJobs) return;
+  backgroundJobs.set(manga.id, {
+    id: manga.id,
+    revision: manga.revision,
+    updatedAt: manga.updatedAt,
+    controller: new AbortController(),
+  });
+  void drainBackground();
+}
+
+async function runDrainPass(): Promise<void> {
+  let remaining = backgroundJobs.size;
+  while (backgroundJobs.size && remaining-- > 0) {
+    const entry = backgroundJobs.entries().next().value;
+    if (!entry) break;
+    const [id, job] = entry;
+    try {
+      const manga = await getManga(id);
+      if (
+        !manga ||
+        manga.updatedAt !== job.updatedAt ||
+        (job.revision !== undefined && manga.revision !== job.revision)
+      ) {
+        break;
+      }
+      let modified = false;
+      for (let i = 0; i < manga.chapters.length; i++) {
+        alive(job.controller.signal);
+        if (!manga.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
+        await new Promise<void>((r) => setTimeout(r, 50));
+        alive(job.controller.signal);
+        const stored = await getManga(id);
+        if (
+          !stored ||
+          stored.updatedAt !== job.updatedAt ||
+          (job.revision !== undefined && stored.revision !== job.revision)
+        ) {
+          break;
+        }
+        const issues = await prepareChapter(manga, i, { signal: job.controller.signal });
+        if (!issues.length) {
+          modified = true;
+        }
+      }
+      if (modified && !job.controller.signal.aborted) {
+        await saveManga(manga);
+      }
+    } catch {
+      /* Interrupted jobs remain pending in saved metadata and can resume later */
+    } finally {
+      if (backgroundJobs.get(id) === job) {
+        backgroundJobs.delete(id);
+      }
+    }
+  }
+}
+
+async function drainBackground(): Promise<void> {
+  if (backgroundRunning) return;
+  backgroundRunning = true;
+  try {
+    await runDrainPass();
+  } finally {
+    backgroundRunning = false;
+    if (backgroundJobs.size > 0) {
+      setTimeout(() => void drainBackground(), 100);
+    }
+  }
+}
+
+export async function resumeBackground(): Promise<void> {
+  try {
+    const list = await listLibrary();
+    for (const item of list) {
+      const m = await getManga(item.id);
+      if (m && m.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))) {
+        scheduleBackground(m);
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to resume background jobs:', err);
+  }
+}
+
 export function scanImage(_entry: SourceFile, _signal?: AbortSignal) {
   return Promise.resolve({ width: 0, height: 0 });
 }
 export function discardScan(_sources: Source[]): void {}
-export async function warmSources(_sources: Source[], _signal?: AbortSignal): Promise<void> {}
+export async function warmSources(
+  sources: Source[],
+  options: ScanOptions = {},
+  _sort: Manga['sort'] = 'natural',
+): Promise<void> {
+  for (const source of sources) {
+    alive(options.signal);
+    options.update?.({
+      phase: 'discover',
+      done: source.files.size,
+      total: 0,
+      title: source.title,
+    });
+  }
+}

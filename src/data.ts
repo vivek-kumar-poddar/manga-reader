@@ -39,6 +39,8 @@ export {
   removeBookmark,
   syncChannel,
   broadcastSync,
+  onStorageSync,
+  type StorageSyncMessage,
   deleteManga,
   onMangaDelete,
   clearLibrary,
@@ -81,12 +83,16 @@ export {
 export {
   getObjectUrl,
   storeObjectUrl,
+  retainObjectUrl,
+  releaseObjectUrl,
   clearObjectUrlPool,
   ObjectUrlPool,
   defaultObjectUrlPool,
 } from './objectUrlPool';
 
 export { normalizePath } from './paths';
+
+export { getPageImageUrl, getCoverImageUrl, type PageImageResourceOptions } from './tauriBridge';
 
 export {
   DesktopHandle,
@@ -99,6 +105,7 @@ export {
   droppedSources,
   splitSource,
   chapterGroups,
+  chapterPreviews,
   indexSource,
   prepareChapter,
   stopBackground,
@@ -109,5 +116,7 @@ export {
   type Issue,
   type ScanState,
   type ScanOptions,
+  type PrepareChapterOptions,
+  type ChapterPreview,
   type Source,
 } from './importScan';

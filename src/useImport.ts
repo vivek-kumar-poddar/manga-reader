@@ -3,6 +3,7 @@ import {
   warmSources,
   discardScan,
   indexSource,
+  saveManga,
   scheduleBackground,
   getManga,
   errorMessage,
@@ -60,6 +61,7 @@ export function useImport({
   }, [cleanupStaged]);
 
   const cancel = useCallback(() => {
+    activeOp.current++;
     if (controller.current) {
       controller.current.abort();
     }
@@ -113,16 +115,22 @@ export function useImport({
     async (read: (options: ScanOptions) => Promise<Source[]>, target?: Summary | Manga) => {
       const opId = ++activeOp.current;
       cleanupStaged();
-      setState({ status: 'discovering', scan: { phase: 'discover', done: 0, total: 0 } });
+      setState({
+        status: 'discovering',
+        scan: { phase: 'discover', done: 0, total: 0, title: target?.title ?? '' },
+      });
 
       const options = startOptions(opId, 'discover');
       let sources: Source[] = [];
       const startTime = performance.now();
+      let outcome: 'preview' | 'failed' | 'cancelled' | 'idle' = 'idle';
 
       try {
         sources = await read(options);
+        if (activeOp.current !== opId) return;
         stagedSources.current = sources;
         await warmSources(sources, options);
+        if (activeOp.current !== opId) return;
         options.signal?.throwIfAborted();
 
         if (!sources.length) {
@@ -133,6 +141,7 @@ export function useImport({
 
         if (activeOp.current === opId) {
           const targetManga = target ? await getManga(target.id) : undefined;
+          outcome = 'preview';
           setState({
             status: 'preview',
             preview: { sources, target: targetManga },
@@ -142,6 +151,7 @@ export function useImport({
         cleanupStaged();
         if (activeOp.current === opId) {
           const isAbort = e instanceof DOMException && e.name === 'AbortError';
+          outcome = isAbort ? 'cancelled' : 'failed';
           const msg = isAbort ? 'Import cancelled. Existing data is unchanged.' : errorMessage(e);
           setState(isAbort ? { status: 'idle' } : { status: 'failed', message: msg });
           onNotify(msg);
@@ -158,18 +168,21 @@ export function useImport({
           }
         }
       } finally {
-        if (activeOp.current === opId && state.status !== 'preview') {
+        if (activeOp.current === opId && outcome !== 'preview') {
           desktopAPI.setProgressBar(-1);
         }
       }
     },
-    [cleanupStaged, onNotify, startOptions, state.status],
+    [cleanupStaged, onNotify, startOptions],
   );
 
   const runImport = useCallback(
     async (plans: ImportPlan[]) => {
       const opId = ++activeOp.current;
-      setState({ status: 'indexing', scan: { phase: 'index', done: 0, total: 0 } });
+      setState({
+        status: 'indexing',
+        scan: { phase: 'index', done: 0, total: 0, title: plans[0]?.source.title ?? '' },
+      });
 
       const options = startOptions(opId, 'index');
       const issues: Issue[] = [];
@@ -181,10 +194,15 @@ export function useImport({
 
       try {
         for (const plan of plans) {
+          if (activeOp.current !== opId) break;
           options.signal?.throwIfAborted();
           try {
             const previous = plan.targetId ? await getManga(plan.targetId) : undefined;
             const result = await indexSource(plan.source, options, previous, plan.sort);
+            if (activeOp.current !== opId || options.signal?.aborted) {
+              break;
+            }
+            await saveManga(result.m);
             count++;
             titles.push(result.m);
             scheduleBackground(result.m);
@@ -196,6 +214,9 @@ export function useImport({
               retry.push({ ...plan, targetId: result.m.id });
             }
           } catch (e) {
+            if (activeOp.current !== opId || options.signal?.aborted) {
+              break;
+            }
             options.signal?.throwIfAborted();
             const msg = errorMessage(e);
             issues.push({ path: plan.source.title, reason: msg });
@@ -240,7 +261,9 @@ export function useImport({
         }
       } finally {
         discardScan(plans.map((p) => p.source));
-        finish();
+        if (activeOp.current === opId) {
+          finish();
+        }
       }
     },
     [finish, onNotify, onRefresh, startOptions],
@@ -257,7 +280,7 @@ export function useImport({
     scanState:
       state.status === 'discovering' || state.status === 'indexing'
         ? state.scan
-        : { phase: 'discover' as const, done: 0, total: 0 },
+        : { phase: 'discover' as const, done: 0, total: 0, title: '' },
     discover,
     runImport,
     cancel,

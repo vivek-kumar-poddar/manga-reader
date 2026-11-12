@@ -9,7 +9,12 @@ import {
 } from '../model';
 import { parseSummary, parseManga, parseSettings } from './validation';
 import { desktopAPI } from '../tauriBridge';
-import { type LibraryRepo, TauriSqliteLibraryRepo, ensureLibraryMigrated } from '../repo';
+import {
+  type LibraryRepo,
+  TauriSqliteLibraryRepo,
+  ensureLibraryMigrated,
+  readLegacyIndexedDB,
+} from '../repo';
 
 export type SourceFile = File | { getFile(): Promise<File> };
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
@@ -40,9 +45,37 @@ export interface StorageSyncMessage {
 }
 
 export const syncChannel =
-  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader-sync') : null;
+  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader:sync') : null;
+
+const localSyncListeners = new Set<(msg: StorageSyncMessage) => void>();
+
+export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () => void {
+  localSyncListeners.add(listener);
+  return () => {
+    localSyncListeners.delete(listener);
+  };
+}
 
 export function broadcastSync(msg: StorageSyncMessage): void {
+  // 1. Dispatch locally to all registered store subscribers in the current window
+  for (const listener of localSyncListeners) {
+    try {
+      listener(msg);
+    } catch (e) {
+      console.warn('Error in local storage sync listener:', e);
+    }
+  }
+
+  // 2. Dispatch synthetic MessageEvent on local syncChannel so local event listeners receive it
+  if (syncChannel && typeof MessageEvent !== 'undefined') {
+    try {
+      syncChannel.dispatchEvent(new MessageEvent('message', { data: msg }));
+    } catch {
+      // Ignore dispatch failure if environment does not support synthetic MessageEvent
+    }
+  }
+
+  // 3. Dispatch across contexts / other windows via native BroadcastChannel
   try {
     syncChannel?.postMessage(msg);
   } catch {
@@ -51,15 +84,11 @@ export function broadcastSync(msg: StorageSyncMessage): void {
 }
 
 export function invalidateSummaryCache(): void {
-  if (repo instanceof TauriSqliteLibraryRepo) {
-    repo.invalidateCaches();
-  }
+  getRepo().invalidateCaches?.();
 }
 
 export function invalidateBookmarkCache(): void {
-  if (repo instanceof TauriSqliteLibraryRepo) {
-    repo.invalidateCaches();
-  }
+  getRepo().invalidateCaches?.();
 }
 
 export const summary = (m: Manga): Summary => {
@@ -109,6 +138,7 @@ export const repo: LibraryRepo = {
   saveStoredSettings: (settings: Settings) => activeRepo.saveStoredSettings(settings),
   exportBackup: () => (activeRepo.exportBackup ? activeRepo.exportBackup() : Promise.resolve('')),
   restoreBackup: (backup) => activeRepo.restoreBackup(backup),
+  invalidateCaches: () => activeRepo.invalidateCaches?.(),
 };
 
 export const listLibrary = async (): Promise<Summary[]> => repo.listLibrary();
@@ -161,9 +191,23 @@ export function errorMessage(e: unknown): string {
   return 'Unknown error occurred';
 }
 
+export interface AccessCacheEntry {
+  expiresAt: number;
+  granted: boolean;
+  timestamp?: number;
+}
+
+export interface MangaDB {
+  [key: string]: unknown;
+}
+
+export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> {
+  // Desktop storage uses SQLite; no-op for V1->V2 IDB migration
+}
+
 export const ACCESS_CACHE_TTL_MS = 7500;
 export const dirHandleCache = new Map<string, any>();
-export const accessCache = new Map<string, any>();
+export const accessCache = new Map<string, AccessCacheEntry>();
 
 export function clearAccessCache(): void {
   accessCache.clear();
@@ -175,17 +219,48 @@ export function clearDirHandleCache(): void {
 
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   if (!p.path) throw new Error('Desktop page is missing path');
-  const buffer = await desktopAPI.readFile(p.path);
-  if (!buffer) throw new Error(`Could not read desktop file at: ${p.path}`);
+  const resolvedPath = desktopAPI.resolvePath
+    ? await desktopAPI.resolvePath(m.id, p.path, m.localPath)
+    : p.path;
+  const buffer = await desktopAPI.readFile(resolvedPath);
+  if (!buffer) throw new Error(`Could not read desktop file at: ${resolvedPath}`);
   return new File([buffer], p.name || 'image.webp');
 }
 
-export async function access(manga: Manga): Promise<boolean> {
-  if (manga.localPath) return true;
-  return true;
+export async function access(
+  manga: Pick<Manga, 'id' | 'localPath'>,
+  request = false,
+): Promise<boolean> {
+  if (!manga) return false;
+
+  const now = Date.now();
+  if (!request) {
+    const cached = accessCache.get(manga.id);
+    if (cached && now < cached.expiresAt) {
+      return cached.granted;
+    }
+  }
+
+  try {
+    const granted = desktopAPI.checkAccess
+      ? await desktopAPI.checkAccess(manga.id, manga.localPath)
+      : Boolean(manga.localPath);
+
+    accessCache.set(manga.id, {
+      expiresAt: now + ACCESS_CACHE_TTL_MS,
+      granted,
+    });
+    return granted;
+  } catch {
+    accessCache.set(manga.id, {
+      expiresAt: now + ACCESS_CACHE_TTL_MS,
+      granted: false,
+    });
+    return false;
+  }
 }
 
-// Stub for IndexedDBLibraryRepo so code importing it compiles cleanly
+// Fallback reader for legacy IndexedDB data on desktop platforms
 export class IndexedDBLibraryRepo implements LibraryRepo {
   async listLibrary() {
     return [];
@@ -197,6 +272,9 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     return undefined;
   }
   async allManga() {
+    const res = await readLegacyIndexedDB();
+    if (res.status === 'data') return res.titles;
+    if (res.status === 'failed') throw res.error;
     return [];
   }
   async saveManga() {}
@@ -219,6 +297,9 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   async clearLibrary() {}
   async resetProgress() {}
   async getStoredSettings() {
+    const res = await readLegacyIndexedDB();
+    if (res.status === 'data') return res.settings;
+    if (res.status === 'failed') throw res.error;
     return undefined;
   }
   async saveStoredSettings(s: any) {

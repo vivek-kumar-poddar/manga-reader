@@ -86,7 +86,35 @@ export interface StorageSyncMessage {
 export const syncChannel =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader:sync') : null;
 
+const localSyncListeners = new Set<(msg: StorageSyncMessage) => void>();
+
+export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () => void {
+  localSyncListeners.add(listener);
+  return () => {
+    localSyncListeners.delete(listener);
+  };
+}
+
 export function broadcastSync(msg: StorageSyncMessage): void {
+  // 1. Dispatch locally to all registered store subscribers in the current window
+  for (const listener of localSyncListeners) {
+    try {
+      listener(msg);
+    } catch (e) {
+      console.warn('Error in local storage sync listener:', e);
+    }
+  }
+
+  // 2. Dispatch synthetic MessageEvent on local syncChannel so local event listeners receive it
+  if (syncChannel && typeof MessageEvent !== 'undefined') {
+    try {
+      syncChannel.dispatchEvent(new MessageEvent('message', { data: msg }));
+    } catch {
+      // Ignore dispatch failure if environment does not support synthetic MessageEvent
+    }
+  }
+
+  // 3. Dispatch across contexts / other windows via native BroadcastChannel
   try {
     syncChannel?.postMessage(msg);
   } catch {
@@ -99,11 +127,14 @@ let cachedBookmarkedMangaIds: Set<string> | null = null;
 let cachedMangaBookmarkedIds: Set<string> | null = null;
 let bookmarkCachePromise: Promise<void> | null = null;
 
+let bookmarkGeneration = 0;
+
 export function invalidateSummaryCache(): void {
   cachedSummaries = null;
 }
 
 export function invalidateBookmarkCache(): void {
+  bookmarkGeneration++;
   cachedBookmarkedMangaIds = null;
   cachedMangaBookmarkedIds = null;
   bookmarkCachePromise = null;
@@ -456,11 +487,14 @@ async function ensureBookmarkCaches(): Promise<void> {
   if (bookmarkCachePromise) {
     return bookmarkCachePromise;
   }
+  const currentGen = ++bookmarkGeneration;
   bookmarkCachePromise = (async () => {
     try {
       if (typeof indexedDB === 'undefined') {
-        cachedBookmarkedMangaIds = new Set();
-        cachedMangaBookmarkedIds = new Set();
+        if (bookmarkGeneration === currentGen) {
+          cachedBookmarkedMangaIds = new Set();
+          cachedMangaBookmarkedIds = new Set();
+        }
         return;
       }
       const d = await db;
@@ -479,8 +513,10 @@ async function ensureBookmarkCaches(): Promise<void> {
         }
       }
 
-      cachedBookmarkedMangaIds = allBookmarked;
-      cachedMangaBookmarkedIds = mangaBookmarked;
+      if (bookmarkGeneration === currentGen) {
+        cachedBookmarkedMangaIds = allBookmarked;
+        cachedMangaBookmarkedIds = mangaBookmarked;
+      }
     } finally {
       bookmarkCachePromise = null;
     }
@@ -870,6 +906,10 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     const payload = typeof backup === 'string' ? JSON.parse(backup) : backup;
     return restoreBackupIdb(payload);
   }
+  invalidateCaches(): void {
+    invalidateSummaryCache();
+    invalidateBookmarkCache();
+  }
 }
 
 let activeRepo: LibraryRepo = desktopAPI.isDesktop
@@ -905,6 +945,7 @@ export const repo: LibraryRepo = {
   saveStoredSettings: (s) => activeRepo.saveStoredSettings(s),
   exportBackup: () => (activeRepo.exportBackup ? activeRepo.exportBackup() : Promise.resolve('')),
   restoreBackup: (b) => activeRepo.restoreBackup(b),
+  invalidateCaches: () => activeRepo.invalidateCaches?.(),
 };
 
 export const listLibrary = async (): Promise<Summary[]> => repo.listLibrary();
@@ -976,6 +1017,7 @@ export const ACCESS_CACHE_TTL_MS = 7500;
 export interface AccessCacheEntry {
   granted: boolean;
   timestamp: number;
+  expiresAt?: number;
 }
 
 export const accessCache = new Map<string, AccessCacheEntry>();

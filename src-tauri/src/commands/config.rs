@@ -35,13 +35,16 @@ impl AppConfigState {
         self.0.read().unwrap().clone()
     }
 
-    pub fn update<F>(&self, app: &AppHandle, f: F)
+    pub fn update<F, R>(&self, app: &AppHandle, f: F) -> Result<R, String>
     where
-        F: FnOnce(&mut AppConfig),
+        F: FnOnce(&mut AppConfig) -> R,
     {
         let mut lock = self.0.write().unwrap();
-        f(&mut lock);
-        save_persisted_config(app, &lock);
+        let mut cloned = lock.clone();
+        let res = f(&mut cloned);
+        save_persisted_config(app, &cloned)?;
+        *lock = cloned;
+        Ok(res)
     }
 }
 
@@ -77,12 +80,13 @@ pub fn load_persisted_config(app: &AppHandle) -> AppConfig {
     AppConfig::default()
 }
 
-pub fn save_persisted_config(app: &AppHandle, config: &AppConfig) {
-    if let Ok(path) = get_config_path(app) {
-        if let Ok(json) = serde_json::to_string_pretty(config) {
-            let _ = write_atomic(&path, json.as_bytes());
-        }
-    }
+pub fn save_persisted_config(app: &AppHandle, config: &AppConfig) -> Result<(), String> {
+    let path = get_config_path(app)?;
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+    write_atomic(&path, json.as_bytes())
+        .map_err(|e| format!("Failed to write config atomically: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -100,8 +104,7 @@ pub fn save_app_config(app: AppHandle, config: AppConfig) -> Result<(), String> 
             cfg.custom_preferences.insert(k, v);
         }
         // Do not overwrite last_opened_roots to prevent race conditions with record_opened_root
-    });
-    Ok(())
+    })
 }
 
 #[tauri::command(async)]
@@ -112,8 +115,7 @@ pub fn set_window_preferences(
     let state = app.state::<AppConfigState>();
     state.update(&app, |cfg| {
         cfg.window_preferences = preferences;
-    });
-    Ok(())
+    })
 }
 
 #[tauri::command(async)]
@@ -125,8 +127,7 @@ pub fn set_app_preference(
     let state = app.state::<AppConfigState>();
     state.update(&app, |cfg| {
         cfg.custom_preferences.insert(key, value);
-    });
-    Ok(())
+    })
 }
 
 #[tauri::command(async)]
@@ -145,20 +146,31 @@ pub fn record_opened_root(app: AppHandle, root_path: String) -> Result<Vec<Strin
         return Ok(Vec::new());
     }
 
+    let raw_path = std::path::Path::new(&trimmed);
+    let canonical = dunce::canonicalize(raw_path)
+        .map_err(|e| format!("Cannot record unresolvable path: {e}"))?;
+
+    let allowed = app.state::<super::fs::AllowedRoots>();
+    if !allowed.is_allowed(&canonical) {
+        return Err(format!(
+            "Path '{}' is not under an authorized root",
+            canonical.display()
+        ));
+    }
+
+    let canonical_str = canonical.to_string_lossy().to_string();
     let state = app.state::<AppConfigState>();
-    let mut updated = Vec::new();
     state.update(&app, |cfg| {
         // Remove duplicate if already present, push to front
-        cfg.last_opened_roots.retain(|r| r != &trimmed);
-        cfg.last_opened_roots.insert(0, trimmed.clone());
+        cfg.last_opened_roots
+            .retain(|r| r != &canonical_str && r != &trimmed);
+        cfg.last_opened_roots.insert(0, canonical_str);
         // Cap at 25 entries
         if cfg.last_opened_roots.len() > 25 {
             cfg.last_opened_roots.truncate(25);
         }
-        updated = cfg.last_opened_roots.clone();
-    });
-
-    Ok(updated)
+        cfg.last_opened_roots.clone()
+    })
 }
 
 #[tauri::command(async)]
@@ -183,16 +195,22 @@ mod tests {
         let mut config = AppConfig::default();
         config.last_opened_roots.push("C:\\Manga\\OnePiece".into());
         config.window_preferences.close_to_tray = true;
-        config.custom_preferences.insert("zoom".into(), serde_json::json!(1.25));
+        config
+            .custom_preferences
+            .insert("zoom".into(), serde_json::json!(1.25));
 
         let json = serde_json::to_string(&config).expect("Must serialize to JSON");
         assert!(json.contains("\"closeToTray\":true"));
         assert!(json.contains("\"lastOpenedRoots\":[\"C:\\\\Manga\\\\OnePiece\"]"));
 
-        let deserialized: AppConfig = serde_json::from_str(&json).expect("Must deserialize from JSON");
+        let deserialized: AppConfig =
+            serde_json::from_str(&json).expect("Must deserialize from JSON");
         assert_eq!(deserialized.last_opened_roots, vec!["C:\\Manga\\OnePiece"]);
         assert!(deserialized.window_preferences.close_to_tray);
-        assert_eq!(deserialized.custom_preferences.get("zoom"), Some(&serde_json::json!(1.25)));
+        assert_eq!(
+            deserialized.custom_preferences.get("zoom"),
+            Some(&serde_json::json!(1.25))
+        );
     }
 
     #[test]
@@ -207,7 +225,10 @@ mod tests {
         let partial_config: AppConfig =
             serde_json::from_str(partial_json).expect("Must parse partial JSON");
         assert_eq!(partial_config.last_opened_roots, vec!["D:/Manga/Series"]);
-        assert_eq!(partial_config.window_preferences, WindowPreferences::default());
+        assert_eq!(
+            partial_config.window_preferences,
+            WindowPreferences::default()
+        );
         assert!(partial_config.custom_preferences.is_empty());
 
         // 3. Backward-compatibility: old JSON containing retired fields (minimizeToTray, highDpiScaling)

@@ -1,4 +1,4 @@
-import { uniqueSlug, normalizePath } from '../paths';
+import { uniqueSlug, normalizePath, normalizeRelativePath } from '../paths';
 import { type Directory, type Page, type Chapter, type Manga } from '../model';
 import { matchingPosition, isRecord } from './validation';
 import {
@@ -138,6 +138,16 @@ export interface ScanOptions {
   update?: (state: ScanState) => void;
 }
 
+export interface PrepareChapterOptions {
+  signal?: AbortSignal;
+  update?: (state: ScanState) => void;
+}
+
+export interface ChapterPreview {
+  name: string;
+  pageCount: number;
+}
+
 function alive(signal?: AbortSignal) {
   signal?.throwIfAborted();
 }
@@ -168,6 +178,7 @@ export type Source = {
   localPath?: string; // Desktop only: absolute path to the folder on disk.
   files: Map<string, SourceFile>;
   issues: Issue[];
+  discoveredTitles?: import('../tauriBridge').LibraryDiscovery['titles'];
 };
 
 const readFile = (f: SourceFile) =>
@@ -485,6 +496,7 @@ export async function fromDesktopFolder(
       );
 
       if (discovery && discovery.titles.length > 0) {
+        source.discoveredTitles = discovery.titles;
         let discovered = 0;
         for (const title of discovery.titles) {
           for (const ch of title.chapters) {
@@ -547,7 +559,7 @@ export async function fromDesktopFolder(
   let discovered = 0;
   for (const entry of entries) {
     alive(options.signal);
-    const relPath = normalizePath(entry.relativePath);
+    const relPath = normalizeRelativePath(entry.relativePath);
     if (ignored(relPath) || !imageFile({ name: relPath, type: '' })) continue;
     try {
       assertPathLimits(relPath);
@@ -713,6 +725,36 @@ export function droppedSources(
 
 export async function splitSource(source: Source): Promise<Source[]> {
   assertSourceLimits(source);
+  if (source.discoveredTitles && source.discoveredTitles.length > 0) {
+    const splitTitles: Source[] = [];
+    for (const dt of source.discoveredTitles) {
+      const s: Source = {
+        title: dt.title,
+        localPath: dt.rootPath,
+        files: new Map(),
+        issues: [],
+      };
+      for (const ch of dt.chapters) {
+        for (const p of ch.pages) {
+          s.files.set(
+            p.relativePath,
+            new DesktopHandle(
+              p.name,
+              p.absolutePath,
+              p.size,
+              p.modified,
+              p.width,
+              p.height,
+            ) as unknown as FileSystemFileHandle,
+          );
+        }
+      }
+      splitTitles.push(s);
+      assertAtMost(splitTitles.length, limits.titles, 'Selected titles');
+    }
+    return splitTitles.length > 0 ? splitTitles : [source];
+  }
+
   const result = new Map<string, Source>();
   for (const [path, file] of source.files) {
     const parts = path.split('/');
@@ -746,6 +788,11 @@ export function chapterGroups(source: Source) {
     groups.set(name, (groups.get(name) || 0) + 1);
   }
   return groups;
+}
+
+export function chapterPreviews(source: Source): ChapterPreview[] {
+  const groups = chapterGroups(source);
+  return Array.from(groups.entries(), ([name, pageCount]) => ({ name, pageCount }));
 }
 
 function chapterMatch(name: string, pages: Page[], old: Manga | undefined) {
@@ -789,74 +836,28 @@ export async function indexSource(
   // High-performance native Rust indexing on desktop
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
     alive(options.signal);
-    const dto = await desktopAPI.indexTitle(source.localPath, { sort, previous }, (progress) => {
-      alive(options.signal);
-      options.update?.({
-        phase: progress.phase as 'discover' | 'index',
-        done: progress.done,
-        total: progress.total,
-        title: progress.title,
-      });
-      if (progress.total > 0) {
-        desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
-      }
-    });
+    const confirmedTitle = source.title?.trim() || undefined;
+    const dto = await desktopAPI.indexTitle(
+      source.localPath,
+      { sort, previous, title: confirmedTitle, signal: options.signal },
+      (progress) => {
+        alive(options.signal);
+        options.update?.({
+          phase: progress.phase as 'discover' | 'index',
+          done: progress.done,
+          total: progress.total,
+          title: confirmedTitle || progress.title,
+        });
+        if (progress.total > 0) {
+          desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
+        }
+      },
+    );
     alive(options.signal);
 
     const m: Manga = {
       id: dto.id,
-      title: dto.title,
-      slug: dto.slug,
-      localPath: dto.localPath,
-      lastChapter: dto.lastChapter,
-      addedAt: dto.addedAt,
-      updatedAt: dto.updatedAt,
-      revision: dto.revision,
-      sort: dto.sort as 'natural' | 'name' | 'reverse',
-      chapters: dto.chapters.map((c) => ({
-        name: c.name,
-        read: c.read,
-        position: c.position,
-        bookmarks: c.bookmarks,
-        pages: c.pages.map((p) => ({
-          name: p.name,
-          path: p.path,
-          width: p.width,
-          height: p.height,
-          size: p.size,
-          modified: p.modified,
-          dimensionsPending: p.dimensionsPending,
-        })),
-      })),
-    };
-
-    return {
-      m,
-      issues: [...source.issues, ...dto.issues],
-      reused: dto.reused,
-    };
-  }
-
-  // High-performance native Rust indexing on desktop
-  if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
-    alive(options.signal);
-    const dto = await desktopAPI.indexTitle(source.localPath, { sort, previous }, (progress) => {
-      alive(options.signal);
-      options.update?.({
-        phase: progress.phase as 'discover' | 'index',
-        done: progress.done,
-        total: progress.total,
-        title: progress.title,
-      });
-      if (progress.total > 0) {
-        desktopAPI.setProgressBar(Math.min(1, Math.max(0, progress.done / progress.total)));
-      }
-    });
-    alive(options.signal);
-
-    const m: Manga = {
-      id: dto.id,
-      title: dto.title,
+      title: confirmedTitle || dto.title,
       slug: dto.slug,
       localPath: dto.localPath,
       lastChapter: dto.lastChapter,
@@ -1136,11 +1137,7 @@ export async function indexSource(
   return { m, issues, reused };
 }
 
-export async function prepareChapter(
-  m: Manga,
-  index: number,
-  options: { signal?: AbortSignal; update?: (state: ScanState) => void } = {},
-) {
+export async function prepareChapter(m: Manga, index: number, options: PrepareChapterOptions = {}) {
   const chapter = m.chapters[index];
   if (!chapter) return [];
   const database = typeof indexedDB !== 'undefined' ? await db : undefined;
@@ -1180,7 +1177,7 @@ export async function prepareChapter(
       absPaths.push(absPath);
     }
     try {
-      const headers = await desktopAPI.prepareChapterHeaders(absPaths);
+      const headers = await desktopAPI.prepareChapterHeaders(absPaths, m.id);
       for (const h of headers) {
         const page = pathMap.get(h.path);
         if (page && h.width > 0 && h.height > 0) {

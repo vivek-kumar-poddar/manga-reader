@@ -15,14 +15,16 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
-      - name: Cargo Clippy (-D warnings)
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
-      - name: Cargo Test
-        run: cargo test --manifest-path src-tauri/Cargo.toml
+          components: clippy, rustfmt
+      - name: Cargo Format Check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+      - name: Cargo Clippy (--locked -D warnings)
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings
+      - name: Cargo Test (--locked)
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
 
   frontend:
-    name: Frontend Validation & Build
+    name: Frontend Validation & Dual Build
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,10 +37,12 @@ jobs:
         run: npm ci
       - name: Check Formatting
         run: npm run format:check
-      - name: TypeScript Typecheck
+      - name: TypeScript Typecheck (Web & Desktop)
         run: npm run typecheck
-      - name: Playwright Unit Tests
+      - name: Playwright Validation & Acceptance Tests (Migration, Recovery, Import & Reader)
         run: npm run test:validation
-      - name: Production Build
+      - name: Production Web Build
         run: npm run build
+      - name: Production Desktop Build
+        run: npm run build:desktop
 

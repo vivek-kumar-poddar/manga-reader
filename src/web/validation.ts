@@ -28,13 +28,48 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * - Cannot contain backslashes, '.', or '..' segments.
  * - Cannot contain null bytes or control characters.
  */
+const RESERVED_DOS_NAMES = new Set([
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9',
+]);
+
 export function validateRelativePath(path: unknown): string {
   if (typeof path !== 'string' || !path.trim()) {
     throw new ValidationError('Path must be a non-empty string.');
   }
+  if (path.startsWith(' ') || path.endsWith(' ')) {
+    throw new ValidationError(`Path cannot start or end with whitespace: "${path}"`);
+  }
   const trimmed = path.trim();
+  // Reject colons (Windows drive letters e.g. C:, alternate data streams e.g. :stream)
+  if (trimmed.includes(':')) {
+    throw new ValidationError(`Path cannot contain drive prefixes or colons: "${trimmed}"`);
+  }
   if (trimmed.startsWith('/') || trimmed.endsWith('/')) {
     throw new ValidationError(`Path cannot start or end with a slash: "${trimmed}"`);
+  }
+  if (trimmed.startsWith('//')) {
+    throw new ValidationError(`Path cannot start with UNC prefix: "${trimmed}"`);
   }
   if (trimmed.includes('\\')) {
     throw new ValidationError(`Path must use forward slashes only: "${trimmed}"`);
@@ -47,6 +82,13 @@ export function validateRelativePath(path: unknown): string {
   for (const seg of segments) {
     if (!seg || seg === '.' || seg === '..') {
       throw new ValidationError(`Path contains invalid traversal segment: "${trimmed}"`);
+    }
+    if (seg.endsWith(' ') || seg.endsWith('.')) {
+      throw new ValidationError(`Path segment cannot end with a space or dot: "${seg}"`);
+    }
+    const stem = seg.split('.')[0].toLowerCase();
+    if (RESERVED_DOS_NAMES.has(stem)) {
+      throw new ValidationError(`Path segment uses reserved device name: "${seg}"`);
     }
   }
   return trimmed;
@@ -158,17 +200,23 @@ export function parsePage(value: unknown, seenPaths: Set<string>): Page {
   }
   seenPaths.add(path);
 
+  const isPending = value.dimensionsPending === true;
+  const isWidthPending = isPending && value.width === 0;
+  const isHeightPending = isPending && value.height === 0;
+
   if (
     typeof value.width !== 'number' ||
     !Number.isInteger(value.width) ||
     typeof value.height !== 'number' ||
     !Number.isInteger(value.height) ||
-    value.width <= 0 ||
-    value.height <= 0
+    (value.width <= 0 && !isWidthPending) ||
+    (value.height <= 0 && !isHeightPending)
   ) {
     throw new ValidationError('Page dimensions must be positive integer pixels.');
   }
-  assertImageDimensions(value.width, value.height);
+  if (value.width > 0 && value.height > 0) {
+    assertImageDimensions(value.width, value.height);
+  }
 
   let size: number | undefined;
   if (value.size !== undefined) {
@@ -255,7 +303,10 @@ export function parseChapter(value: unknown, chapterIndex: number, oldChapter?: 
     }
   }
 
+  const id = typeof value.id === 'string' && value.id.trim() ? value.id.trim() : undefined;
+
   return {
+    ...(id ? { id } : {}),
     name: value.name.trim(),
     read: value.read === true,
     pages,
@@ -320,6 +371,11 @@ export function parseManga(
       ? value.sort
       : undefined;
 
+  const revision =
+    typeof value.revision === 'number' && Number.isFinite(value.revision) && value.revision >= 0
+      ? value.revision
+      : 1;
+
   const title = value.title.trim();
   const slug =
     typeof value.slug === 'string' && value.slug.trim() ? value.slug.trim() : folderSlug(title);
@@ -347,6 +403,7 @@ export function parseManga(
     lastChapter,
     addedAt,
     updatedAt,
+    revision,
     ...(sort ? { sort } : {}),
     handle,
     localPath,
@@ -411,6 +468,11 @@ export function parseSummary(
       ? value.updatedAt
       : now;
 
+  const revision =
+    typeof value.revision === 'number' && Number.isFinite(value.revision) && value.revision >= 0
+      ? value.revision
+      : undefined;
+
   const localPath =
     typeof value.localPath === 'string' && value.localPath.trim()
       ? value.localPath.trim()
@@ -438,6 +500,7 @@ export function parseSummary(
     indexedAt,
     addedAt,
     updatedAt,
+    ...(revision !== undefined ? { revision } : {}),
     ...(localPath ? { localPath } : {}),
     ...(handle ? { handle } : {}),
     ...(sort ? { sort } : {}),

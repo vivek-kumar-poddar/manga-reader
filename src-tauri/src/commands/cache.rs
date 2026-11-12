@@ -1,6 +1,7 @@
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 const MAX_THUMBNAIL_BYTES: usize = 10 * 1024 * 1024; // 10 MiB safety cap
 
@@ -39,31 +40,25 @@ pub fn percent_decode(input: &str) -> String {
     String::from_utf8(bytes).unwrap_or_else(|_| input.to_string())
 }
 
-/// Sanitizes thumbnail ID to prevent path traversal attacks and collisions.
-/// Alphanumeric, hyphen, and underscore characters up to 64 bytes are kept as-is.
-/// Any string with special characters or exceeding 64 bytes is hashed with SHA-256.
+/// Sanitizes thumbnail ID to prevent path traversal attacks, namespace collisions,
+/// and Windows reserved device name collisions (e.g. CON, PRN, AUX, NUL).
+/// Always hashes with an explicit "thumb_v1:" domain separator and "t_" prefix.
 pub fn sanitize_id(id: &str) -> String {
     if id.is_empty() {
         return String::new();
     }
-    if id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return id.to_string();
-    }
-
     let mut hasher = Sha256::new();
+    hasher.update(b"thumb_v1:");
     hasher.update(id.as_bytes());
-    format!("{:x}", hasher.finalize())
+    format!("t_{:x}", hasher.finalize())
 }
 
-/// Generates a collision-resistant SHA-256 hash for variant cache keys.
+/// Generates a collision-resistant SHA-256 hash for variant cache keys with an explicit namespace.
 pub fn hash_key(key: &str) -> String {
     let mut hasher = Sha256::new();
+    hasher.update(b"variant_v1:");
     hasher.update(key.as_bytes());
-    format!("{:x}", hasher.finalize())
+    format!("v_{:x}", hasher.finalize())
 }
 
 pub fn get_thumbnail_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> {
@@ -126,11 +121,21 @@ pub async fn save_thumbnail(
                 .unwrap_or("")
                 .to_string();
             let bytes = if let Some(arr) = json.get("bytes").and_then(|v| v.as_array()) {
-                arr.iter()
-                    .filter_map(|n| n.as_u64().map(|b| b as u8))
-                    .collect()
+                let mut byte_vec = Vec::with_capacity(arr.len());
+                for (idx, item) in arr.iter().enumerate() {
+                    let val = item.as_u64().ok_or_else(|| {
+                        format!("Invalid byte entry at index {idx}: expected unsigned integer")
+                    })?;
+                    if val > 255 {
+                        return Err(format!(
+                            "Byte value {val} at index {idx} exceeds 255 (valid byte range 0..=255)"
+                        ));
+                    }
+                    byte_vec.push(val as u8);
+                }
+                byte_vec
             } else {
-                return Err("expected raw body or json bytes array".into());
+                return Err("Expected raw body or JSON 'bytes' array".into());
             };
             (id, bytes)
         }
@@ -148,19 +153,22 @@ pub async fn save_thumbnail(
     }
 
     let path = get_thumbnail_path(&app, &id)?;
-    tauri::async_runtime::spawn_blocking(move || crate::commands::fs::write_atomic(&path, &bytes))
-        .await
-        .map_err(|e| format!("Failed to spawn blocking write: {e}"))?
-        .map_err(|e| format!("Failed to write thumbnail to disk: {e}"))?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        crate::commands::fs::write_atomic(&path, &bytes).map_err(|e| format!("{e}"))?;
+        if !path.exists() {
+            return Err("Failed to verify thumbnail file existence on disk".to_string());
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Failed to spawn blocking write: {e}"))?
+    .map_err(|e| format!("Failed to write thumbnail to disk: {e}"))?;
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn read_thumbnail(
-    app: AppHandle,
-    id: String,
-) -> Result<tauri::ipc::Response, String> {
+pub async fn read_thumbnail(app: AppHandle, id: String) -> Result<tauri::ipc::Response, String> {
     let path = get_thumbnail_path(&app, &id)?;
     if !path.exists() || !path.is_file() {
         return Ok(tauri::ipc::Response::new(Vec::new()));
@@ -174,10 +182,7 @@ pub async fn read_thumbnail(
 }
 
 #[tauri::command]
-pub async fn get_thumbnail_url(
-    app: AppHandle,
-    id: String,
-) -> Result<Option<String>, String> {
+pub async fn get_thumbnail_url(app: AppHandle, id: String) -> Result<Option<String>, String> {
     let path = get_thumbnail_path(&app, &id)?;
     if path.exists() && path.is_file() {
         Ok(Some(crate::protocol::path_to_mangaimg_url(&path)))
@@ -213,6 +218,84 @@ pub async fn clear_thumbnails(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct StorageStats {
+    pub db_bytes: u64,
+    pub cache_bytes: u64,
+    pub total_bytes: u64,
+}
+
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0;
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            if let Ok(metadata) = entry.metadata() {
+                if metadata.is_dir() {
+                    total += dir_size(&entry.path());
+                } else {
+                    total += metadata.len();
+                }
+            }
+        }
+    }
+    total
+}
+
+#[tauri::command]
+pub async fn get_storage_stats(app: AppHandle) -> Result<StorageStats, String> {
+    let mut db_bytes = 0u64;
+    if let Ok(data_dir) = app.path().app_data_dir() {
+        for file_name in &["library.db", "library.db-wal", "library.db-shm"] {
+            let p = data_dir.join(file_name);
+            if let Ok(meta) = std::fs::metadata(&p) {
+                db_bytes += meta.len();
+            }
+        }
+    }
+
+    let mut cache_bytes = 0u64;
+    if let Ok(cache_dir) = app.path().app_cache_dir() {
+        cache_bytes += dir_size(&cache_dir.join("thumbnails"));
+        cache_bytes += dir_size(&cache_dir.join("variants"));
+    }
+
+    let total_bytes = db_bytes + cache_bytes;
+    Ok(StorageStats {
+        db_bytes,
+        cache_bytes,
+        total_bytes,
+    })
+}
+
+#[tauri::command]
+pub async fn save_file_dialog(
+    app: AppHandle,
+    default_name: String,
+    content: String,
+) -> Result<bool, String> {
+    let app_clone = app.clone();
+    let name_clone = default_name.clone();
+    let path_opt = tokio::task::spawn_blocking(move || {
+        let mut builder = app_clone.dialog().file();
+        if !name_clone.is_empty() {
+            builder = builder.set_file_name(&name_clone);
+        }
+        builder.blocking_save_file()
+    })
+    .await
+    .map_err(|e| format!("Dialog task join error: {e}"))?;
+
+    if let Some(path) = path_opt {
+        let path_str = path.to_string();
+        tokio::fs::write(&path_str, content.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to write file to {path_str}: {e}"))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -228,46 +311,58 @@ mod tests {
 
     #[test]
     fn test_sanitize_id() {
-        assert_eq!(sanitize_id("manga-123_abc"), "manga-123_abc");
-        assert_eq!(sanitize_id("simple"), "simple");
+        let safe1 = sanitize_id("manga-123_abc");
+        assert!(safe1.starts_with("t_"));
+        assert_eq!(safe1.len(), 66);
 
-        // Traversal attempts must NOT stay as ../
+        // Deterministic hashing
+        assert_eq!(safe1, sanitize_id("manga-123_abc"));
+
+        // Windows reserved device names cannot form raw filename
+        let con_safe = sanitize_id("con");
+        assert!(con_safe.starts_with("t_"));
+        assert_ne!(con_safe, "con");
+        assert_eq!(con_safe.len(), 66);
+
+        let aux_safe = sanitize_id("aux");
+        assert!(aux_safe.starts_with("t_"));
+        assert_ne!(aux_safe, "aux");
+
+        // Traversal attempts cannot escape or contain slashes
         let traversal = sanitize_id("../../etc/passwd");
         assert!(!traversal.contains(".."));
         assert!(!traversal.contains('/'));
         assert!(!traversal.contains('\\'));
-        assert_eq!(traversal.len(), 64);
+        assert_eq!(traversal.len(), 66);
 
-        // Special characters get hashed with SHA-256
-        let special = sanitize_id("manga:vol1?foo=bar");
-        assert!(!special.contains(':'));
-        assert!(!special.contains('?'));
-        assert!(!special.contains('='));
-        assert_eq!(special.len(), 64);
+        // Different IDs produce different hashes
+        assert_ne!(sanitize_id("manga-1"), sanitize_id("manga-2"));
 
-        // Long string exceeding 64 characters gets hashed without truncation collision
-        let long_id_1 = "a".repeat(150);
-        let long_id_2 = format!("{}b", "a".repeat(149));
-        let hash_id_1 = sanitize_id(&long_id_1);
-        let hash_id_2 = sanitize_id(&long_id_2);
-        assert_ne!(hash_id_1, hash_id_2);
-        assert_eq!(hash_id_1.len(), 64);
-
-        // Empty string
-        let empty = sanitize_id("");
-        assert!(empty.is_empty());
+        // Empty string returns empty
+        assert_eq!(sanitize_id(""), "");
     }
 
     #[test]
     fn test_hash_key() {
         let hash1 = hash_key("path/to/image.png");
         let hash2 = hash_key("path/to/image.png");
-        assert_eq!(hash1, hash2, "Identical inputs must produce identical hashes");
+        assert_eq!(
+            hash1, hash2,
+            "Identical inputs must produce identical hashes"
+        );
+        assert!(hash1.starts_with("v_"));
 
         let hash3 = hash_key("path/to/image2.png");
-        assert_ne!(hash1, hash3, "Different inputs must produce different hashes");
+        assert_ne!(
+            hash1, hash3,
+            "Different inputs must produce different hashes"
+        );
 
-        assert_eq!(hash1.len(), 64, "Hash key must be 64-hex-digit SHA-256 string");
-        assert!(hash1.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            hash1.len(),
+            66,
+            "Hash key must be 66-char prefixed SHA-256 string"
+        );
+        assert!(hash1[2..].chars().all(|c| c.is_ascii_hexdigit()));
     }
 }

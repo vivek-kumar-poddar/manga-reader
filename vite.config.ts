@@ -3,24 +3,41 @@ import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const packageJson = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8'));
 
 const isTauri = Boolean(process.env.TAURI_ENV_PLATFORM);
 const isDesktop = process.env.VITE_TARGET === 'desktop' || isTauri;
 const host = process.env.TAURI_DEV_HOST;
+
+function platformEntryPlugin(desktop: boolean): Plugin {
+  return {
+    name: 'platform-entry',
+    transformIndexHtml(html) {
+      const entry = desktop ? '/src/main.desktop.tsx' : '/src/main.web.tsx';
+      return html.replace('/src/main.tsx', entry);
+    },
+  };
+}
 
 export default defineConfig({
   base: './',
   clearScreen: false,
   define: {
     __DESKTOP_BUILD__: JSON.stringify(isDesktop),
+    __APP_VERSION__: JSON.stringify(packageJson.version),
   },
   resolve: {
     alias: isDesktop
       ? [
+          {
+            find: /^\.\/data$/,
+            replacement: path.resolve(__dirname, 'src/data.desktop.ts'),
+          },
           {
             find: /^\.\/storage$/,
             replacement: path.resolve(__dirname, 'src/desktop/storage.ts'),
@@ -34,7 +51,12 @@ export default defineConfig({
             replacement: path.resolve(__dirname, 'src/desktop/validation.ts'),
           },
         ]
-      : [],
+      : [
+          {
+            find: /^\.\/data$/,
+            replacement: path.resolve(__dirname, 'src/data.web.ts'),
+          },
+        ],
   },
   server: {
     port: 5173,
@@ -80,6 +102,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    platformEntryPlugin(isDesktop),
     react(),
     tailwind(),
     process.env.ANALYZE

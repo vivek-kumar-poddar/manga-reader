@@ -5,12 +5,15 @@ import { X, Folder, FileImage } from 'lucide-react';
 import {
   warmSources,
   chapterGroups,
+  chapterPreviews,
   splitSource,
   getManga,
   type Source,
   type Summary,
   type Manga,
+  type ChapterPreview,
 } from './data';
+import { desktopAPI } from './tauriBridge';
 export function Modal({
   open,
   onClose,
@@ -278,6 +281,19 @@ export function ImportDialog({
               } catch {
                 /* Compare metadata below when handle identity is unavailable. */
               }
+            } else if (source.localPath && candidate.localPath) {
+              try {
+                const same = desktopAPI.isSamePath
+                  ? await desktopAPI.isSamePath(source.localPath, candidate.localPath)
+                  : source.localPath.toLowerCase().replace(/[\\/]+$/, '') ===
+                    candidate.localPath.toLowerCase().replace(/[\\/]+$/, '');
+                if (same) {
+                  duplicate = candidate;
+                  break;
+                }
+              } catch {
+                /* Ignore and fall through */
+              }
             }
           }
           list.push({
@@ -386,7 +402,7 @@ export function ImportDialog({
         <p role="alert">{error}</p>
       ) : (
         plans.map((plan, i) => {
-          const groups = [...chapterGroups(plan.source)];
+          const groups: ChapterPreview[] = chapterPreviews(plan.source);
           return (
             <section className="import-preview" key={i}>
               <label>
@@ -454,10 +470,10 @@ export function ImportDialog({
                   grouping
                 </summary>
                 <ul>
-                  {groups.map(([name, count]) => (
+                  {groups.map(({ name, pageCount }) => (
                     <li key={name}>
                       {name}
-                      <span>{count} pages</span>
+                      <span>{pageCount} pages</span>
                     </li>
                   ))}
                 </ul>

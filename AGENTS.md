@@ -12,3 +12,5 @@ Applies to every coding agent/model working anywhere in this repository.
 - Update `docs/verification.md` with evidence; keep `migrate-to-rust.txt` concise.
 - Avoid unrelated rewrites. Preserve user data, public behavior, and existing
   safeguards. Run targeted verification before proceeding to the next step.
+- When making small changes that literally require just checking an if-else
+  condition or a for loop, do not write tests, run tests or make useless assumptions. Just edit the file.

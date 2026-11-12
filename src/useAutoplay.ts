@@ -93,10 +93,20 @@ export function useAutoplay({
       endHandled.current = true;
       actions.current.capture();
       void actions.current.flush().catch((e) => notify(errorMessage(e)));
+
+      const handleTransition = (promise: Promise<void>) => {
+        promise.catch((err) => {
+          setPlaying(false);
+          setEnded(true);
+          setBars({ top: true, bottom: true });
+          notify(errorMessage(err));
+        });
+      };
+
       const action = latest.current.s.endAction;
       if (action === 'next' && ci < manga.chapters.length - 1)
-        actions.current.goChapter(ci + 1, true);
-      else if (action === 'replay') actions.current.goChapter(ci, true);
+        handleTransition(actions.current.goChapter(ci + 1, true));
+      else if (action === 'replay') handleTransition(actions.current.goChapter(ci, true));
       else {
         setPlaying(false);
         setEnded(true);

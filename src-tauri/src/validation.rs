@@ -41,6 +41,8 @@ pub struct ValidatedPosition {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ValidatedChapter {
+    #[serde(default)]
+    pub id: Option<String>,
     pub name: String,
     pub pages: Vec<ValidatedPage>,
     #[serde(default)]
@@ -130,7 +132,17 @@ pub struct BackupPayload {
     pub settings: ValidatedSettings,
 }
 
+pub const RESERVED_DOS_NAMES: &[&str] = &[
+    "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+    "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+];
+
 pub fn validate_relative_path(path: &str) -> Result<String, String> {
+    if path.starts_with(' ') || path.ends_with(' ') {
+        return Err(format!(
+            "Path cannot start or end with whitespace: \"{path}\""
+        ));
+    }
     let trimmed = path.trim();
     if trimmed.is_empty() {
         return Err("Path must be a non-empty string.".to_string());
@@ -140,11 +152,23 @@ pub fn validate_relative_path(path: &str) -> Result<String, String> {
             "Relative path length (characters) exceeds the limit of {LIMIT_PATH_CHARS}. Use a smaller selection."
         ));
     }
+    // Reject drive prefixes, alternate data streams, and URI schemes
+    if trimmed.contains(':') {
+        return Err(format!(
+            "Path contains invalid colon or drive/stream prefix: \"{trimmed}\""
+        ));
+    }
+    // Reject rooted paths, backslashes, and UNC/device syntax
     if trimmed.starts_with('/') || trimmed.ends_with('/') {
-        return Err(format!("Path cannot start or end with a slash: \"{trimmed}\""));
+        return Err(format!(
+            "Path cannot start or end with a slash: \"{trimmed}\""
+        ));
     }
     if trimmed.contains('\\') {
         return Err(format!("Path must use forward slashes only: \"{trimmed}\""));
+    }
+    if trimmed.starts_with("//") {
+        return Err(format!("Path cannot start with UNC prefix: \"{trimmed}\""));
     }
     if trimmed.contains('\0') {
         return Err("Path contains invalid null byte.".to_string());
@@ -161,7 +185,18 @@ pub fn validate_relative_path(path: &str) -> Result<String, String> {
     }
     for seg in &segments {
         if seg.is_empty() || *seg == "." || *seg == ".." {
-            return Err(format!("Path contains invalid traversal segment: \"{trimmed}\""));
+            return Err(format!(
+                "Path contains invalid traversal segment: \"{trimmed}\""
+            ));
+        }
+        if seg.ends_with(' ') || seg.ends_with('.') {
+            return Err(format!(
+                "Path segment cannot end with a space or dot: \"{seg}\""
+            ));
+        }
+        let stem = seg.split('.').next().unwrap_or("").to_lowercase();
+        if RESERVED_DOS_NAMES.contains(&stem.as_str()) {
+            return Err(format!("Path segment uses reserved device name: \"{seg}\""));
         }
     }
     Ok(trimmed.to_string())
@@ -178,7 +213,10 @@ pub fn assert_image_dimensions(width: u32, height: u32) -> Result<(), String> {
     }
 }
 
-pub fn validate_page(page: &mut ValidatedPage, seen_paths: &mut HashSet<String>) -> Result<(), String> {
+pub fn validate_page(
+    page: &mut ValidatedPage,
+    seen_paths: &mut HashSet<String>,
+) -> Result<(), String> {
     let trimmed_name = page.name.trim();
     if trimmed_name.is_empty() {
         return Err("Page name must be a non-empty string.".to_string());
@@ -187,12 +225,18 @@ pub fn validate_page(page: &mut ValidatedPage, seen_paths: &mut HashSet<String>)
 
     let valid_path = validate_relative_path(&page.path)?;
     if seen_paths.contains(&valid_path) {
-        return Err(format!("Duplicate page path within chapter: \"{valid_path}\""));
+        return Err(format!(
+            "Duplicate page path within chapter: \"{valid_path}\""
+        ));
     }
     seen_paths.insert(valid_path.clone());
     page.path = valid_path;
 
-    assert_image_dimensions(page.width, page.height)?;
+    let is_pending_zero =
+        page.dimensions_pending == Some(true) && page.width == 0 && page.height == 0;
+    if !is_pending_zero {
+        assert_image_dimensions(page.width, page.height)?;
+    }
 
     if let Some(m) = page.modified {
         if !m.is_finite() || m < 0.0 {
@@ -203,10 +247,7 @@ pub fn validate_page(page: &mut ValidatedPage, seen_paths: &mut HashSet<String>)
     Ok(())
 }
 
-pub fn validate_position(
-    pos: &mut ValidatedPosition,
-    pages_count: usize,
-) -> Result<(), String> {
+pub fn validate_position(pos: &mut ValidatedPosition, pages_count: usize) -> Result<(), String> {
     if pages_count == 0 {
         return Err("Position cannot be resolved against an empty chapter.".to_string());
     }
@@ -239,18 +280,28 @@ pub fn validate_chapter(
 ) -> Result<usize, String> {
     let trimmed_name = chapter.name.trim();
     if trimmed_name.is_empty() {
-        return Err(format!("Chapter {} name must be a non-empty string.", chapter_index + 1));
+        return Err(format!(
+            "Chapter {} name must be a non-empty string.",
+            chapter_index + 1
+        ));
     }
     chapter.name = trimmed_name.to_string();
 
     if chapter.pages.is_empty() {
-        return Err(format!("Chapter \"{}\" must contain at least one page.", chapter.name));
+        return Err(format!(
+            "Chapter \"{}\" must contain at least one page.",
+            chapter.name
+        ));
     }
 
     let mut seen_paths = HashSet::new();
     for (idx, page) in chapter.pages.iter_mut().enumerate() {
         validate_page(page, &mut seen_paths).map_err(|e| {
-            format!("Chapter \"{}\" page {} is invalid: {e}", chapter.name, idx + 1)
+            format!(
+                "Chapter \"{}\" page {} is invalid: {e}",
+                chapter.name,
+                idx + 1
+            )
         })?;
     }
 
@@ -292,7 +343,9 @@ pub fn validate_manga(
         return Err("Manga ID must be a non-empty string.".to_string());
     }
     if !seen_ids.insert(trimmed_id.to_string()) {
-        return Err(format!("Duplicate manga ID found in backup: \"{trimmed_id}\""));
+        return Err(format!(
+            "Duplicate manga ID found in backup: \"{trimmed_id}\""
+        ));
     }
     manga.id = trimmed_id.to_string();
 
@@ -303,7 +356,10 @@ pub fn validate_manga(
     manga.title = trimmed_title.to_string();
 
     if manga.chapters.is_empty() {
-        return Err(format!("Manga \"{}\" must contain at least one chapter.", manga.title));
+        return Err(format!(
+            "Manga \"{}\" must contain at least one chapter.",
+            manga.title
+        ));
     }
     if manga.chapters.len() > LIMIT_CHAPTERS_PER_TITLE {
         return Err(format!(
@@ -331,8 +387,18 @@ pub fn validate_manga(
         .unwrap_or_default()
         .as_millis() as f64;
 
-    manga.added_at = Some(manga.added_at.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(now));
-    manga.updated_at = Some(manga.updated_at.filter(|t| t.is_finite() && *t > 0.0).unwrap_or(now));
+    manga.added_at = Some(
+        manga
+            .added_at
+            .filter(|t| t.is_finite() && *t > 0.0)
+            .unwrap_or(now),
+    );
+    manga.updated_at = Some(
+        manga
+            .updated_at
+            .filter(|t| t.is_finite() && *t > 0.0)
+            .unwrap_or(now),
+    );
 
     if let Some(sort) = &manga.sort {
         if sort != "name" && sort != "reverse" && sort != "natural" {
@@ -382,9 +448,9 @@ pub fn normalize_settings(settings: &ValidatedSettings) -> serde_json::Value {
     let advance = settings.advance.unwrap_or(true);
     let reduced = settings.reduced.unwrap_or(false);
     let low_quality = settings.low_quality.unwrap_or(false);
-    let custom_seconds = settings.custom_seconds.unwrap_or_else(|| {
-        ![2.0, 3.0, 4.0, 5.0].contains(&seconds)
-    });
+    let custom_seconds = settings
+        .custom_seconds
+        .unwrap_or_else(|| ![2.0, 3.0, 4.0, 5.0].contains(&seconds));
     let auto_hide_bars = settings.auto_hide_bars.unwrap_or(true);
     let resume_delay = settings
         .resume_delay
@@ -401,7 +467,13 @@ pub fn normalize_settings(settings: &ValidatedSettings) -> serde_json::Value {
         Some("stop") => "stop",
         Some("replay") => "replay",
         Some("next") => "next",
-        _ => if !advance { "stop" } else { "next" },
+        _ => {
+            if !advance {
+                "stop"
+            } else {
+                "next"
+            }
+        }
     };
     let font_size_title = settings
         .font_size_title
@@ -493,6 +565,7 @@ mod tests {
     #[test]
     fn test_validate_relative_path_traversal() {
         assert!(validate_relative_path("ch1/01.jpg").is_ok());
+        assert!(validate_relative_path("ch1/chapter..jpg").is_ok());
         assert!(validate_relative_path("../ch1/01.jpg").is_err());
         assert!(validate_relative_path("/ch1/01.jpg").is_err());
         assert!(validate_relative_path("ch1/01.jpg/").is_err());
@@ -500,6 +573,16 @@ mod tests {
         assert!(validate_relative_path("ch1/./01.jpg").is_err());
         assert!(validate_relative_path("ch1/../01.jpg").is_err());
         assert!(validate_relative_path("ch1/\001.jpg").is_err());
+        // Windows prefix and stream security
+        assert!(validate_relative_path("C:/ch1/01.jpg").is_err());
+        assert!(validate_relative_path("ch1/01.jpg:stream").is_err());
+        assert!(validate_relative_path("//server/share/01.jpg").is_err());
+        assert!(validate_relative_path("nul.jpg").is_err());
+        assert!(validate_relative_path("con").is_err());
+        assert!(validate_relative_path("ch1./01.jpg").is_err());
+        assert!(validate_relative_path("ch1/01.jpg.").is_err());
+        assert!(validate_relative_path("ch1/01.jpg ").is_err());
+        assert!(validate_relative_path(" ch1/01.jpg").is_err());
     }
 
     #[test]
@@ -603,5 +686,71 @@ mod tests {
         let err = validate_backup_json(json).unwrap_err();
         assert!(err.contains("Invalid backup version"));
     }
-}
 
+    #[test]
+    fn test_backup_preserves_all_supported_fields_and_pending_dimensions() {
+        let json = r#"{
+            "version": 2,
+            "manga": [
+                {
+                    "id": "title-fields",
+                    "title": "Title Fields",
+                    "sort": "natural",
+                    "revision": 7,
+                    "chapters": [
+                        {
+                            "id": "ch-id-1",
+                            "name": "Chapter 1",
+                            "pages": [
+                                { "name": "01.jpg", "path": "ch1/01.jpg", "width": 0, "height": 0, "dimensionsPending": true }
+                            ],
+                            "position": {
+                                "page": 0,
+                                "fraction": 0.5,
+                                "path": "ch1/01.jpg",
+                                "mangaBookmark": true,
+                                "timestamp": 1731234567890.0
+                            },
+                            "bookmarks": [
+                                {
+                                    "page": 0,
+                                    "fraction": 0.5,
+                                    "path": "ch1/01.jpg",
+                                    "mangaBookmark": true,
+                                    "timestamp": 1731234567890.0
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ],
+            "settings": {
+                "theme": "dark",
+                "fontSizeTitle": 24,
+                "fontSizeUi": 18,
+                "fontSizeButton": 16,
+                "confirmDelete": true,
+                "shelfSort": "progress"
+            }
+        }"#;
+
+        let payload = validate_backup_json(json).expect("Validation should pass");
+        assert_eq!(payload.manga[0].sort.as_deref(), Some("natural"));
+        assert_eq!(payload.manga[0].revision, Some(7));
+        assert_eq!(payload.manga[0].chapters[0].id.as_deref(), Some("ch-id-1"));
+        assert_eq!(
+            payload.manga[0].chapters[0].pages[0].dimensions_pending,
+            Some(true)
+        );
+        let pos = payload.manga[0].chapters[0].position.as_ref().unwrap();
+        assert_eq!(pos.manga_bookmark, Some(true));
+        assert_eq!(pos.timestamp, Some(1731234567890.0));
+
+        let norm = normalize_settings(&payload.settings);
+        assert_eq!(norm["fontSizeTitle"], 24);
+        assert_eq!(norm["fontSizeUi"], 18);
+        assert_eq!(norm["fontSizeButton"], 16);
+        assert_eq!(norm["confirmDelete"], true);
+        assert_eq!(norm["shelfSort"], "progress");
+    }
+}

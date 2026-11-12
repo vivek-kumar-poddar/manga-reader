@@ -1,7 +1,8 @@
 import { limits } from './limits';
 import { desktopAPI, isDesktop, type DesktopUpdateInfo } from './tauriBridge';
 
-export const APP_VERSION = '2.0.0';
+declare const __APP_VERSION__: string | undefined;
+export const APP_VERSION = typeof __APP_VERSION__ !== 'undefined' ? __APP_VERSION__ : '2.0.0';
 let registration: ServiceWorkerRegistration | undefined;
 let applying = false;
 let updateAvailable = false;

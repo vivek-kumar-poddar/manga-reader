@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use tauri::State;
@@ -89,6 +89,37 @@ impl DbState {
         .await
         .map_err(|e| DbError::Task(format!("Database write task failed: {e}")))?
     }
+
+    pub async fn get_local_path(&self, manga_id: &str) -> Option<String> {
+        let id = manga_id.to_string();
+        self.read(move |conn| {
+            let mut stmt = conn
+                .prepare_cached("SELECT local_path FROM manga WHERE id = ?1")
+                .map_err(|e| DbError::Sqlite(e.to_string()))?;
+            let res = stmt
+                .query_row([&id], |row| row.get::<_, Option<String>>(0))
+                .optional()
+                .map_err(|e| DbError::Sqlite(e.to_string()))?
+                .flatten();
+            Ok(res)
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
+    pub fn get_local_path_sync(&self, manga_id: &str) -> Option<String> {
+        let conn = self.reader.lock().ok()?;
+        let mut stmt = conn
+            .prepare_cached("SELECT local_path FROM manga WHERE id = ?1")
+            .ok()?;
+        let res: Option<String> = stmt
+            .query_row([manga_id], |row| row.get(0))
+            .optional()
+            .ok()
+            .flatten();
+        res
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -122,6 +153,8 @@ pub struct PositionRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChapterRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     pub name: String,
     pub pages: Vec<PageRecord>,
     pub read: bool,
@@ -129,6 +162,37 @@ pub struct ChapterRecord {
     pub position: Option<PositionRecord>,
     #[serde(default)]
     pub bookmarks: Option<Vec<PositionRecord>>,
+}
+
+/// Generates a stable chapter ID resilient to renames and reordering.
+pub fn derive_chapter_id(manga_id: &str, chapter: &ChapterRecord, chapter_idx: usize) -> String {
+    if let Some(ref id) = chapter.id {
+        let trimmed = id.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    if let Some(first_page) = chapter.pages.first() {
+        if let Some(parent) = std::path::Path::new(&first_page.path).parent() {
+            let parent_str = parent.to_string_lossy().replace('\\', "/");
+            if !parent_str.is_empty() && parent_str != "." {
+                return format!("{}:{}", manga_id, parent_str);
+            }
+        }
+        return format!("{}:p:{}", manga_id, first_page.path);
+    }
+    let slug: String = chapter
+        .name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("{}:{}:{}", manga_id, chapter_idx, slug.trim_matches('-'))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -216,11 +280,14 @@ impl From<crate::validation::ValidatedPosition> for PositionRecord {
 impl From<crate::validation::ValidatedChapter> for ChapterRecord {
     fn from(c: crate::validation::ValidatedChapter) -> Self {
         Self {
+            id: c.id,
             name: c.name,
             pages: c.pages.into_iter().map(PageRecord::from).collect(),
             read: c.read.unwrap_or(false),
             position: c.position.map(PositionRecord::from),
-            bookmarks: c.bookmarks.map(|bms| bms.into_iter().map(PositionRecord::from).collect()),
+            bookmarks: c
+                .bookmarks
+                .map(|bms| bms.into_iter().map(PositionRecord::from).collect()),
         }
     }
 }
@@ -263,7 +330,8 @@ pub fn run_migrations(conn: &Connection) -> DbResult<()> {
         .map_err(|e| DbError::Migration(format!("Failed to read user_version: {e}")))?;
 
     if current_version < 1 {
-        conn.execute_batch(
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
             r#"
             CREATE TABLE IF NOT EXISTS manga (
                 id TEXT PRIMARY KEY NOT NULL,
@@ -279,14 +347,16 @@ pub fn run_migrations(conn: &Connection) -> DbResult<()> {
 
             CREATE TABLE IF NOT EXISTS chapters (
                 manga_id TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
                 chapter_idx INTEGER NOT NULL,
                 name TEXT NOT NULL,
-                PRIMARY KEY (manga_id, chapter_idx),
+                PRIMARY KEY (manga_id, chapter_id),
                 FOREIGN KEY (manga_id) REFERENCES manga(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS pages (
                 manga_id TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
                 chapter_idx INTEGER NOT NULL,
                 idx INTEGER NOT NULL,
                 name TEXT NOT NULL,
@@ -295,32 +365,35 @@ pub fn run_migrations(conn: &Connection) -> DbResult<()> {
                 height INTEGER NOT NULL,
                 size INTEGER NOT NULL DEFAULT 0,
                 modified REAL NOT NULL DEFAULT 0,
-                PRIMARY KEY (manga_id, chapter_idx, idx),
-                FOREIGN KEY (manga_id, chapter_idx) REFERENCES chapters(manga_id, chapter_idx) ON DELETE CASCADE
+                dimensions_pending INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (manga_id, chapter_id, idx),
+                FOREIGN KEY (manga_id, chapter_id) REFERENCES chapters(manga_id, chapter_id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS progress (
                 manga_id TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
                 chapter_name TEXT NOT NULL,
                 read INTEGER NOT NULL DEFAULT 0,
                 page INTEGER,
                 path TEXT,
                 fraction REAL,
                 updated_at REAL NOT NULL DEFAULT 0,
-                PRIMARY KEY (manga_id, chapter_name),
-                FOREIGN KEY (manga_id) REFERENCES manga(id) ON DELETE CASCADE
+                PRIMARY KEY (manga_id, chapter_id),
+                FOREIGN KEY (manga_id, chapter_id) REFERENCES chapters(manga_id, chapter_id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS bookmarks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 manga_id TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
                 chapter_name TEXT NOT NULL,
                 page INTEGER NOT NULL DEFAULT 0,
                 path TEXT,
                 fraction REAL NOT NULL DEFAULT 0,
                 manga_bookmark INTEGER NOT NULL DEFAULT 0,
                 timestamp REAL NOT NULL DEFAULT 0,
-                FOREIGN KEY (manga_id) REFERENCES manga(id) ON DELETE CASCADE
+                FOREIGN KEY (manga_id, chapter_id) REFERENCES chapters(manga_id, chapter_id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS settings (
@@ -329,17 +402,50 @@ pub fn run_migrations(conn: &Connection) -> DbResult<()> {
             );
 
             CREATE INDEX IF NOT EXISTS idx_chapters_manga ON chapters(manga_id);
-            CREATE INDEX IF NOT EXISTS idx_pages_manga_chapter ON pages(manga_id, chapter_idx);
+            CREATE INDEX IF NOT EXISTS idx_chapters_manga_idx ON chapters(manga_id, chapter_idx);
+            CREATE INDEX IF NOT EXISTS idx_pages_manga_chapter ON pages(manga_id, chapter_id);
             CREATE INDEX IF NOT EXISTS idx_progress_manga ON progress(manga_id);
             CREATE INDEX IF NOT EXISTS idx_bookmarks_manga ON bookmarks(manga_id);
             CREATE INDEX IF NOT EXISTS idx_manga_updated ON manga(updated_at DESC);
             CREATE INDEX IF NOT EXISTS idx_manga_slug ON manga(slug);
+
+            PRAGMA user_version = 2;
             "#,
         )
-        .map_err(|e| DbError::Migration(format!("Migration to v1 failed: {e}")))?;
+        .map_err(|e| DbError::Migration(format!("Migration to v2 failed: {e}")))?;
 
-        conn.pragma_update(None, "user_version", 1)
-            .map_err(|e| DbError::Migration(format!("Failed to update user_version to 1: {e}")))?;
+        tx.commit()?;
+    } else if current_version == 1 {
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(
+            r#"
+            ALTER TABLE chapters ADD COLUMN chapter_id TEXT;
+            UPDATE chapters SET chapter_id = name WHERE chapter_id IS NULL OR chapter_id = '';
+
+            ALTER TABLE pages ADD COLUMN chapter_id TEXT;
+            ALTER TABLE pages ADD COLUMN dimensions_pending INTEGER NOT NULL DEFAULT 0;
+            UPDATE pages SET chapter_id = (
+                SELECT c.chapter_id FROM chapters c
+                WHERE c.manga_id = pages.manga_id AND c.chapter_idx = pages.chapter_idx
+                LIMIT 1
+            ) WHERE chapter_id IS NULL;
+            UPDATE pages SET chapter_id = 'ch_' || chapter_idx WHERE chapter_id IS NULL;
+
+            ALTER TABLE progress ADD COLUMN chapter_id TEXT;
+            UPDATE progress SET chapter_id = chapter_name WHERE chapter_id IS NULL;
+
+            ALTER TABLE bookmarks ADD COLUMN chapter_id TEXT;
+            UPDATE bookmarks SET chapter_id = chapter_name WHERE chapter_id IS NULL;
+
+            CREATE INDEX IF NOT EXISTS idx_chapters_manga_idx ON chapters(manga_id, chapter_idx);
+            CREATE INDEX IF NOT EXISTS idx_pages_manga_chapter ON pages(manga_id, chapter_id);
+
+            PRAGMA user_version = 2;
+            "#,
+        )
+        .map_err(|e| DbError::Migration(format!("Migration from v1 to v2 failed: {e}")))?;
+
+        tx.commit()?;
     }
 
     Ok(())
@@ -365,7 +471,10 @@ pub fn set_migrated(conn: &mut Connection, migrated: bool) -> DbResult<()> {
     Ok(())
 }
 
-pub fn import_legacy_library_tx(conn: &mut Connection, payload: &LegacyBackupPayload) -> DbResult<()> {
+pub fn import_legacy_library_tx(
+    conn: &mut Connection,
+    payload: &LegacyBackupPayload,
+) -> DbResult<()> {
     let tx = conn.transaction()?;
 
     for m in &payload.manga {
@@ -387,8 +496,13 @@ pub fn import_legacy_library_tx(conn: &mut Connection, payload: &LegacyBackupPay
     Ok(())
 }
 
+type ExistingPageTuple = (i64, String, String, i64, i64, i64, f64, i64);
+
 fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()> {
-    let slug = m.slug.clone().unwrap_or_else(|| m.title.to_lowercase().replace(' ', "-"));
+    let slug = m
+        .slug
+        .clone()
+        .unwrap_or_else(|| m.title.to_lowercase().replace(' ', "-"));
     let revision = m.revision.unwrap_or(1);
 
     // 1. Upsert manga record
@@ -419,48 +533,46 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
         ],
     )?;
 
-    // 2. Remove obsolete chapters beyond m.chapters.len() (cascades to pages)
-    tx.execute(
-        "DELETE FROM chapters WHERE manga_id = ?1 AND chapter_idx >= ?2",
-        params![m.id, m.chapters.len() as i64],
-    )?;
-
-    // 3. Diff and upsert chapters and pages
+    // 2. Diff and upsert chapters and pages using stable chapter_id
+    let mut current_chapter_ids = std::collections::HashSet::new();
     {
         let mut upsert_chapter_stmt = tx.prepare(
             r#"
-            INSERT INTO chapters (manga_id, chapter_idx, name)
-            VALUES (?1, ?2, ?3)
-            ON CONFLICT(manga_id, chapter_idx) DO UPDATE SET
+            INSERT INTO chapters (manga_id, chapter_id, chapter_idx, name)
+            VALUES (?1, ?2, ?3, ?4)
+            ON CONFLICT(manga_id, chapter_id) DO UPDATE SET
+                chapter_idx = excluded.chapter_idx,
                 name = excluded.name
             "#,
         )?;
 
         let mut select_pages_stmt = tx.prepare(
             r#"
-            SELECT idx, name, path, width, height, size, modified
+            SELECT idx, name, path, width, height, size, modified, dimensions_pending
             FROM pages
-            WHERE manga_id = ?1 AND chapter_idx = ?2
+            WHERE manga_id = ?1 AND chapter_id = ?2
             ORDER BY idx ASC
             "#,
         )?;
 
-        let mut delete_pages_stmt = tx.prepare(
-            "DELETE FROM pages WHERE manga_id = ?1 AND chapter_idx = ?2",
-        )?;
+        let mut delete_pages_stmt =
+            tx.prepare("DELETE FROM pages WHERE manga_id = ?1 AND chapter_id = ?2")?;
 
         let mut insert_page_stmt = tx.prepare(
             r#"
-            INSERT INTO pages (manga_id, chapter_idx, idx, name, path, width, height, size, modified)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            INSERT INTO pages (manga_id, chapter_id, chapter_idx, idx, name, path, width, height, size, modified, dimensions_pending)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
             "#,
         )?;
 
         for (c_idx, c) in m.chapters.iter().enumerate() {
-            upsert_chapter_stmt.execute(params![m.id, c_idx as i64, c.name])?;
+            let ch_id = derive_chapter_id(&m.id, c, c_idx);
+            current_chapter_ids.insert(ch_id.clone());
 
-            let existing_pages: Vec<(i64, String, String, i64, i64, i64, f64)> = select_pages_stmt
-                .query_map(params![m.id, c_idx as i64], |row| {
+            upsert_chapter_stmt.execute(params![m.id, ch_id, c_idx as i64, c.name])?;
+
+            let existing_pages: Vec<ExistingPageTuple> = select_pages_stmt
+                .query_map(params![m.id, ch_id], |row| {
                     Ok((
                         row.get(0)?,
                         row.get(1)?,
@@ -469,6 +581,7 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                         row.get(4)?,
                         row.get(5)?,
                         row.get(6)?,
+                        row.get::<_, Option<i64>>(7)?.unwrap_or(0),
                     ))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -476,6 +589,11 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
             let pages_identical = existing_pages.len() == c.pages.len()
                 && existing_pages.iter().enumerate().all(|(idx, existing)| {
                     let p = &c.pages[idx];
+                    let dim_pending = if p.dimensions_pending.unwrap_or(false) {
+                        1
+                    } else {
+                        0
+                    };
                     existing.0 == idx as i64
                         && existing.1 == p.name
                         && existing.2 == p.path
@@ -483,15 +601,22 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                         && existing.4 == p.height as i64
                         && existing.5 == p.size.unwrap_or(0) as i64
                         && (existing.6 - p.modified.unwrap_or(0.0)).abs() < 0.001
+                        && existing.7 == dim_pending
                 });
 
             if !pages_identical {
                 if !existing_pages.is_empty() {
-                    delete_pages_stmt.execute(params![m.id, c_idx as i64])?;
+                    delete_pages_stmt.execute(params![m.id, ch_id])?;
                 }
                 for (p_idx, p) in c.pages.iter().enumerate() {
+                    let dim_pending = if p.dimensions_pending.unwrap_or(false) {
+                        1
+                    } else {
+                        0
+                    };
                     insert_page_stmt.execute(params![
                         m.id,
+                        ch_id,
                         c_idx as i64,
                         p_idx as i64,
                         p.name,
@@ -500,27 +625,33 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                         p.height as i64,
                         p.size.unwrap_or(0) as i64,
                         p.modified.unwrap_or(0.0),
+                        dim_pending,
                     ])?;
                 }
             }
         }
     }
 
-    // 4. Diff and upsert progress
-    let current_chapter_names: std::collections::HashSet<&str> =
-        m.chapters.iter().map(|c| c.name.as_str()).collect();
+    // Remove obsolete chapters (cascades to pages)
+    tx.execute(
+        "DELETE FROM chapters WHERE manga_id = ?1 AND chapter_idx >= ?2",
+        params![m.id, m.chapters.len() as i64],
+    )?;
 
+    // 3. Diff and upsert progress keyed by stable chapter_id
     type ProgressSnapshot = (bool, Option<i64>, Option<String>, Option<f64>);
     {
         let existing_progress: std::collections::HashMap<String, ProgressSnapshot> = {
-            let mut p_stmt = tx.prepare("SELECT chapter_name, read, page, path, fraction FROM progress WHERE manga_id = ?1")?;
+            let mut p_stmt = tx.prepare(
+                "SELECT chapter_id, read, page, path, fraction FROM progress WHERE manga_id = ?1",
+            )?;
             let p_rows = p_stmt.query_map(params![m.id], |row| {
-                let ch_name: String = row.get(0)?;
+                let ch_id: String = row.get(0)?;
                 let is_read: i64 = row.get(1)?;
                 let page: Option<i64> = row.get(2)?;
                 let path: Option<String> = row.get(3)?;
                 let fraction: Option<f64> = row.get(4)?;
-                Ok((ch_name, (is_read == 1, page, path, fraction)))
+                Ok((ch_id, (is_read == 1, page, path, fraction)))
             })?;
             let mut map = std::collections::HashMap::new();
             for r in p_rows {
@@ -530,18 +661,20 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
             map
         };
 
-        let mut delete_progress_stmt = tx.prepare("DELETE FROM progress WHERE manga_id = ?1 AND chapter_name = ?2")?;
-        for ch_name in existing_progress.keys() {
-            if !current_chapter_names.contains(ch_name.as_str()) {
-                delete_progress_stmt.execute(params![m.id, ch_name])?;
+        let mut delete_progress_stmt =
+            tx.prepare("DELETE FROM progress WHERE manga_id = ?1 AND chapter_id = ?2")?;
+        for ch_id in existing_progress.keys() {
+            if !current_chapter_ids.contains(ch_id.as_str()) {
+                delete_progress_stmt.execute(params![m.id, ch_id])?;
             }
         }
 
         let mut upsert_progress_stmt = tx.prepare(
             r#"
-            INSERT INTO progress (manga_id, chapter_name, read, page, path, fraction, updated_at)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-            ON CONFLICT(manga_id, chapter_name) DO UPDATE SET
+            INSERT INTO progress (manga_id, chapter_id, chapter_name, read, page, path, fraction, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            ON CONFLICT(manga_id, chapter_id) DO UPDATE SET
+                chapter_name = excluded.chapter_name,
                 read = excluded.read,
                 page = excluded.page,
                 path = excluded.path,
@@ -550,7 +683,8 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
             "#,
         )?;
 
-        for c in &m.chapters {
+        for (c_idx, c) in m.chapters.iter().enumerate() {
+            let ch_id = derive_chapter_id(&m.id, c, c_idx);
             if c.read || c.position.is_some() {
                 let read_int = if c.read { 1 } else { 0 };
                 let (pos_page, pos_path, pos_frac) = match &c.position {
@@ -558,7 +692,7 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                     None => (None, None, None),
                 };
 
-                let matches_existing = match existing_progress.get(&c.name) {
+                let matches_existing = match existing_progress.get(&ch_id) {
                     Some(&(ex_read, ex_page, ref ex_path, ex_frac)) => {
                         (ex_read == c.read)
                             && (ex_page == pos_page)
@@ -575,6 +709,7 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                 if !matches_existing {
                     upsert_progress_stmt.execute(params![
                         m.id,
+                        ch_id,
                         c.name,
                         read_int,
                         pos_page,
@@ -583,27 +718,27 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                         m.updated_at,
                     ])?;
                 }
-            } else if existing_progress.contains_key(&c.name) {
-                delete_progress_stmt.execute(params![m.id, c.name])?;
+            } else if existing_progress.contains_key(&ch_id) {
+                delete_progress_stmt.execute(params![m.id, ch_id])?;
             }
         }
     }
 
-    // 5. Diff and upsert bookmarks
+    // 4. Diff and upsert bookmarks keyed by stable chapter_id
     {
         let existing_bookmarks: std::collections::HashMap<String, Vec<PositionRecord>> = {
             let mut bm_stmt = tx.prepare(
-                "SELECT chapter_name, page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 ORDER BY id ASC",
+                "SELECT chapter_id, page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 ORDER BY id ASC",
             )?;
             let bm_rows = bm_stmt.query_map(params![m.id], |row| {
-                let chapter_name: String = row.get(0)?;
+                let ch_id: String = row.get(0)?;
                 let page: i64 = row.get(1)?;
                 let path: Option<String> = row.get(2)?;
                 let fraction: f64 = row.get(3)?;
                 let manga_bm: i64 = row.get(4)?;
                 let timestamp: f64 = row.get(5)?;
                 Ok((
-                    chapter_name,
+                    ch_id,
                     PositionRecord {
                         page: page as u32,
                         path,
@@ -613,31 +748,37 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
                     },
                 ))
             })?;
-            let mut map: std::collections::HashMap<String, Vec<PositionRecord>> = std::collections::HashMap::new();
+            let mut map: std::collections::HashMap<String, Vec<PositionRecord>> =
+                std::collections::HashMap::new();
             for r in bm_rows {
-                let (ch_name, pos) = r?;
-                map.entry(ch_name).or_default().push(pos);
+                let (ch_id, pos) = r?;
+                map.entry(ch_id).or_default().push(pos);
             }
             map
         };
 
-        let mut delete_bm_chapter_stmt = tx.prepare("DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2")?;
+        let mut delete_bm_chapter_stmt =
+            tx.prepare("DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_id = ?2")?;
         let mut insert_bm_stmt = tx.prepare(
             r#"
-            INSERT INTO bookmarks (manga_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO bookmarks (manga_id, chapter_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             "#,
         )?;
 
-        for ch_name in existing_bookmarks.keys() {
-            if !current_chapter_names.contains(ch_name.as_str()) {
-                delete_bm_chapter_stmt.execute(params![m.id, ch_name])?;
+        for ch_id in existing_bookmarks.keys() {
+            if !current_chapter_ids.contains(ch_id.as_str()) {
+                delete_bm_chapter_stmt.execute(params![m.id, ch_id])?;
             }
         }
 
-        for c in &m.chapters {
+        for (c_idx, c) in m.chapters.iter().enumerate() {
+            let ch_id = derive_chapter_id(&m.id, c, c_idx);
             let new_bms = c.bookmarks.as_deref().unwrap_or(&[]);
-            let ex_bms = existing_bookmarks.get(&c.name).map(|v| v.as_slice()).unwrap_or(&[]);
+            let ex_bms = existing_bookmarks
+                .get(&ch_id)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
 
             let bookmarks_identical = ex_bms.len() == new_bms.len()
                 && ex_bms.iter().zip(new_bms.iter()).all(|(a, b)| {
@@ -654,12 +795,17 @@ fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResult<()
 
             if !bookmarks_identical {
                 if !ex_bms.is_empty() {
-                    delete_bm_chapter_stmt.execute(params![m.id, c.name])?;
+                    delete_bm_chapter_stmt.execute(params![m.id, ch_id])?;
                 }
                 for bm in new_bms {
-                    let is_manga_bm = if bm.manga_bookmark.unwrap_or(false) { 1 } else { 0 };
+                    let is_manga_bm = if bm.manga_bookmark.unwrap_or(false) {
+                        1
+                    } else {
+                        0
+                    };
                     insert_bm_stmt.execute(params![
                         m.id,
+                        ch_id,
                         c.name,
                         bm.page as i64,
                         bm.path,
@@ -738,43 +884,49 @@ pub fn get_manga(conn: &Connection, id: &str) -> DbResult<Option<MangaRecord>> {
         )
         .optional()?;
 
-    let (m_id, slug, title, local_path, last_chapter, added_at, updated_at, revision, sort) = match manga_row {
-        Some(tuple) => tuple,
-        None => return Ok(None),
-    };
+    let (m_id, slug, title, local_path, last_chapter, added_at, updated_at, revision, sort) =
+        match manga_row {
+            Some(tuple) => tuple,
+            None => return Ok(None),
+        };
 
-    // Load progress indexed by chapter name
+    // Load progress indexed by chapter_id and chapter_name
     let mut prog_map = std::collections::HashMap::new();
     {
-        let mut p_stmt = conn.prepare("SELECT chapter_name, read, page, path, fraction FROM progress WHERE manga_id = ?1")?;
+        let mut p_stmt = conn.prepare("SELECT chapter_id, chapter_name, read, page, path, fraction FROM progress WHERE manga_id = ?1")?;
         let p_rows = p_stmt.query_map(params![id], |row| {
-            let chapter_name: String = row.get(0)?;
-            let read_int: i64 = row.get(1)?;
-            let page: Option<i64> = row.get(2)?;
-            let path: Option<String> = row.get(3)?;
-            let fraction: Option<f64> = row.get(4)?;
-            Ok((chapter_name, read_int == 1, page, path, fraction))
+            let ch_id: String = row.get(0)?;
+            let chapter_name: String = row.get(1)?;
+            let read_int: i64 = row.get(2)?;
+            let page: Option<i64> = row.get(3)?;
+            let path: Option<String> = row.get(4)?;
+            let fraction: Option<f64> = row.get(5)?;
+            Ok((ch_id, chapter_name, read_int == 1, page, path, fraction))
         })?;
         for r in p_rows {
-            let (ch_name, read, page, path, fraction) = r?;
+            let (ch_id, ch_name, read, page, path, fraction) = r?;
+            prog_map.insert(ch_id.clone(), (read, page, path.clone(), fraction));
             prog_map.insert(ch_name, (read, page, path, fraction));
         }
     }
 
-    // Load bookmarks indexed by chapter name
-    let mut bm_map: std::collections::HashMap<String, Vec<PositionRecord>> = std::collections::HashMap::new();
+    // Load bookmarks indexed by chapter_id and chapter_name
+    let mut bm_map: std::collections::HashMap<String, Vec<PositionRecord>> =
+        std::collections::HashMap::new();
     {
         let mut bm_stmt = conn.prepare(
-            "SELECT chapter_name, page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 ORDER BY id ASC",
+            "SELECT chapter_id, chapter_name, page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 ORDER BY id ASC",
         )?;
         let bm_rows = bm_stmt.query_map(params![id], |row| {
-            let chapter_name: String = row.get(0)?;
-            let page: i64 = row.get(1)?;
-            let path: Option<String> = row.get(2)?;
-            let fraction: f64 = row.get(3)?;
-            let manga_bm: i64 = row.get(4)?;
-            let timestamp: f64 = row.get(5)?;
+            let ch_id: String = row.get(0)?;
+            let chapter_name: String = row.get(1)?;
+            let page: i64 = row.get(2)?;
+            let path: Option<String> = row.get(3)?;
+            let fraction: f64 = row.get(4)?;
+            let manga_bm: i64 = row.get(5)?;
+            let timestamp: f64 = row.get(6)?;
             Ok((
+                ch_id,
                 chapter_name,
                 PositionRecord {
                     page: page as u32,
@@ -786,31 +938,41 @@ pub fn get_manga(conn: &Connection, id: &str) -> DbResult<Option<MangaRecord>> {
             ))
         })?;
         for r in bm_rows {
-            let (ch_name, pos) = r?;
-            bm_map.entry(ch_name).or_default().push(pos);
+            let (ch_id, ch_name, pos) = r?;
+            bm_map.entry(ch_id.clone()).or_default().push(pos.clone());
+            if ch_name != ch_id {
+                bm_map.entry(ch_name).or_default().push(pos);
+            }
         }
     }
 
     // Load chapters ordered by chapter_idx
     let mut chapters = Vec::new();
-    let mut c_stmt = conn.prepare("SELECT chapter_idx, name FROM chapters WHERE manga_id = ?1 ORDER BY chapter_idx ASC")?;
+    let mut c_stmt = conn.prepare("SELECT chapter_id, chapter_idx, name FROM chapters WHERE manga_id = ?1 ORDER BY chapter_idx ASC")?;
     let c_rows = c_stmt.query_map(params![id], |row| {
-        let c_idx: i64 = row.get(0)?;
-        let c_name: String = row.get(1)?;
-        Ok((c_idx, c_name))
+        let ch_id: String = row.get(0)?;
+        let c_idx: i64 = row.get(1)?;
+        let c_name: String = row.get(2)?;
+        Ok((ch_id, c_idx, c_name))
     })?;
 
     for cr in c_rows {
-        let (c_idx, c_name) = cr?;
+        let (ch_id, _c_idx, c_name) = cr?;
 
         // Load pages for this chapter
         let mut pages = Vec::new();
         let mut p_stmt = conn.prepare(
-            "SELECT name, path, width, height, size, modified FROM pages WHERE manga_id = ?1 AND chapter_idx = ?2 ORDER BY idx ASC",
+            "SELECT name, path, width, height, size, modified, dimensions_pending FROM pages WHERE manga_id = ?1 AND chapter_id = ?2 ORDER BY idx ASC",
         )?;
-        let p_rows = p_stmt.query_map(params![id, c_idx], |row| {
+        let p_rows = p_stmt.query_map(params![id, ch_id], |row| {
+            let dim_pending_int: i64 = row.get::<_, Option<i64>>(6)?.unwrap_or(0);
+            let dimensions_pending = if dim_pending_int == 1 {
+                Some(true)
+            } else {
+                None
+            };
             Ok(PageRecord {
-                dimensions_pending: None,
+                dimensions_pending,
                 name: row.get(0)?,
                 path: row.get(1)?,
                 width: row.get::<_, i64>(2)? as u32,
@@ -823,7 +985,7 @@ pub fn get_manga(conn: &Connection, id: &str) -> DbResult<Option<MangaRecord>> {
             pages.push(pr?);
         }
 
-        let (read, position) = match prog_map.get(&c_name) {
+        let (read, position) = match prog_map.get(&ch_id).or_else(|| prog_map.get(&c_name)) {
             Some(&(is_read, page_opt, ref path_opt, frac_opt)) => {
                 let pos = page_opt.map(|p| PositionRecord {
                     page: p as u32,
@@ -837,9 +999,10 @@ pub fn get_manga(conn: &Connection, id: &str) -> DbResult<Option<MangaRecord>> {
             None => (false, None),
         };
 
-        let bookmarks = bm_map.remove(&c_name);
+        let bookmarks = bm_map.remove(&ch_id).or_else(|| bm_map.remove(&c_name));
 
         chapters.push(ChapterRecord {
+            id: Some(ch_id),
             name: c_name,
             pages,
             read,
@@ -911,16 +1074,16 @@ pub fn save_progress(
         }
     }
 
-    let chapter_name: Option<String> = tx
+    let chapter_info: Option<(String, String)> = tx
         .query_row(
-            "SELECT name FROM chapters WHERE manga_id = ?1 AND chapter_idx = ?2",
+            "SELECT chapter_id, name FROM chapters WHERE manga_id = ?1 AND chapter_idx = ?2",
             params![manga_id, chapter_index as i64],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
 
-    let ch_name = match chapter_name {
-        Some(n) => n,
+    let (ch_id, ch_name) = match chapter_info {
+        Some(t) => t,
         None => {
             tx.rollback()?;
             return Ok("missing".to_string());
@@ -929,13 +1092,17 @@ pub fn save_progress(
 
     let existing_read: Option<i64> = tx
         .query_row(
-            "SELECT read FROM progress WHERE manga_id = ?1 AND chapter_name = ?2",
-            params![manga_id, ch_name],
+            "SELECT read FROM progress WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3)",
+            params![manga_id, ch_id, ch_name],
             |row| row.get(0),
         )
         .optional()?;
 
-    let is_read = if read || existing_read == Some(1) { 1 } else { 0 };
+    let is_read = if read || existing_read == Some(1) {
+        1
+    } else {
+        0
+    };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -943,9 +1110,10 @@ pub fn save_progress(
 
     tx.execute(
         r#"
-        INSERT INTO progress (manga_id, chapter_name, read, page, path, fraction, updated_at)
-        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-        ON CONFLICT(manga_id, chapter_name) DO UPDATE SET
+        INSERT INTO progress (manga_id, chapter_id, chapter_name, read, page, path, fraction, updated_at)
+        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(manga_id, chapter_id) DO UPDATE SET
+            chapter_name = excluded.chapter_name,
             read = excluded.read,
             page = excluded.page,
             path = excluded.path,
@@ -954,6 +1122,7 @@ pub fn save_progress(
         "#,
         params![
             manga_id,
+            ch_id,
             ch_name,
             is_read,
             position.page as i64,
@@ -965,18 +1134,23 @@ pub fn save_progress(
 
     if let Some(bms) = bookmarks {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2",
-            params![manga_id, ch_name],
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3)",
+            params![manga_id, ch_id, ch_name],
         )?;
         for bm in bms {
-            let is_manga_bm = if bm.manga_bookmark.unwrap_or(false) { 1 } else { 0 };
+            let is_manga_bm = if bm.manga_bookmark.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
             tx.execute(
                 r#"
-                INSERT INTO bookmarks (manga_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                INSERT INTO bookmarks (manga_id, chapter_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                 "#,
                 params![
                     manga_id,
+                    ch_id,
                     ch_name,
                     bm.page as i64,
                     bm.path,
@@ -1006,26 +1180,38 @@ pub fn add_bookmark(
     position: &PositionRecord,
 ) -> DbResult<Vec<PositionRecord>> {
     let tx = conn.transaction()?;
-    let is_manga_bm = if position.manga_bookmark.unwrap_or(false) { 1 } else { 0 };
+    let is_manga_bm = if position.manga_bookmark.unwrap_or(false) {
+        1
+    } else {
+        0
+    };
+
+    let chapter_id: String = tx
+        .query_row(
+            "SELECT chapter_id FROM chapters WHERE manga_id = ?1 AND (name = ?2 OR chapter_id = ?2) LIMIT 1",
+            params![manga_id, chapter_name],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| chapter_name.to_string());
 
     let exists: bool = if is_manga_bm == 1 {
         tx.query_row(
-            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND manga_bookmark = 1 LIMIT 1",
-            params![manga_id, chapter_name],
+            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND manga_bookmark = 1 LIMIT 1",
+            params![manga_id, chapter_id, chapter_name],
             |_| Ok(true),
         )
         .unwrap_or(false)
     } else if let Some(path) = &position.path {
         tx.query_row(
-            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND path = ?3 LIMIT 1",
-            params![manga_id, chapter_name, path],
+            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4 LIMIT 1",
+            params![manga_id, chapter_id, chapter_name, path],
             |_| Ok(true),
         )
         .unwrap_or(false)
     } else {
         tx.query_row(
-            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND page = ?3 LIMIT 1",
-            params![manga_id, chapter_name, position.page as i64],
+            "SELECT 1 FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4 LIMIT 1",
+            params![manga_id, chapter_id, chapter_name, position.page as i64],
             |_| Ok(true),
         )
         .unwrap_or(false)
@@ -1039,11 +1225,12 @@ pub fn add_bookmark(
 
         tx.execute(
             r#"
-            INSERT INTO bookmarks (manga_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            INSERT INTO bookmarks (manga_id, chapter_id, chapter_name, page, path, fraction, manga_bookmark, timestamp)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             "#,
             params![
                 manga_id,
+                chapter_id,
                 chapter_name,
                 position.page as i64,
                 position.path,
@@ -1057,9 +1244,9 @@ pub fn add_bookmark(
     let mut result = Vec::new();
     {
         let mut stmt = tx.prepare(
-            "SELECT page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 ORDER BY id ASC",
+            "SELECT page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) ORDER BY id ASC",
         )?;
-        let rows = stmt.query_map(params![manga_id, chapter_name], |row| {
+        let rows = stmt.query_map(params![manga_id, chapter_id, chapter_name], |row| {
             let is_mb: i64 = row.get(3)?;
             Ok(PositionRecord {
                 page: row.get::<_, i64>(0)? as u32,
@@ -1085,31 +1272,43 @@ pub fn remove_bookmark(
     position: &PositionRecord,
 ) -> DbResult<Vec<PositionRecord>> {
     let tx = conn.transaction()?;
-    let is_manga_bm = if position.manga_bookmark.unwrap_or(false) { 1 } else { 0 };
+    let is_manga_bm = if position.manga_bookmark.unwrap_or(false) {
+        1
+    } else {
+        0
+    };
+
+    let chapter_id: String = tx
+        .query_row(
+            "SELECT chapter_id FROM chapters WHERE manga_id = ?1 AND (name = ?2 OR chapter_id = ?2) LIMIT 1",
+            params![manga_id, chapter_name],
+            |row| row.get(0),
+        )
+        .unwrap_or_else(|_| chapter_name.to_string());
 
     if is_manga_bm == 1 {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND manga_bookmark = 1",
-            params![manga_id, chapter_name],
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND manga_bookmark = 1",
+            params![manga_id, chapter_id, chapter_name],
         )?;
     } else if let Some(path) = &position.path {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND path = ?3",
-            params![manga_id, chapter_name, path],
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND path = ?4",
+            params![manga_id, chapter_id, chapter_name, path],
         )?;
     } else {
         tx.execute(
-            "DELETE FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 AND page = ?3",
-            params![manga_id, chapter_name, position.page as i64],
+            "DELETE FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) AND page = ?4",
+            params![manga_id, chapter_id, chapter_name, position.page as i64],
         )?;
     }
 
     let mut result = Vec::new();
     {
         let mut stmt = tx.prepare(
-            "SELECT page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 AND chapter_name = ?2 ORDER BY id ASC",
+            "SELECT page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 AND (chapter_id = ?2 OR chapter_name = ?3) ORDER BY id ASC",
         )?;
-        let rows = stmt.query_map(params![manga_id, chapter_name], |row| {
+        let rows = stmt.query_map(params![manga_id, chapter_id, chapter_name], |row| {
             let is_mb: i64 = row.get(3)?;
             Ok(PositionRecord {
                 page: row.get::<_, i64>(0)? as u32,
@@ -1173,7 +1372,10 @@ pub fn clear_library(conn: &mut Connection) -> DbResult<()> {
 
 pub fn reset_progress(conn: &mut Connection) -> DbResult<()> {
     let tx = conn.transaction()?;
-    tx.execute("UPDATE progress SET read = 0, page = NULL, path = NULL, fraction = NULL", params![])?;
+    tx.execute(
+        "UPDATE progress SET read = 0, page = NULL, path = NULL, fraction = NULL",
+        params![],
+    )?;
     tx.execute("UPDATE manga SET last_chapter = 0", params![])?;
     tx.commit()?;
     Ok(())
@@ -1215,30 +1417,29 @@ pub fn export_backup_json(conn: &Connection) -> DbResult<String> {
         }
     }
 
-    let settings = get_settings(conn, "global")?
-        .unwrap_or_else(|| {
-            serde_json::json!({
-                "theme": "system",
-                "mode": "continuous",
-                "layout": "max",
-                "maxWidth": 920,
-                "seconds": 3.0,
-                "advance": true,
-                "reduced": false,
-                "lowQuality": false,
-                "customSeconds": false,
-                "autoHideBars": true,
-                "resumeDelay": 1.8,
-                "direction": "ltr",
-                "spread": false,
-                "singleCover": true,
-                "endAction": "next",
-                "fontSizeTitle": 15,
-                "fontSizeUi": 15,
-                "fontSizeButton": 15,
-                "confirmDelete": false
-            })
-        });
+    let settings = get_settings(conn, "global")?.unwrap_or_else(|| {
+        serde_json::json!({
+            "theme": "system",
+            "mode": "continuous",
+            "layout": "max",
+            "maxWidth": 920,
+            "seconds": 3.0,
+            "advance": true,
+            "reduced": false,
+            "lowQuality": false,
+            "customSeconds": false,
+            "autoHideBars": true,
+            "resumeDelay": 1.8,
+            "direction": "ltr",
+            "spread": false,
+            "singleCover": true,
+            "endAction": "next",
+            "fontSizeTitle": 15,
+            "fontSizeUi": 15,
+            "fontSizeButton": 15,
+            "confirmDelete": false
+        })
+    });
 
     let payload = serde_json::json!({
         "version": 2,
@@ -1256,7 +1457,8 @@ pub fn restore_backup_tx(
     let tx = conn.transaction()?;
 
     // Load existing local_path and slug for preservation
-    let mut existing_info: std::collections::HashMap<String, (Option<String>, String)> = std::collections::HashMap::new();
+    let mut existing_info: std::collections::HashMap<String, (Option<String>, String)> =
+        std::collections::HashMap::new();
     {
         let mut stmt = tx.prepare("SELECT id, local_path, slug FROM manga")?;
         let rows = stmt.query_map([], |row| {
@@ -1331,9 +1533,7 @@ pub async fn import_legacy_library(
 }
 
 #[tauri::command]
-pub async fn sqlite_list_library(
-    state: State<'_, DbState>,
-) -> DbResult<Vec<SummaryRecord>> {
+pub async fn sqlite_list_library(state: State<'_, DbState>) -> DbResult<Vec<SummaryRecord>> {
     state.read(list_library).await
 }
 
@@ -1346,10 +1546,7 @@ pub async fn sqlite_get_manga(
 }
 
 #[tauri::command]
-pub async fn sqlite_save_manga(
-    state: State<'_, DbState>,
-    manga: MangaRecord,
-) -> DbResult<()> {
+pub async fn sqlite_save_manga(state: State<'_, DbState>, manga: MangaRecord) -> DbResult<()> {
     state.write(move |conn| save_manga(conn, &manga)).await
 }
 
@@ -1414,10 +1611,7 @@ pub async fn sqlite_get_bookmarked_manga_ids(
 }
 
 #[tauri::command]
-pub async fn sqlite_delete_manga(
-    state: State<'_, DbState>,
-    id: String,
-) -> DbResult<()> {
+pub async fn sqlite_delete_manga(state: State<'_, DbState>, id: String) -> DbResult<()> {
     state.write(move |conn| delete_manga(conn, &id)).await
 }
 
@@ -1432,9 +1626,7 @@ pub async fn sqlite_reset_progress(state: State<'_, DbState>) -> DbResult<()> {
 }
 
 #[tauri::command]
-pub async fn sqlite_get_settings(
-    state: State<'_, DbState>,
-) -> DbResult<Option<serde_json::Value>> {
+pub async fn sqlite_get_settings(state: State<'_, DbState>) -> DbResult<Option<serde_json::Value>> {
     state.read(|conn| get_settings(conn, "global")).await
 }
 
@@ -1518,44 +1710,41 @@ mod tests {
             updated_at: 2000.0,
             revision: Some(1),
             sort: Some("natural".into()),
-            chapters: vec![
-                ChapterRecord {
-                    name: "Chapter 1".into(),
-                    pages: vec![
-                        PageRecord {
-                            dimensions_pending: None,
-                            name: "01.png".into(),
-                            path: "Chapter 1/01.png".into(),
-                            width: 800,
-                            height: 1200,
-                            size: Some(1024),
-                            modified: Some(1500.0),
-                        },
-                    ],
-                    read: true,
-                    position: Some(PositionRecord {
-                        page: 1,
-                        path: Some("Chapter 1/01.png".into()),
-                        fraction: 0.5,
-                        manga_bookmark: None,
-                        timestamp: None,
-                    }),
-                    bookmarks: Some(vec![
-                        PositionRecord {
-                            page: 1,
-                            path: Some("Chapter 1/01.png".into()),
-                            fraction: 0.5,
-                            manga_bookmark: Some(false),
-                            timestamp: Some(1234.0),
-                        },
-                    ]),
-                },
-            ],
+            chapters: vec![ChapterRecord {
+                id: None,
+                name: "Chapter 1".into(),
+                pages: vec![PageRecord {
+                    dimensions_pending: None,
+                    name: "01.png".into(),
+                    path: "Chapter 1/01.png".into(),
+                    width: 800,
+                    height: 1200,
+                    size: Some(1024),
+                    modified: Some(1500.0),
+                }],
+                read: true,
+                position: Some(PositionRecord {
+                    page: 1,
+                    path: Some("Chapter 1/01.png".into()),
+                    fraction: 0.5,
+                    manga_bookmark: None,
+                    timestamp: None,
+                }),
+                bookmarks: Some(vec![PositionRecord {
+                    page: 1,
+                    path: Some("Chapter 1/01.png".into()),
+                    fraction: 0.5,
+                    manga_bookmark: Some(false),
+                    timestamp: Some(1234.0),
+                }]),
+            }],
         };
 
         save_manga(&mut conn, &manga).unwrap();
 
-        let loaded = get_manga(&conn, "manga-1").unwrap().expect("Must load manga");
+        let loaded = get_manga(&conn, "manga-1")
+            .unwrap()
+            .expect("Must load manga");
         assert_eq!(loaded.id, "manga-1");
         assert_eq!(loaded.title, "Manga One");
         assert_eq!(loaded.chapters.len(), 1);
@@ -1588,6 +1777,7 @@ mod tests {
             revision: Some(2),
             sort: None,
             chapters: vec![ChapterRecord {
+                id: None,
                 name: "Ch 1".into(),
                 pages: vec![],
                 read: false,
@@ -1654,6 +1844,7 @@ mod tests {
             revision: Some(1),
             sort: None,
             chapters: vec![ChapterRecord {
+                id: None,
                 name: "Ch 1".into(),
                 pages: vec![],
                 read: false,
@@ -1698,6 +1889,7 @@ mod tests {
                 revision: Some(1),
                 sort: None,
                 chapters: vec![ChapterRecord {
+                    id: None,
                     name: "Chapter 1".into(),
                     pages: vec![],
                     read: true,
@@ -1733,6 +1925,7 @@ mod tests {
             revision: Some(1),
             sort: None,
             chapters: vec![ChapterRecord {
+                id: None,
                 name: "Ch 1".into(),
                 pages: vec![PageRecord {
                     dimensions_pending: None,
@@ -1755,7 +1948,12 @@ mod tests {
             }],
         };
         save_manga(&mut conn, &manga).unwrap();
-        save_settings(&mut conn, "global", &serde_json::json!({ "theme": "dark", "maxWidth": 1280 })).unwrap();
+        save_settings(
+            &mut conn,
+            "global",
+            &serde_json::json!({ "theme": "dark", "maxWidth": 1280 }),
+        )
+        .unwrap();
 
         let json = export_backup_json(&conn).unwrap();
         assert!(json.contains("\"version\":2"));
@@ -1789,7 +1987,10 @@ mod tests {
 
         let restored_manga = get_manga(&conn2, "m-exp").unwrap().unwrap();
         assert_eq!(restored_manga.title, "Export Title");
-        assert_eq!(restored_manga.local_path, Some("D:\\Preserved\\Path".into()));
+        assert_eq!(
+            restored_manga.local_path,
+            Some("D:\\Preserved\\Path".into())
+        );
         assert_eq!(restored_manga.chapters.len(), 1);
         assert_eq!(restored_manga.chapters[0].pages.len(), 1);
     }
@@ -1821,7 +2022,9 @@ mod tests {
             .busy_timeout(std::time::Duration::from_millis(5000))
             .unwrap();
         reader
-            .execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;")
+            .execute_batch(
+                "PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;",
+            )
             .unwrap();
 
         let state = DbState::new(reader, writer);
@@ -1874,7 +2077,7 @@ mod tests {
         let user_ver: u32 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(user_ver, 1, "user_version must be initialized to 1");
+        assert_eq!(user_ver, 2, "user_version must be initialized to 2");
 
         let sync_mode: i64 = conn
             .pragma_query_value(None, "synchronous", |r| r.get(0))
@@ -1891,7 +2094,7 @@ mod tests {
         let user_ver_after: u32 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(user_ver_after, 1);
+        assert_eq!(user_ver_after, 2);
     }
 
     #[test]
@@ -1910,6 +2113,7 @@ mod tests {
             sort: None,
             chapters: vec![
                 ChapterRecord {
+                    id: None,
                     name: "Ch 1".into(),
                     pages: vec![
                         PageRecord {
@@ -1948,6 +2152,7 @@ mod tests {
                     }]),
                 },
                 ChapterRecord {
+                    id: None,
                     name: "Ch 2".into(),
                     pages: vec![PageRecord {
                         dimensions_pending: None,
@@ -2069,6 +2274,79 @@ mod tests {
         assert_eq!(
             conflict_json,
             r#"{"code":"Conflict","message":"stale revision"}"#
+        );
+    }
+
+    #[test]
+    fn test_stable_chapter_id_and_dimensions_pending() {
+        let mut conn = create_test_conn();
+
+        let manga = MangaRecord {
+            id: "manga-stable".into(),
+            slug: Some("manga-stable".into()),
+            title: "Manga Stable".into(),
+            local_path: Some("C:\\Manga\\Stable".into()),
+            last_chapter: 0,
+            added_at: 1000.0,
+            updated_at: 2000.0,
+            revision: Some(1),
+            sort: None,
+            chapters: vec![ChapterRecord {
+                id: None,
+                name: "Chapter 1".into(),
+                pages: vec![PageRecord {
+                    dimensions_pending: Some(true),
+                    name: "01.jpg".into(),
+                    path: "Chapter 1/01.jpg".into(),
+                    width: 0,
+                    height: 0,
+                    size: Some(100),
+                    modified: Some(10.0),
+                }],
+                read: true,
+                position: Some(PositionRecord {
+                    page: 0,
+                    path: Some("Chapter 1/01.jpg".into()),
+                    fraction: 0.5,
+                    manga_bookmark: None,
+                    timestamp: Some(1500.0),
+                }),
+                bookmarks: Some(vec![PositionRecord {
+                    page: 0,
+                    path: Some("Chapter 1/01.jpg".into()),
+                    fraction: 0.5,
+                    manga_bookmark: Some(true),
+                    timestamp: Some(1500.0),
+                }]),
+            }],
+        };
+
+        save_manga(&mut conn, &manga).unwrap();
+
+        // Verify get_manga returns dimensions_pending: Some(true) and stable chapter ID
+        let loaded = get_manga(&conn, "manga-stable").unwrap().unwrap();
+        assert_eq!(loaded.chapters.len(), 1);
+        assert_eq!(loaded.chapters[0].pages[0].dimensions_pending, Some(true));
+        assert!(loaded.chapters[0].id.is_some());
+        let initial_ch_id = loaded.chapters[0].id.clone().unwrap();
+
+        // Rename chapter from "Chapter 1" to "Ch 1: The Beginning"
+        let mut renamed = loaded.clone();
+        renamed.chapters[0].name = "Ch 1: The Beginning".into();
+        save_manga(&mut conn, &renamed).unwrap();
+
+        // Reload: progress and bookmarks are preserved under stable ID
+        let reloaded = get_manga(&conn, "manga-stable").unwrap().unwrap();
+        assert_eq!(reloaded.chapters[0].name, "Ch 1: The Beginning");
+        assert_eq!(
+            reloaded.chapters[0].id.as_deref(),
+            Some(initial_ch_id.as_str())
+        );
+        assert!(reloaded.chapters[0].read);
+        assert!(reloaded.chapters[0].position.is_some());
+        assert_eq!(
+            reloaded.chapters[0].bookmarks.as_ref().map(|b| b.len()),
+            Some(1)
         );
     }
 }

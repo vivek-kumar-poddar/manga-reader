@@ -6,8 +6,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::fs::{
-    natural_order, parse_image_dimensions, AllowedRoots, ALLOWED_IMAGE_EXTENSIONS,
-    IGNORED_FOLDER_NAMES, MAX_DEPTH, MAX_SCAN_FILES, SCAN_BATCH_SIZE,
+    ALLOWED_IMAGE_EXTENSIONS, AllowedRoots, IGNORED_FOLDER_NAMES, MAX_DEPTH, MAX_SCAN_FILES,
+    SCAN_BATCH_SIZE, natural_order, parse_image_dimensions,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -16,6 +16,8 @@ pub struct IndexOptions {
     pub sort: Option<String>,
     pub previous: Option<PreviousMangaDto>,
     pub warm_chapters: Option<usize>,
+    pub job_id: Option<String>,
+    pub title: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,8 +189,7 @@ pub fn matching_position(
     }
 
     // Fall back to clamping by index
-    let valid_idx = page_idx
-        .unwrap_or_else(|| p.page.min(pages.len().saturating_sub(1)));
+    let valid_idx = page_idx.unwrap_or_else(|| p.page.min(pages.len().saturating_sub(1)));
     let fraction = p
         .fraction
         .map(|f| if f.is_nan() { 0.0 } else { f.clamp(0.0, 1.0) });
@@ -268,7 +269,10 @@ pub async fn index_title(
 ) -> Result<TitleDto, String> {
     let raw_path = Path::new(root.trim());
     if !raw_path.exists() || !raw_path.is_dir() {
-        return Err(format!("Target path '{}' is not an existing directory", root));
+        return Err(format!(
+            "Target path '{}' is not an existing directory",
+            root
+        ));
     }
 
     let root_path = dunce::canonicalize(raw_path).unwrap_or_else(|_| raw_path.to_path_buf());
@@ -286,6 +290,37 @@ pub async fn index_title(
     let sort_mode = opts.sort.unwrap_or_else(|| "natural".to_string());
     let warm_count = opts.warm_chapters.unwrap_or(5);
 
+    let scan_mgr = app.state::<crate::commands::fs::ScanManager>();
+    let handle = opts.job_id.as_deref().map(|id| scan_mgr.register(id));
+    let cancel_flag = handle.as_ref().map(|h| std::sync::Arc::clone(&h.flag));
+
+    struct JobGuard<'a> {
+        mgr: &'a crate::commands::fs::ScanManager,
+        id: Option<&'a str>,
+    }
+    impl<'a> Drop for JobGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(id) = self.id {
+                self.mgr.unregister(id);
+            }
+        }
+    }
+    let _guard = JobGuard {
+        mgr: &scan_mgr,
+        id: opts.job_id.as_deref(),
+    };
+
+    let check_cancelled = |handle: Option<&crate::commands::fs::ScanHandle>| -> Result<(), String> {
+        if let Some(h) = handle {
+            if h.flag.load(std::sync::atomic::Ordering::Relaxed) || *h.receiver.borrow() {
+                return Err("Indexing cancelled".to_string());
+            }
+        }
+        Ok(())
+    };
+
+    check_cancelled(handle.as_ref())?;
+
     let folder_name = root_path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -294,8 +329,9 @@ pub async fn index_title(
     let root_clone = root_path.clone();
 
     // 1. Recursive directory scan
-    let scanned_files = tauri::async_runtime::spawn_blocking(move || {
+    let (scanned_files, mut traversal_issues) = tauri::async_runtime::spawn_blocking(move || {
         let mut files = Vec::new();
+        let mut issues = Vec::new();
         let walker = walkdir::WalkDir::new(&root_clone)
             .max_depth(MAX_DEPTH)
             .follow_links(false)
@@ -314,12 +350,33 @@ pub async fn index_title(
             });
 
         for entry_res in walker {
+            if let Some(ref cf) = cancel_flag {
+                if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
             if files.len() >= MAX_SCAN_FILES {
+                issues.push(ScanIssue {
+                    path: root_clone.to_string_lossy().to_string(),
+                    reason: format!(
+                        "Reached maximum scan limit of {MAX_SCAN_FILES} files; scan results may be incomplete"
+                    ),
+                });
                 break;
             }
             let entry = match entry_res {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(err) => {
+                    let p = err
+                        .path()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "unknown".to_string());
+                    issues.push(ScanIssue {
+                        path: p,
+                        reason: err.to_string(),
+                    });
+                    continue;
+                }
             };
 
             if !entry.file_type().is_file() {
@@ -338,7 +395,13 @@ pub async fn index_title(
 
             let metadata = match entry.metadata() {
                 Ok(m) => m,
-                Err(_) => continue,
+                Err(err) => {
+                    issues.push(ScanIssue {
+                        path: file_path.to_string_lossy().to_string(),
+                        reason: format!("Failed to read metadata: {err}"),
+                    });
+                    continue;
+                }
             };
 
             let rel_path = match file_path.strip_prefix(&root_clone) {
@@ -366,22 +429,32 @@ pub async fn index_title(
                 modified,
             });
         }
-        files
+        (files, issues)
     })
     .await
     .map_err(|e| format!("Scan error: {e}"))?;
+
+    check_cancelled(handle.as_ref())?;
 
     let total_scanned = scanned_files.len();
     if total_scanned == 0 {
         return Err("No image pages found in this selection.".to_string());
     }
 
-    let _ = on_progress.send(ScanProgress {
-        phase: "discover".to_string(),
-        done: total_scanned,
-        total: total_scanned,
-        title: folder_name.clone(),
-    });
+    if on_progress
+        .send(ScanProgress {
+            phase: "discover".to_string(),
+            done: total_scanned,
+            total: total_scanned,
+            title: folder_name.clone(),
+        })
+        .is_err()
+    {
+        if let Some(ref h) = handle {
+            h.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        return Err("Indexing cancelled: progress channel disconnected".to_string());
+    }
 
     // 2. Build lookup for previous dimensions reuse
     let mut old_pages_map: HashMap<String, PreviousPageDto> = HashMap::new();
@@ -497,17 +570,27 @@ pub async fn index_title(
 
     let total_pending = pending_warm.len();
     if total_pending > 0 {
-        let _ = on_progress.send(ScanProgress {
-            phase: "index".to_string(),
-            done: 0,
-            total: total_pending,
-            title: format!("{folder_name} · first {warm_count} chapters"),
-        });
+        if on_progress
+            .send(ScanProgress {
+                phase: "index".to_string(),
+                done: 0,
+                total: total_pending,
+                title: format!("{folder_name} · first {warm_count} chapters"),
+            })
+            .is_err()
+        {
+            if let Some(ref h) = handle {
+                h.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+            }
+            return Err("Indexing cancelled: progress channel disconnected".to_string());
+        }
 
         let mut done = 0;
         let mut parsed_results: HashMap<String, (u32, u32)> = HashMap::with_capacity(total_pending);
 
         for chunk in pending_warm.chunks(SCAN_BATCH_SIZE) {
+            check_cancelled(handle.as_ref())?;
+
             let chunk_vec = chunk.to_vec();
             let parsed_batch: Vec<(String, Option<u32>, Option<u32>)> =
                 tauri::async_runtime::spawn_blocking(move || {
@@ -527,16 +610,34 @@ pub async fn index_title(
                 if let (Some(width), Some(height)) = (w, h) {
                     if width > 0 && height > 0 {
                         parsed_results.insert(rel, (width, height));
+                    } else {
+                        traversal_issues.push(ScanIssue {
+                            path: rel,
+                            reason: "Zero or invalid image dimensions in header".to_string(),
+                        });
                     }
+                } else {
+                    traversal_issues.push(ScanIssue {
+                        path: rel,
+                        reason: "Could not parse image dimensions from header".to_string(),
+                    });
                 }
             }
 
-            let _ = on_progress.send(ScanProgress {
-                phase: "index".to_string(),
-                done,
-                total: total_pending,
-                title: format!("{folder_name} · first {warm_count} chapters"),
-            });
+            if on_progress
+                .send(ScanProgress {
+                    phase: "index".to_string(),
+                    done,
+                    total: total_pending,
+                    title: format!("{folder_name} · first {warm_count} chapters"),
+                })
+                .is_err()
+            {
+                if let Some(ref h) = handle {
+                    h.flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Err("Indexing cancelled: progress channel disconnected".to_string());
+            }
             tokio::task::yield_now().await;
         }
 
@@ -553,6 +654,8 @@ pub async fn index_title(
             }
         }
     }
+
+    check_cancelled(handle.as_ref())?;
 
     // 6. Re-link matching and chapters construction
     let mut final_chapters = Vec::with_capacity(chapter_names.len());
@@ -604,9 +707,11 @@ pub async fn index_title(
     let cover_abs = cover_candidate.or(first_page_abs);
 
     let title_name = opts
-        .previous
+        .title
         .as_ref()
-        .map(|p| p.title.clone())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .or_else(|| opts.previous.as_ref().map(|p| p.title.clone()))
         .unwrap_or_else(|| folder_name.clone());
 
     let manga_id = opts
@@ -615,11 +720,19 @@ pub async fn index_title(
         .map(|p| p.id.clone())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let slug = opts
-        .previous
-        .as_ref()
-        .and_then(|p| p.slug.clone())
-        .unwrap_or_else(|| generate_slug(&title_name));
+    let slug = if let Some(ref prev) = opts.previous {
+        if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
+            || opts.title.is_none()
+        {
+            prev.slug
+                .clone()
+                .unwrap_or_else(|| generate_slug(&title_name))
+        } else {
+            generate_slug(&title_name)
+        }
+    } else {
+        generate_slug(&title_name)
+    };
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -632,11 +745,7 @@ pub async fn index_title(
         .and_then(|p| p.added_at)
         .unwrap_or(now);
 
-    let revision = opts
-        .previous
-        .as_ref()
-        .and_then(|p| p.revision)
-        .unwrap_or(1);
+    let revision = opts.previous.as_ref().and_then(|p| p.revision).unwrap_or(1);
 
     let last_chapter = opts
         .previous
@@ -664,7 +773,7 @@ pub async fn index_title(
         sort: sort_mode,
         chapters: final_chapters,
         cover_path: final_cover_path,
-        issues: Vec::new(),
+        issues: traversal_issues,
         reused: reused_count,
     })
 }
@@ -676,7 +785,10 @@ mod tests {
     #[test]
     fn test_generate_slug() {
         assert_eq!(generate_slug("One Piece (Digital)"), "one-piece-digital");
-        assert_eq!(generate_slug("Attack on Titan: Vol 1"), "attack-on-titan-vol-1");
+        assert_eq!(
+            generate_slug("Attack on Titan: Vol 1"),
+            "attack-on-titan-vol-1"
+        );
         assert_eq!(generate_slug("   "), "manga");
         assert_eq!(generate_slug("---"), "manga");
     }
@@ -841,14 +953,45 @@ mod tests {
         }
 
         // Subdirectory becomes chapter name with slash normalization
-        assert_eq!(determine_chapter("Chapter 1/01.jpg", false), Some("Chapter 1".into()));
-        assert_eq!(determine_chapter("Volume 1/Chapter 1/01.jpg", false), Some("Volume 1 / Chapter 1".into()));
+        assert_eq!(
+            determine_chapter("Chapter 1/01.jpg", false),
+            Some("Chapter 1".into())
+        );
+        assert_eq!(
+            determine_chapter("Volume 1/Chapter 1/01.jpg", false),
+            Some("Volume 1 / Chapter 1".into())
+        );
 
         // Root file becomes "Root pages"
-        assert_eq!(determine_chapter("01.jpg", false), Some("Root pages".into()));
+        assert_eq!(
+            determine_chapter("01.jpg", false),
+            Some("Root pages".into())
+        );
 
         // Cover file excluded from regular chapters
         assert_eq!(determine_chapter("cover.jpg", true), None);
         assert_eq!(determine_chapter("thumbnail.png", true), None);
+    }
+
+    #[test]
+    fn test_index_options_title_override_and_job_id() {
+        let opts = IndexOptions {
+            sort: Some("natural".to_string()),
+            previous: None,
+            warm_chapters: Some(3),
+            job_id: Some("job-custom-123".to_string()),
+            title: Some("Confirmed Manga Title".to_string()),
+        };
+
+        let title_name = opts
+            .title
+            .as_ref()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "Fallback".to_string());
+
+        assert_eq!(title_name, "Confirmed Manga Title");
+        assert_eq!(generate_slug(&title_name), "confirmed-manga-title");
+        assert_eq!(opts.job_id.as_deref(), Some("job-custom-123"));
     }
 }

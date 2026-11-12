@@ -205,9 +205,13 @@ export const Cover = memo(function Cover({ m }: { m: Pick<Summary, 'id'> }) {
     if (!host.current) return;
 
     const unobserve = observeCoverVisibility(host.current, () => {
-      if (desktopAPI.isDesktop && desktopAPI.getThumbnailUrl) {
-        desktopAPI
-          .getThumbnailUrl(m.id)
+      if (desktopAPI.isDesktop && (desktopAPI.getCoverImageUrl || desktopAPI.getThumbnailUrl)) {
+        if (desktopAPI.getCoverImageUrl) {
+          const coverUrl = desktopAPI.getCoverImageUrl(m.id, (m as any).updatedAt);
+          setUrl(coverUrl);
+          return;
+        }
+        desktopAPI.getThumbnailUrl!(m.id)
           .then((thumbUrl) => {
             if (!live) return;
             if (thumbUrl) {
@@ -250,7 +254,26 @@ export const Cover = memo(function Cover({ m }: { m: Pick<Summary, 'id'> }) {
 
   return (
     <div ref={host} className="cover">
-      {url ? <img src={url} alt="" /> : <BookOpen size={24} />}
+      {url ? (
+        <img
+          src={url}
+          alt=""
+          onError={() => {
+            if (url.startsWith('http://mangaimg.localhost/cover/')) {
+              void getCover(m.id)
+                .then((blob) => {
+                  if (!blob) return;
+                  const objectUrl = URL.createObjectURL(blob);
+                  coverUrlPool.set(m.id, objectUrl);
+                  setUrl(objectUrl);
+                })
+                .catch(() => {});
+            }
+          }}
+        />
+      ) : (
+        <BookOpen size={24} />
+      )}
     </div>
   );
 });
@@ -460,18 +483,10 @@ function Library({
       const manga = await getManga(m.id);
       if (!manga) return;
       if (isBookmarked) {
-        let removedMangaBookmark = false;
+        // Strictly remove title bookmarks only; never delete ordinary chapter/page bookmarks
         for (const ch of manga.chapters) {
           for (const b of ch.bookmarks || []) {
             if (b.mangaBookmark) {
-              await removeBookmark(m.id, ch.name, b);
-              removedMangaBookmark = true;
-            }
-          }
-        }
-        if (!removedMangaBookmark) {
-          for (const ch of manga.chapters) {
-            for (const b of ch.bookmarks || []) {
               await removeBookmark(m.id, ch.name, b);
             }
           }

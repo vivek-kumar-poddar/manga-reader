@@ -116,11 +116,54 @@ export interface IndexTitleOptions {
   sort?: 'natural' | 'name' | 'reverse';
   previous?: Manga;
   warmChapters?: number;
+  jobId?: string;
+  title?: string;
+  signal?: AbortSignal;
 }
 
 export interface CachedImageResult {
   path: string;
   url: string;
+  isPlaceholder?: boolean;
+  status?: string;
+  error?: string;
+}
+
+export interface PageImageResourceOptions {
+  mangaId: string;
+  pagePath: string;
+  version?: string | number;
+  transform?: 'full' | 'raw' | 'low' | 'preview' | string;
+  localPath?: string;
+}
+
+export function getPageImageUrl(options: PageImageResourceOptions): string {
+  const { mangaId, pagePath, version = 1, transform = 'full', localPath } = options;
+  const encodedMangaId = encodeURIComponent(mangaId);
+  const encodedVersion = encodeURIComponent(String(version));
+  const encodedTransform = encodeURIComponent(transform);
+  const normalizedPath = pagePath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const segments = normalizedPath.split('/').filter(Boolean).map(encodeURIComponent);
+  const encodedPagePath = segments.join('/');
+
+  let url = `http://mangaimg.localhost/page/${encodedMangaId}/${encodedVersion}/${encodedTransform}/${encodedPagePath}`;
+  if (localPath) {
+    url += `?root=${encodeURIComponent(localPath)}`;
+  }
+  return url;
+}
+
+export function getCoverImageUrl(mangaId: string, version?: string | number): string {
+  const encodedMangaId = encodeURIComponent(mangaId);
+  const ver =
+    version !== undefined && version !== null ? `/${encodeURIComponent(String(version))}` : '';
+  return `http://mangaimg.localhost/cover/${encodedMangaId}${ver}`;
+}
+
+export interface StorageStats {
+  db_bytes: number;
+  cache_bytes: number;
+  total_bytes: number;
 }
 
 export interface FsErrorPayload {
@@ -144,25 +187,6 @@ export interface DbErrorPayload {
 
 export type TauriErrorPayload =
   FsErrorPayload | DbErrorPayload | { code: 'Unknown'; message: string };
-
-export interface DbErrorPayload {
-  code:
-    | 'Sqlite'
-    | 'Migration'
-    | 'Lock'
-    | 'Validation'
-    | 'NotFound'
-    | 'Conflict'
-    | 'Task'
-    | 'Io'
-    | 'Serialization';
-  message?: string;
-}
-
-export type TauriErrorPayload =
-  | FsErrorPayload
-  | DbErrorPayload
-  | { code: 'Unknown'; message: string };
 
 export function parseFsError(err: unknown): FsErrorPayload | null {
   if (err && typeof err === 'object') {
@@ -213,11 +237,31 @@ export interface TauriCommands {
   get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
   cancel_scan: { args: { scanId: string }; return: boolean };
   natural_sort_paths: { args: { paths: string[] }; return: string[] };
-  prepare_chapter_headers: { args: { paths: string[] }; return: PageHeader[] };
+  prepare_chapter_headers: {
+    args: { paths: string[]; mangaId?: string };
+    return: PageHeader[];
+  };
+  resolve_manga_path: {
+    args: { mangaId?: string; relativePath: string; localPath?: string };
+    return: string;
+  };
+  check_access: {
+    args: { mangaId?: string; localPath?: string };
+    return: boolean;
+  };
+  revoke_root: {
+    args: { rootPath: string };
+    return: boolean;
+  };
+  get_authorized_roots: {
+    args: Record<string, never>;
+    return: string[];
+  };
   discover_library: {
     args: { folderPath: string; scanId?: string };
     return: LibraryDiscovery | null;
   };
+  is_same_path: { args: { pathA: string; pathB: string }; return: boolean };
   set_progress_bar: { args: { progress: number }; return: void };
   show_main_window: { args: Record<string, never>; return: void };
   save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
@@ -278,134 +322,25 @@ export interface TauriCommands {
   index_title: {
     args: {
       root: string;
-      sort?: string;
-      previous?: Manga;
-      warmChapters?: number;
+      options?: {
+        sort?: string;
+        previous?: any;
+        warmChapters?: number;
+        jobId?: string;
+        title?: string;
+      };
       onProgress?: unknown;
     };
     return: IndexTitleDto;
   };
+  get_storage_stats: { args: Record<string, never>; return: StorageStats };
+  save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
 }
 
 export async function invokeCommand<K extends keyof TauriCommands>(
   cmd: K,
   args?: TauriCommands[K]['args'],
   options?: any,
-): Promise<TauriCommands[K]['return']> {
-  try {
-    return await invoke<TauriCommands[K]['return']>(cmd, args as any, options);
-  } catch (err) {
-    const parsed = parseTauriError(err);
-    console.error(`[invokeCommand] ${cmd} failed:`, parsed);
-    throw parsed;
-  }
-}
-
-export function parseTauriError(err: unknown): TauriErrorPayload {
-  const fsErr = parseFsError(err);
-  if (fsErr) return fsErr;
-  if (err && typeof err === 'object' && 'code' in err && typeof (err as any).code === 'string') {
-    return err as DbErrorPayload;
-  }
-  if (typeof err === 'string') {
-    try {
-      const parsed = JSON.parse(err);
-      if (parsed && typeof parsed === 'object' && 'code' in parsed) {
-        return parsed as DbErrorPayload;
-      }
-    } catch {
-      // not JSON
-    }
-    return { code: 'Unknown', message: err };
-  }
-  if (err instanceof Error) {
-    return { code: 'Unknown', message: err.message };
-  }
-  return { code: 'Unknown', message: String(err) };
-}
-
-export interface TauriCommands {
-  select_folder: { args: Record<string, never>; return: string | null };
-  list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
-  read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
-  get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
-  cancel_scan: { args: { scanId: string }; return: boolean };
-  natural_sort_paths: { args: { paths: string[] }; return: string[] };
-  prepare_chapter_headers: { args: { paths: string[] }; return: PageHeader[] };
-  discover_library: { args: { folderPath: string; scanId?: string }; return: LibraryDiscovery | null };
-  set_progress_bar: { args: { progress: number }; return: void };
-  show_main_window: { args: Record<string, never>; return: void };
-  save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
-  read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
-  get_thumbnail_url: { args: { id: string }; return: string | null };
-  delete_thumbnail: { args: { id: string }; return: void };
-  clear_thumbnails: { args: Record<string, never>; return: void };
-  generate_thumbnail: { args: { filePath: string; id: string }; return: CachedImageResult };
-  generate_image_variant: {
-    args: { filePath: string; maxWidth: number; maxHeight: number };
-    return: CachedImageResult;
-  };
-  get_app_config: { args: Record<string, never>; return: AppConfig };
-  save_app_config: { args: { config: AppConfig }; return: void };
-  set_window_preferences: { args: { preferences: WindowPreferences }; return: void };
-  set_app_preference: { args: { key: string; value: unknown }; return: void };
-  get_app_preference: { args: { key: string }; return: unknown };
-  record_opened_root: { args: { rootPath: string }; return: string[] };
-  get_last_opened_roots: { args: Record<string, never>; return: string[] };
-  is_library_migrated: { args: Record<string, never>; return: boolean };
-  import_legacy_library: { args: { payload: unknown }; return: boolean };
-  sqlite_list_library: { args: Record<string, never>; return: Summary[] };
-  sqlite_get_manga: { args: { id: string }; return: Manga | undefined };
-  sqlite_save_manga: { args: { manga: Manga }; return: void };
-  sqlite_save_progress: {
-    args: {
-      mangaId: string;
-      chapterIndex: number;
-      position: Position;
-      read: boolean;
-      bookmarks?: Position[];
-      updateLast: boolean;
-      expectedRevision?: number;
-      expectedUpdatedAt?: number;
-    };
-    return: 'saved' | 'stale' | 'missing';
-  };
-  sqlite_add_bookmark: {
-    args: { mangaId: string; chapterName: string; position: Position };
-    return: Position[];
-  };
-  sqlite_remove_bookmark: {
-    args: { mangaId: string; chapterName: string; position: Position };
-    return: Position[];
-  };
-  sqlite_get_bookmarked_manga_ids: {
-    args: Record<string, never>;
-    return: { allBookmarked: string[]; mangaBookmarked: string[] };
-  };
-  sqlite_delete_manga: { args: { id: string }; return: void };
-  sqlite_clear_library: { args: Record<string, never>; return: void };
-  sqlite_reset_progress: { args: Record<string, never>; return: void };
-  sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
-  sqlite_save_settings: { args: { settings: Settings }; return: void };
-  validate_library_backup: { args: { backupJson: string }; return: unknown };
-  export_library_backup: { args: Record<string, never>; return: string };
-  restore_library_backup: { args: { backupJson: string }; return: void };
-  index_title: {
-    args: {
-      root: string;
-      sort?: string;
-      previous?: Manga;
-      warmChapters?: number;
-      onProgress?: unknown;
-    };
-    return: IndexTitleDto;
-  };
-}
-
-export async function invokeCommand<K extends keyof TauriCommands>(
-  cmd: K,
-  args?: TauriCommands[K]['args'],
-  options?: any
 ): Promise<TauriCommands[K]['return']> {
   try {
     return await invoke<TauriCommands[K]['return']>(cmd, args as any, options);
@@ -426,7 +361,12 @@ export interface DesktopAPI {
     options?: ListFolderOptions,
   ): Promise<LibraryDiscovery | null>;
   naturalSortPaths?(paths: string[]): Promise<string[]>;
-  prepareChapterHeaders?(paths: string[]): Promise<PageHeader[]>;
+  prepareChapterHeaders?(paths: string[], mangaId?: string): Promise<PageHeader[]>;
+  resolvePath?(mangaId?: string, relativePath?: string, localPath?: string): Promise<string>;
+  checkAccess?(mangaId?: string, localPath?: string): Promise<boolean>;
+  revokeRoot?(rootPath: string): Promise<boolean>;
+  getAuthorizedRoots?(): Promise<string[]>;
+  isSamePath?(pathA: string, pathB: string): Promise<boolean>;
   cancelScan?(scanId: string): Promise<boolean>;
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
@@ -493,9 +433,13 @@ export interface DesktopAPI {
     onProgress?: (progress: IndexScanProgress) => void,
   ): Promise<IndexTitleDto>;
   convertFileSrc?(filePath: string, protocol?: string): string;
+  getPageImageUrl?(options: PageImageResourceOptions): string;
+  getCoverImageUrl?(mangaId: string, version?: string | number): string;
   onDragDrop?(callback: (paths: string[]) => void): () => void;
   checkForUpdate?(): Promise<DesktopUpdateInfo | null>;
   installUpdate?(): Promise<void>;
+  getStorageStats?(): Promise<StorageStats>;
+  saveFileDialog?(defaultName: string, content: string): Promise<boolean>;
 }
 
 export interface DesktopUpdateInfo {
@@ -638,11 +582,42 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
-  async prepareChapterHeaders(paths: string[]): Promise<PageHeader[]> {
+  async prepareChapterHeaders(paths: string[], mangaId?: string): Promise<PageHeader[]> {
     try {
-      return await invokeCommand('prepare_chapter_headers', { paths });
+      return await invokeCommand('prepare_chapter_headers', { paths, mangaId });
     } catch (err) {
       console.warn('Tauri prepareChapterHeaders failed:', parseFsError(err) ?? err);
+      return [];
+    }
+  }
+
+  async resolvePath(mangaId?: string, relativePath = '', localPath?: string): Promise<string> {
+    return await invokeCommand('resolve_manga_path', { mangaId, relativePath, localPath });
+  }
+
+  async checkAccess(mangaId?: string, localPath?: string): Promise<boolean> {
+    try {
+      return await invokeCommand('check_access', { mangaId, localPath });
+    } catch (err) {
+      console.warn('Tauri checkAccess failed:', parseFsError(err) ?? err);
+      return false;
+    }
+  }
+
+  async revokeRoot(rootPath: string): Promise<boolean> {
+    try {
+      return await invokeCommand('revoke_root', { rootPath });
+    } catch (err) {
+      console.warn('Tauri revokeRoot failed:', parseFsError(err) ?? err);
+      return false;
+    }
+  }
+
+  async getAuthorizedRoots(): Promise<string[]> {
+    try {
+      return await invokeCommand('get_authorized_roots');
+    } catch (err) {
+      console.warn('Tauri getAuthorizedRoots failed:', parseFsError(err) ?? err);
       return [];
     }
   }
@@ -1014,63 +989,122 @@ export class TauriDesktopBridge implements DesktopAPI {
     return await invokeCommand('validate_library_backup', { backupJson });
   }
 
+  async isSamePath(pathA: string, pathB: string): Promise<boolean> {
+    try {
+      return await invokeCommand('is_same_path', { pathA, pathB });
+    } catch {
+      return (
+        pathA.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+        pathB.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+      );
+    }
+  }
+
   async indexTitle(
     root: string,
     options?: IndexTitleOptions,
     onProgress?: (progress: IndexScanProgress) => void,
   ): Promise<IndexTitleDto> {
     const channel = new Channel<IndexScanProgress>();
-    if (onProgress) {
-      channel.onmessage = onProgress;
+    const jobId =
+      options?.jobId ??
+      (options?.signal ? `index-${Math.random().toString(36).slice(2)}` : undefined);
+
+    let abortHandler: (() => void) | undefined;
+    if (options?.signal && jobId) {
+      if (options.signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      abortHandler = () => {
+        void this.cancelScan?.(jobId);
+      };
+      options.signal.addEventListener('abort', abortHandler, { once: true });
     }
-    return await invokeCommand('index_title', {
-      root,
-      options: options
-        ? {
-            sort: options.sort,
-            warmChapters: options.warmChapters,
-            previous: options.previous
-              ? {
-                  id: options.previous.id,
-                  title: options.previous.title,
-                  slug: options.previous.slug,
-                  lastChapter: options.previous.lastChapter,
-                  addedAt: options.previous.addedAt,
-                  revision: options.previous.revision,
-                  chapters: options.previous.chapters.map((c) => ({
-                    name: c.name,
-                    read: c.read,
-                    position: c.position,
-                    bookmarks: c.bookmarks,
-                    pages: c.pages.map((p) => ({
-                      name: p.name,
-                      path: p.path,
-                      width: p.width,
-                      height: p.height,
-                      size: p.size,
-                      modified: p.modified,
-                      dimensionsPending: p.dimensionsPending,
+
+    if (onProgress) {
+      channel.onmessage = (progress) => {
+        if (options?.signal?.aborted) {
+          if (jobId) void this.cancelScan?.(jobId);
+          return;
+        }
+        onProgress(progress);
+      };
+    }
+
+    try {
+      return await invokeCommand('index_title', {
+        root,
+        options: options
+          ? {
+              sort: options.sort,
+              warmChapters: options.warmChapters,
+              jobId,
+              title: options.title,
+              previous: options.previous
+                ? {
+                    id: options.previous.id,
+                    title: options.previous.title,
+                    slug: options.previous.slug,
+                    lastChapter: options.previous.lastChapter,
+                    addedAt: options.previous.addedAt,
+                    revision: options.previous.revision,
+                    chapters: options.previous.chapters.map((c) => ({
+                      name: c.name,
+                      read: c.read,
+                      position: c.position,
+                      bookmarks: c.bookmarks,
+                      pages: c.pages.map((p) => ({
+                        name: p.name,
+                        path: p.path,
+                        width: p.width,
+                        height: p.height,
+                        size: p.size,
+                        modified: p.modified,
+                        dimensionsPending: p.dimensionsPending,
+                      })),
                     })),
-                  })),
-                }
-              : undefined,
-          }
-        : undefined,
-      onProgress: channel,
-    } as any);
+                  }
+                : undefined,
+            }
+          : undefined,
+        onProgress: channel,
+      } as any);
+    } catch (err) {
+      const fsErr = parseFsError(err);
+      if (
+        fsErr?.code === 'Cancelled' ||
+        (typeof err === 'string' && err.includes('Indexing cancelled')) ||
+        (err instanceof Error && err.message.includes('Indexing cancelled'))
+      ) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      throw err;
+    } finally {
+      if (abortHandler && options?.signal) {
+        options.signal.removeEventListener('abort', abortHandler);
+      }
+    }
   }
 
   convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
-    if (
-      typeof window !== 'undefined' &&
-      typeof (window as any).__TAURI_INTERNALS__?.convertFileSrc === 'function'
-    ) {
-      return tauriConvertFileSrc(filePath, protocol);
-    }
     const normalized = filePath.replace(/\\/g, '/');
-    const pathWithDrive = normalized.replace(/^([a-zA-Z]):/, '$1%3A');
-    const cleanPath = pathWithDrive.startsWith('/') ? pathWithDrive.slice(1) : pathWithDrive;
+    const isWindowsDrive = /^([a-zA-Z]):/.test(normalized);
+    const drivePrefix = isWindowsDrive ? normalized.slice(0, 1) + '%3A' : '';
+    const rest = isWindowsDrive
+      ? normalized.slice(2).replace(/^\/+/, '')
+      : normalized.replace(/^\/+/, '');
+    const segments = rest.split('/').filter(Boolean);
+    const encoded = segments.map((s) => encodeURIComponent(s)).join('/');
+    const cleanPath = drivePrefix ? drivePrefix + '/' + encoded : encoded;
     return `http://${protocol}.localhost/${cleanPath}`;
+  }
+
+  getPageImageUrl(options: PageImageResourceOptions): string {
+    return getPageImageUrl(options);
+  }
+
+  getCoverImageUrl(mangaId: string, version?: string | number): string {
+    return getCoverImageUrl(mangaId, version);
   }
 
   onDragDrop(callback: (paths: string[]) => void): () => void {
@@ -1153,6 +1187,14 @@ export class TauriDesktopBridge implements DesktopAPI {
       throw err;
     }
   }
+
+  async getStorageStats(): Promise<StorageStats> {
+    return invokeCommand('get_storage_stats', {});
+  }
+
+  async saveFileDialog(defaultName: string, content: string): Promise<boolean> {
+    return invokeCommand('save_file_dialog', { defaultName, content });
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -1180,6 +1222,26 @@ class WebDesktopBridge implements DesktopAPI {
   }
 
   async prepareChapterHeaders(): Promise<PageHeader[]> {
+    return [];
+  }
+
+  async resolvePath(_mangaId?: string, relativePath = '', localPath?: string): Promise<string> {
+    if (localPath) {
+      const sep = localPath.includes('\\') ? '\\' : '/';
+      return `${localPath}${sep}${relativePath.split('/').join(sep)}`;
+    }
+    return relativePath;
+  }
+
+  async checkAccess(): Promise<boolean> {
+    return true;
+  }
+
+  async revokeRoot(): Promise<boolean> {
+    return false;
+  }
+
+  async getAuthorizedRoots(): Promise<string[]> {
     return [];
   }
 
@@ -1316,6 +1378,13 @@ class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
+  async isSamePath(pathA: string, pathB: string): Promise<boolean> {
+    return (
+      pathA.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+      pathB.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+    );
+  }
+
   async indexTitle(): Promise<IndexTitleDto> {
     throw new Error('indexTitle is only available in desktop environment.');
   }
@@ -1324,11 +1393,27 @@ class WebDesktopBridge implements DesktopAPI {
     return filePath;
   }
 
+  getPageImageUrl(_options: PageImageResourceOptions): string {
+    return '';
+  }
+
+  getCoverImageUrl(_mangaId: string, _version?: string | number): string {
+    return '';
+  }
+
   async checkForUpdate(): Promise<DesktopUpdateInfo | null> {
     return null;
   }
 
   async installUpdate(): Promise<void> {}
+
+  async getStorageStats(): Promise<StorageStats> {
+    return { db_bytes: 0, cache_bytes: 0, total_bytes: 0 };
+  }
+
+  async saveFileDialog(_defaultName: string, _content: string): Promise<boolean> {
+    return false;
+  }
 }
 
 export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();

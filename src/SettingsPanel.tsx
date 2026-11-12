@@ -6,7 +6,7 @@ import { useApp } from './App';
 import { APP_VERSION } from './updates';
 import { limits, assertAtMost, withinTime } from './limits';
 import { getDiagnostics } from './diagnostics';
-import { desktopAPI } from './tauriBridge';
+import { desktopAPI, type StorageStats } from './tauriBridge';
 import {
   allManga,
   defaults,
@@ -31,12 +31,22 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const { settings: s, setSettings, notify, refresh, library } = useApp();
   const [tab, setTab] = useState<(typeof tabs)[number]>('Reading');
   const [usage, setUsage] = useState<StorageEstimate | null>(null);
+  const [nativeStats, setNativeStats] = useState<StorageStats | null>(null);
   const [storageError, setStorageError] = useState('');
   const [confirmAction, setConfirmAction] = useState<'progress' | 'all' | null>(null);
   const [clearing, setClearing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
   async function updateStorage() {
     setStorageError('');
+    if (desktopAPI.isDesktop && desktopAPI.getStorageStats) {
+      try {
+        const stats = await desktopAPI.getStorageStats();
+        setNativeStats(stats);
+        return;
+      } catch {
+        /* Fallback to navigator.storage */
+      }
+    }
     try {
       const estimate = await navigator.storage?.estimate?.();
       setUsage(estimate || null);
@@ -53,11 +63,13 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings({ ...s, [key]: value });
   async function exportData() {
-    let jsonStr: string;
-    if (desktopAPI.isDesktop && desktopAPI.exportBackup) {
-      jsonStr = await desktopAPI.exportBackup();
-    } else {
-      jsonStr = await exportBackup();
+    const jsonStr = await exportBackup();
+    if (desktopAPI.isDesktop && desktopAPI.saveFileDialog) {
+      const saved = await desktopAPI.saveFileDialog('manga-reader-backup.json', jsonStr);
+      if (saved) {
+        notify('Backup saved successfully.');
+      }
+      return;
     }
     const url = URL.createObjectURL(new Blob([jsonStr], { type: 'application/json' }));
     const a = document.createElement('a');
@@ -71,13 +83,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     try {
       assertAtMost(file.size, limits.backupBytes, 'Backup size (bytes)');
       const text = await withinTime(file.text(), limits.ioTimeoutMs, 'Reading backup');
-      let appliedSettings: Settings;
-      if (desktopAPI.isDesktop && desktopAPI.restoreBackup) {
-        appliedSettings = await desktopAPI.restoreBackup(text);
-      } else {
-        const value = validateBackup(JSON.parse(text));
-        appliedSettings = await restoreBackup(value);
-      }
+      const appliedSettings = await restoreBackup(text);
       setSettings(appliedSettings);
       await refresh();
       notify('Backup imported. Re-link folders when requested.');
@@ -473,14 +479,33 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 <section>
                   <h3>On this device</h3>
                   <dl className="storage-stats">
-                    <div>
-                      <dt>Storage used</dt>
-                      <dd>{usage?.usage !== undefined ? bytes(usage.usage) : 'Unavailable'}</dd>
-                    </div>
-                    <div>
-                      <dt>Estimated quota</dt>
-                      <dd>{usage?.quota !== undefined ? bytes(usage.quota) : 'Unavailable'}</dd>
-                    </div>
+                    {nativeStats ? (
+                      <>
+                        <div>
+                          <dt>Total storage used</dt>
+                          <dd>{bytes(nativeStats.total_bytes)}</dd>
+                        </div>
+                        <div>
+                          <dt>Database size</dt>
+                          <dd>{bytes(nativeStats.db_bytes)}</dd>
+                        </div>
+                        <div>
+                          <dt>Thumbnail & variant cache</dt>
+                          <dd>{bytes(nativeStats.cache_bytes)}</dd>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div>
+                          <dt>Storage used</dt>
+                          <dd>{usage?.usage !== undefined ? bytes(usage.usage) : 'Unavailable'}</dd>
+                        </div>
+                        <div>
+                          <dt>Estimated quota</dt>
+                          <dd>{usage?.quota !== undefined ? bytes(usage.quota) : 'Unavailable'}</dd>
+                        </div>
+                      </>
+                    )}
                     <div>
                       <dt>Library</dt>
                       <dd>
@@ -491,8 +516,9 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   </dl>
                   {storageError && <p role="status">{storageError}</p>}
                   <p className="subtle">
-                    These estimates cover the application database and cached thumbnails, not the
-                    size of your manga folders. Quota is an estimate, not reserved disk space.
+                    {nativeStats
+                      ? 'These statistics reflect your local SQLite database and cached thumbnails on disk. Manga files remain in their original folders.'
+                      : 'These estimates cover the application database and cached thumbnails, not the size of your manga folders. Quota is an estimate, not reserved disk space.'}
                   </p>
                   <div className="button-row">
                     <button className="secondary" onClick={() => void updateStorage()}>
@@ -561,7 +587,9 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       <p>
                         {confirmAction === 'progress'
                           ? 'Reset every saved reading position and read marker?'
-                          : 'Remove every title, cover preview, and reading position from this browser?'}{' '}
+                          : desktopAPI.isDesktop
+                            ? 'Remove every title, cover preview, and reading position from this application?'
+                            : 'Remove every title, cover preview, and reading position from this browser?'}{' '}
                         Original files stay untouched.
                       </p>
                       <div className="button-row">
@@ -592,6 +620,20 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       >
                         Clear all manga data
                       </button>
+                      <button
+                        className="secondary"
+                        onClick={async () => {
+                          if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
+                            await desktopAPI.clearThumbnails();
+                            await updateStorage();
+                            notify('Thumbnail cache cleared.');
+                          } else {
+                            notify('Thumbnail cache is managed by your browser storage.');
+                          }
+                        }}
+                      >
+                        Clear thumbnail cache
+                      </button>
                     </div>
                   )}
                   <p className="subtle">
@@ -603,7 +645,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <div className="button-row">
                     <button
                       className="secondary"
-                      onClick={() => {
+                      onClick={async () => {
                         const logs = getDiagnostics();
                         if (!logs.length) {
                           notify('No diagnostic entries recorded.');
@@ -615,6 +657,16 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                               `[${new Date(d.timestamp).toISOString()}] [${d.level.toUpperCase()}] [${d.operation}] ${d.code ? `(${d.code}) ` : ''}${d.safeIdentifier ? `[${d.safeIdentifier}] ` : ''}${d.message}${d.durationMs ? ` (${d.durationMs}ms)` : ''}`,
                           )
                           .join('\n');
+                        if (desktopAPI.isDesktop && desktopAPI.saveFileDialog) {
+                          const saved = await desktopAPI.saveFileDialog(
+                            'manga-reader-diagnostics.txt',
+                            text,
+                          );
+                          if (saved) {
+                            notify('Diagnostic log saved.');
+                          }
+                          return;
+                        }
                         const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
                         const a = document.createElement('a');
                         a.href = url;

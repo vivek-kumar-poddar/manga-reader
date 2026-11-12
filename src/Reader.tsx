@@ -162,21 +162,25 @@ export default function Reader({
     void getManga(stableId || '')
       .then((m) => {
         if (m) {
-          const query = new URLSearchParams(entrySearch.current);
-          const page = Number(query.get('page'));
-          if (Number.isInteger(page) && page > 0) {
-            const ci = chapterIndex(
-              chapterSegment,
-              m.chapters.length,
-              mangaId ? Number(query.get('chapter') ?? m.lastChapter) : m.lastChapter,
-            );
-            const chapter = m.chapters[ci];
-            const index = Math.min(page - 1, chapter.pages.length - 1);
-            chapter.position = {
-              page: index,
-              path: chapter.pages[index]?.path,
-              fraction: Math.max(0, Math.min(1, Number(query.get('offset')) || 0)),
-            };
+          if (m.chapters && m.chapters.length > 0) {
+            const query = new URLSearchParams(entrySearch.current);
+            const page = Number(query.get('page'));
+            if (Number.isInteger(page) && page > 0) {
+              const ci = chapterIndex(
+                chapterSegment,
+                m.chapters.length,
+                mangaId ? Number(query.get('chapter') ?? m.lastChapter) : m.lastChapter,
+              );
+              const chapter = m.chapters[ci];
+              if (chapter && chapter.pages && chapter.pages.length > 0) {
+                const index = Math.max(0, Math.min(page - 1, chapter.pages.length - 1));
+                chapter.position = {
+                  page: index,
+                  path: chapter.pages[index]?.path,
+                  fraction: Math.max(0, Math.min(1, Number(query.get('offset')) || 0)),
+                };
+              }
+            }
           }
         }
         if (live) setManga(m || null);
@@ -214,9 +218,29 @@ export default function Reader({
       <main className="reader-gate">
         <BookOpen size={32} />
         <h1>This title isn’t in your library.</h1>
-        <Link className="primary" to="/">
+        <Link className="primary button" to="/">
           Back to library
         </Link>
+      </main>
+    );
+  if (
+    !manga.chapters ||
+    manga.chapters.length === 0 ||
+    !manga.chapters.some((c) => c.pages && c.pages.length > 0)
+  )
+    return (
+      <main className="reader-gate">
+        <BookOpen size={32} />
+        <h1>No readable pages in this title</h1>
+        <p>"{manga.title || 'Untitled'}" does not contain any readable chapter or page data.</p>
+        <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+          <Link className="primary button" to="/">
+            Back to library
+          </Link>
+          <Link className="secondary button" to={mangaDetailsPath(manga)}>
+            Title details
+          </Link>
+        </div>
       </main>
     );
   return <ReaderView key={manga.id + ':' + manga.updatedAt} manga={manga} />;
@@ -830,7 +854,16 @@ function ReaderView({ manga }: { manga: Manga }) {
   }, [ready]);
   useEffect(
     () => () => {
-      void actions.current.flush().then(refresh);
+      void actions.current
+        .flush()
+        .then((res) => {
+          if (res === 'saved') {
+            refresh();
+          }
+        })
+        .catch((e) => {
+          console.warn('Failed to flush progress on unmount:', e);
+        });
       clearImageQueue();
       clearObjectUrlPool();
     },
@@ -893,6 +926,20 @@ function ReaderView({ manga }: { manga: Manga }) {
       .catch((e) => notify(errorMessage(e)));
     notify(exists >= 0 ? 'Bookmark removed.' : 'Page bookmarked.');
   }
+
+  const onDimensionsResolved = (pageIndex: number, width: number, height: number) => {
+    const c = metadata.current.chapters[ci];
+    if (c && c.pages && c.pages[pageIndex]) {
+      c.pages[pageIndex] = {
+        ...c.pages[pageIndex],
+        width,
+        height,
+        dimensionsPending: false,
+      };
+      actions.current.measure(false);
+    }
+  };
+
   if (allowed === null)
     return (
       <main className="reader-gate">
@@ -1129,6 +1176,7 @@ function ReaderView({ manga }: { manga: Manga }) {
                   lowQuality={s.lowQuality}
                   report={setFailure}
                   retryPreparation={retryPreparation}
+                  onDimensionsResolved={onDimensionsResolved}
                 />
               );
             })}
@@ -1151,6 +1199,7 @@ function ReaderView({ manga }: { manga: Manga }) {
               lowQuality={s.lowQuality}
               report={setFailure}
               retryPreparation={retryPreparation}
+              onDimensionsResolved={onDimensionsResolved}
             />
           ))
         )}

@@ -44,6 +44,11 @@ pub fn run() {
             commands::fs::natural_sort_paths,
             commands::fs::prepare_chapter_headers,
             commands::fs::discover_library,
+            commands::fs::is_same_path,
+            commands::fs::resolve_manga_path,
+            commands::fs::check_access,
+            commands::fs::revoke_root,
+            commands::fs::get_authorized_roots,
             commands::window::set_progress_bar,
             commands::window::show_main_window,
             commands::cache::save_thumbnail,
@@ -51,6 +56,8 @@ pub fn run() {
             commands::cache::get_thumbnail_url,
             commands::cache::delete_thumbnail,
             commands::cache::clear_thumbnails,
+            commands::cache::get_storage_stats,
+            commands::cache::save_file_dialog,
             commands::image::generate_thumbnail,
             commands::image::generate_image_variant,
             commands::config::get_app_config,
@@ -106,11 +113,12 @@ pub fn run() {
                         for path in paths {
                             if path.is_dir() {
                                 allowed.add_root(path.clone());
-                            } else if let Some(parent) = path.parent() {
-                                allowed.add_root(parent.to_path_buf());
+                            } else if path.is_file() {
+                                // Authorize only the dropped file, never its parent directory
+                                allowed.add_root(path.clone());
                             }
                         }
-                        commands::fs::save_persisted_roots(app, &allowed.0.read().unwrap());
+                        commands::fs::save_persisted_roots(app, &allowed);
                     }
                     let path_strings: Vec<String> =
                         paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
@@ -123,13 +131,6 @@ pub fn run() {
             let handle = app.handle();
             let initial_roots = commands::fs::init_allowed_roots(handle);
             let config_state = commands::config::AppConfigState::new(handle);
-            {
-                let cfg = config_state.get();
-                for root in &cfg.last_opened_roots {
-                    initial_roots.add_root(std::path::PathBuf::from(root));
-                }
-            }
-            commands::fs::save_persisted_roots(handle, &initial_roots.0.read().unwrap());
             app.manage(initial_roots);
             app.manage(commands::fs::ScanManager::default());
             app.manage(config_state);

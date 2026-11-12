@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "./data": ["src/data.desktop.ts"],
+      "./storage": ["src/desktop/storage.ts"],
+      "./importScan": ["src/desktop/importScan.ts"],
+      "./validation": ["src/desktop/validation.ts"]
+    }
+  },
+  "include": [
+    "src/main.desktop.tsx",
+    "src/data.desktop.ts",
+    "src/desktop/**/*",
+    "src/**/*",
+    "vite.config.ts"
+  ]
+}

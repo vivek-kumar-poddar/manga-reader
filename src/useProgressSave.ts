@@ -61,13 +61,21 @@ export function useProgressSave({
     }
     if (inFlight.current) {
       if (!queuedFlush.current) {
-        queuedFlush.current = inFlight.current.then(() => {
-          queuedFlush.current = null;
-          if (dirty.current) {
-            return flush();
-          }
-          return 'saved';
-        });
+        queuedFlush.current = inFlight.current
+          .catch(() => {
+            // Absorb in-flight rejection so the queued retry attempt can proceed
+          })
+          .then(() => {
+            queuedFlush.current = null;
+            if (dirty.current) {
+              return flush();
+            }
+            return 'saved';
+          })
+          .catch((err) => {
+            queuedFlush.current = null;
+            throw err;
+          });
       }
       return queuedFlush.current;
     }
@@ -108,11 +116,19 @@ export function useProgressSave({
     })();
 
     inFlight.current = savePromise;
-    savePromise.finally(() => {
-      if (inFlight.current === savePromise) {
-        inFlight.current = null;
-      }
-    });
+    // Handled cleanup chain prevents unhandled rejection on the cleanup promise
+    savePromise.then(
+      () => {
+        if (inFlight.current === savePromise) {
+          inFlight.current = null;
+        }
+      },
+      () => {
+        if (inFlight.current === savePromise) {
+          inFlight.current = null;
+        }
+      },
+    );
     return savePromise;
   }
 

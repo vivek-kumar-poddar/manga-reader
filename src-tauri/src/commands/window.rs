@@ -1,5 +1,5 @@
-use tauri::window::{ProgressBarState, ProgressBarStatus};
 use tauri::WebviewWindow;
+use tauri::window::{ProgressBarState, ProgressBarStatus};
 
 /// JavaScript initialization script injected into the webview to lock visual zoom,
 /// prevent accidental drag-and-drop navigation away from index.html, route

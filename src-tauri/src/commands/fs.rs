@@ -246,8 +246,12 @@ pub fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
                     return ord;
                 }
             }
-            (Token::Num(_, _) | Token::BigNum(_), Token::Str(_)) => return std::cmp::Ordering::Less,
-            (Token::Str(_), Token::Num(_, _) | Token::BigNum(_)) => return std::cmp::Ordering::Greater,
+            (Token::Num(_, _) | Token::BigNum(_), Token::Str(_)) => {
+                return std::cmp::Ordering::Less;
+            }
+            (Token::Str(_), Token::Num(_, _) | Token::BigNum(_)) => {
+                return std::cmp::Ordering::Greater;
+            }
         }
     }
 
@@ -260,14 +264,182 @@ pub fn natural_sort_paths(mut paths: Vec<String>) -> Vec<String> {
     paths
 }
 
+pub fn resolve_relative_path(base_dir: &Path, rel_path: &str) -> Result<PathBuf, FsError> {
+    let trimmed = rel_path.trim().replace('\\', "/");
+    if trimmed.is_empty() {
+        return Err(FsError::NotFound("Empty relative path".to_string()));
+    }
+    let rel = Path::new(&trimmed);
+
+    // Prevent parent directory traversal
+    if rel
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path contains illegal parent directory traversal: '{rel_path}'"
+        )));
+    }
+
+    // Prevent absolute paths from escaping base_dir
+    #[cfg(windows)]
+    if trimmed.starts_with('/') || (trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':') {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path must be relative to root: '{rel_path}'"
+        )));
+    }
+    #[cfg(not(windows))]
+    if rel.is_absolute() {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path must be relative to root: '{rel_path}'"
+        )));
+    }
+
+    let combined = base_dir.join(rel);
+    let canonical = dunce::canonicalize(&combined).map_err(|e| {
+        FsError::NotFound(format!(
+            "Failed to resolve path '{}' under '{}': {e}",
+            rel_path,
+            base_dir.display()
+        ))
+    })?;
+
+    let canonical_base = dunce::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+    if !canonical.starts_with(&canonical_base) {
+        return Err(FsError::PathNotAllowed(format!(
+            "Path '{}' escapes base directory '{}'",
+            rel_path,
+            base_dir.display()
+        )));
+    }
+
+    Ok(canonical)
+}
+
+#[tauri::command]
+pub async fn resolve_manga_path(
+    app: AppHandle,
+    manga_id: Option<String>,
+    relative_path: String,
+    local_path: Option<String>,
+) -> Result<String, FsError> {
+    let base_str = if let Some(ref lp) = local_path {
+        if !lp.trim().is_empty() {
+            Some(lp.trim().to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let base_str = match base_str {
+        Some(s) => s,
+        None => {
+            if let Some(ref id) = manga_id {
+                if let Some(db) = app.try_state::<crate::db::DbState>() {
+                    db.get_local_path(id).await.ok_or_else(|| {
+                        FsError::NotFound(format!("Manga '{id}' has no localPath recorded"))
+                    })?
+                } else {
+                    return Err(FsError::NotFound(
+                        "Database state not initialized".to_string(),
+                    ));
+                }
+            } else {
+                return Err(FsError::NotFound(
+                    "Neither manga_id nor local_path provided".to_string(),
+                ));
+            }
+        }
+    };
+
+    let base_dir = PathBuf::from(base_str);
+    let resolved = resolve_relative_path(&base_dir, &relative_path)?;
+
+    let allowed = app.state::<AllowedRoots>();
+    if !allowed.is_allowed(&resolved) {
+        return Err(FsError::PathNotAllowed(format!(
+            "Resolved path '{}' is not under an allowed root",
+            resolved.display()
+        )));
+    }
+
+    Ok(resolved.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+pub async fn check_access(
+    app: AppHandle,
+    manga_id: Option<String>,
+    local_path: Option<String>,
+) -> Result<bool, FsError> {
+    let target_path = if let Some(ref lp) = local_path {
+        if !lp.trim().is_empty() {
+            Some(lp.trim().to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let target_path = match target_path {
+        Some(p) => p,
+        None => {
+            if let Some(ref id) = manga_id {
+                if let Some(db) = app.try_state::<crate::db::DbState>() {
+                    match db.get_local_path(id).await {
+                        Some(p) => p,
+                        None => return Ok(false),
+                    }
+                } else {
+                    return Ok(false);
+                }
+            } else {
+                return Ok(false);
+            }
+        }
+    };
+
+    let trimmed = target_path.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+
+    let pb = Path::new(trimmed);
+    let canonical = match dunce::canonicalize(pb) {
+        Ok(c) => c,
+        Err(_) => return Ok(false),
+    };
+
+    if !canonical.is_dir() {
+        return Ok(false);
+    }
+
+    let allowed = app.state::<AllowedRoots>();
+    Ok(allowed.is_allowed(&canonical))
+}
+
 #[tauri::command]
 pub async fn prepare_chapter_headers(
     app: AppHandle,
     paths: Vec<String>,
+    manga_id: Option<String>,
 ) -> Result<Vec<PageHeader>, FsError> {
     let allowed_set = {
         let allowed = app.state::<AllowedRoots>();
-        allowed.0.read().unwrap().clone()
+        allowed.get_active_roots()
+    };
+
+    let base_dir: Option<PathBuf> = if let Some(ref id) = manga_id {
+        if let Some(db) = app.try_state::<crate::db::DbState>() {
+            db.get_local_path(id).await.map(PathBuf::from)
+        } else {
+            None
+        }
+    } else {
+        None
     };
 
     // Parallel extraction with Rayon off main thread
@@ -277,7 +449,17 @@ pub async fn prepare_chapter_headers(
             .filter_map(|p_str| {
                 let trimmed = p_str.trim();
                 let path = Path::new(trimmed);
-                let resolved = dunce::canonicalize(path).ok()?;
+
+                let resolved = if path.is_relative() {
+                    if let Some(ref base) = base_dir {
+                        resolve_relative_path(base, trimmed).ok()?
+                    } else {
+                        dunce::canonicalize(path).ok()?
+                    }
+                } else {
+                    dunce::canonicalize(path).ok()?
+                };
+
                 if allowed_set.is_empty() || !allowed_set.iter().any(|r| resolved.starts_with(r)) {
                     return None;
                 }
@@ -354,24 +536,134 @@ struct CandidateEntry {
 }
 
 #[derive(Default)]
-pub struct AllowedRoots(pub RwLock<HashSet<PathBuf>>);
+pub struct AllowedRoots {
+    pub active: RwLock<HashSet<PathBuf>>,
+    pub unavailable: RwLock<HashSet<PathBuf>>,
+}
+
+pub fn resolve_canonical_path(path: &Path) -> Option<PathBuf> {
+    if let Ok(c) = dunce::canonicalize(path) {
+        return Some(c);
+    }
+    // If the leaf does not exist on disk, canonicalize its closest existing ancestor
+    let mut remaining = Vec::new();
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        if let Some(file_name) = current.file_name() {
+            remaining.push(file_name);
+        }
+        if let Ok(c) = dunce::canonicalize(parent) {
+            let mut resolved = c;
+            for comp in remaining.into_iter().rev() {
+                resolved.push(comp);
+            }
+            return Some(resolved);
+        }
+        current = parent;
+    }
+    None
+}
 
 impl AllowedRoots {
+    pub fn new(active: HashSet<PathBuf>, unavailable: HashSet<PathBuf>) -> Self {
+        Self {
+            active: RwLock::new(active),
+            unavailable: RwLock::new(unavailable),
+        }
+    }
+
     pub fn is_allowed(&self, path: &Path) -> bool {
-        let roots = self.0.read().unwrap();
-        if roots.is_empty() {
+        // Fail closed if path cannot be canonicalized to an existing ancestor
+        let canonical = match resolve_canonical_path(path) {
+            Some(c) => c,
+            None => return false,
+        };
+        if canonical
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             return false;
         }
-        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        if canonical.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-            return false;
+
+        // 1. Check currently active canonical roots
+        {
+            let active = self.active.read().unwrap();
+            if !active.is_empty() && active.iter().any(|root| canonical.starts_with(root)) {
+                return true;
+            }
         }
-        roots.iter().any(|root| canonical.starts_with(root))
+
+        // 2. Check if an unavailable root (e.g. re-attached drive) has become reachable
+        let mut promoted = false;
+        {
+            let mut unavail = self.unavailable.write().unwrap();
+            let mut to_promote = Vec::new();
+            for unavail_root in unavail.iter() {
+                if let Ok(c_root) = dunce::canonicalize(unavail_root) {
+                    if canonical.starts_with(&c_root) {
+                        to_promote.push((unavail_root.clone(), c_root));
+                    }
+                }
+            }
+            for (u, c) in to_promote {
+                unavail.remove(&u);
+                self.active.write().unwrap().insert(c);
+                promoted = true;
+            }
+        }
+        promoted
     }
 
     pub fn add_root(&self, path: PathBuf) {
-        let canonical = dunce::canonicalize(&path).unwrap_or(path);
-        self.0.write().unwrap().insert(canonical);
+        if let Ok(canonical) = dunce::canonicalize(&path) {
+            self.active.write().unwrap().insert(canonical);
+        } else {
+            // Fail closed for active authorization; preserve separately for relinking
+            self.unavailable.write().unwrap().insert(path);
+        }
+    }
+
+    pub fn revoke_root(&self, path: &Path) -> bool {
+        let canonical = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let mut active = self.active.write().unwrap();
+        let mut unavail = self.unavailable.write().unwrap();
+
+        let removed_active = active.remove(&canonical);
+        let removed_unavail = unavail.remove(path) || unavail.remove(&canonical);
+
+        let to_remove_active: Vec<PathBuf> = active
+            .iter()
+            .filter(|r| **r == canonical || r.starts_with(&canonical) || canonical.starts_with(r))
+            .cloned()
+            .collect();
+        for r in to_remove_active {
+            active.remove(&r);
+        }
+
+        let to_remove_unavail: Vec<PathBuf> = unavail
+            .iter()
+            .filter(|r| **r == canonical || r.starts_with(&canonical) || canonical.starts_with(r))
+            .cloned()
+            .collect();
+        for r in to_remove_unavail {
+            unavail.remove(&r);
+        }
+
+        removed_active || removed_unavail
+    }
+
+    pub fn get_roots(&self) -> Vec<PathBuf> {
+        let mut all: Vec<PathBuf> = self.active.read().unwrap().iter().cloned().collect();
+        for unavail in self.unavailable.read().unwrap().iter() {
+            if !all.contains(unavail) {
+                all.push(unavail.clone());
+            }
+        }
+        all
+    }
+
+    pub fn get_active_roots(&self) -> HashSet<PathBuf> {
+        self.active.read().unwrap().clone()
     }
 }
 
@@ -392,23 +684,83 @@ pub fn is_ignored_directory(path: &Path) -> bool {
     name.starts_with('.') || IGNORED_FOLDER_NAMES.contains(&name.as_str())
 }
 
-/// Atomically writes data to path by writing to a temporary file (*.tmp) first
-/// and then renaming it over the destination path.
-pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data)?;
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, LazyLock, Mutex};
+
+static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(1);
+static DESTINATION_LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn get_destination_lock(path: &Path) -> Arc<Mutex<()>> {
+    let key = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut locks = DESTINATION_LOCKS.lock().unwrap();
+    locks
+        .entry(key)
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
-pub fn load_persisted_roots(app: &AppHandle) -> HashSet<PathBuf> {
-    let mut set = HashSet::new();
+/// Atomically writes data to path using a unique same-directory temporary file
+/// serialized per destination, syncing to disk before renaming over the target.
+pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    let dest_lock = get_destination_lock(path);
+    let _guard = dest_lock.lock().unwrap();
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+
+    let file_stem = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("atomic");
+    let pid = std::process::id();
+    let counter = ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let tmp = parent.join(format!(".{file_stem}_{pid}_{counter}.tmp"));
+
+    let res = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(data)?;
+        file.sync_all()?;
+        drop(file);
+
+        #[cfg(target_os = "windows")]
+        {
+            if path.exists() {
+                let mut attempts = 0;
+                loop {
+                    match std::fs::rename(&tmp, path) {
+                        Ok(()) => return Ok(()),
+                        Err(_e) if attempts < 3 => {
+                            attempts += 1;
+                            std::thread::sleep(std::time::Duration::from_millis(15));
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+            } else {
+                std::fs::rename(&tmp, path)?;
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::fs::rename(&tmp, path)?;
+        }
+
+        Ok(())
+    })();
+
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
+pub fn load_persisted_roots(app: &AppHandle) -> (HashSet<PathBuf>, HashSet<PathBuf>) {
+    let mut active = HashSet::new();
+    let mut unavailable = HashSet::new();
     if let Ok(app_dir) = app.path().app_data_dir() {
         let file_path = app_dir.join("allowed_roots.json");
         let candidates = [file_path.clone(), file_path.with_extension("tmp")];
@@ -419,12 +771,13 @@ pub fn load_persisted_roots(app: &AppHandle) -> HashSet<PathBuf> {
                         for p in paths {
                             let pb = PathBuf::from(p);
                             if let Ok(canonical) = dunce::canonicalize(&pb) {
-                                set.insert(canonical);
+                                active.insert(canonical);
                             } else {
-                                set.insert(pb);
+                                // Unavailable at startup (e.g. disconnected drive), preserve separately
+                                unavailable.insert(pb);
                             }
                         }
-                        if !set.is_empty() {
+                        if !active.is_empty() || !unavailable.is_empty() {
                             if candidate != &file_path {
                                 let _ = std::fs::rename(candidate, &file_path);
                             }
@@ -435,14 +788,18 @@ pub fn load_persisted_roots(app: &AppHandle) -> HashSet<PathBuf> {
             }
         }
     }
-    set
+    (active, unavailable)
 }
 
-pub fn save_persisted_roots(app: &AppHandle, roots: &HashSet<PathBuf>) {
+pub fn save_persisted_roots(app: &AppHandle, allowed: &AllowedRoots) {
     if let Ok(app_dir) = app.path().app_data_dir() {
         let _ = std::fs::create_dir_all(&app_dir);
         let file_path = app_dir.join("allowed_roots.json");
-        let list: Vec<String> = roots.iter().map(|p| p.to_string_lossy().to_string()).collect();
+        let list: Vec<String> = allowed
+            .get_roots()
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect();
         if let Ok(data) = serde_json::to_string(&list) {
             let _ = write_atomic(&file_path, data.as_bytes());
         }
@@ -450,21 +807,35 @@ pub fn save_persisted_roots(app: &AppHandle, roots: &HashSet<PathBuf>) {
 }
 
 pub fn init_allowed_roots(app: &AppHandle) -> AllowedRoots {
-    let loaded = load_persisted_roots(app);
-    AllowedRoots(RwLock::new(loaded))
+    let (active, unavailable) = load_persisted_roots(app);
+    AllowedRoots::new(active, unavailable)
 }
+
+pub struct ScanHandle {
+    pub receiver: tokio::sync::watch::Receiver<bool>,
+    pub flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+type ActiveScanEntry = (
+    tokio::sync::watch::Sender<bool>,
+    std::sync::Arc<std::sync::atomic::AtomicBool>,
+);
+type ActiveScanMap = std::collections::HashMap<String, ActiveScanEntry>;
 
 #[derive(Default)]
 pub struct ScanManager {
-    active_scans:
-        std::sync::Mutex<std::collections::HashMap<String, tokio::sync::watch::Sender<bool>>>,
+    active_scans: std::sync::Mutex<ActiveScanMap>,
 }
 
 impl ScanManager {
-    pub fn register(&self, id: &str) -> tokio::sync::watch::Receiver<bool> {
+    pub fn register(&self, id: &str) -> ScanHandle {
         let (tx, rx) = tokio::sync::watch::channel(false);
-        self.active_scans.lock().unwrap().insert(id.to_string(), tx);
-        rx
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.active_scans
+            .lock()
+            .unwrap()
+            .insert(id.to_string(), (tx, std::sync::Arc::clone(&flag)));
+        ScanHandle { receiver: rx, flag }
     }
 
     pub fn unregister(&self, id: &str) {
@@ -472,9 +843,18 @@ impl ScanManager {
     }
 
     pub fn cancel(&self, id: &str) -> bool {
-        if let Some(tx) = self.active_scans.lock().unwrap().get(id) {
+        if let Some((tx, flag)) = self.active_scans.lock().unwrap().get(id) {
+            flag.store(true, std::sync::atomic::Ordering::Relaxed);
             let _ = tx.send(true);
             true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_cancelled(&self, id: &str) -> bool {
+        if let Some((_, flag)) = self.active_scans.lock().unwrap().get(id) {
+            flag.load(std::sync::atomic::Ordering::Relaxed)
         } else {
             false
         }
@@ -535,7 +915,7 @@ pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
         let pb = PathBuf::from(path.to_string());
         let allowed = app.state::<AllowedRoots>();
         allowed.add_root(pb);
-        save_persisted_roots(&app, &allowed.0.read().unwrap());
+        save_persisted_roots(&app, &allowed);
     }
     Ok(folder.map(|p| p.to_string()))
 }
@@ -544,6 +924,65 @@ pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
 pub fn cancel_scan(app: AppHandle, scan_id: String) -> Result<bool, FsError> {
     let scan_mgr = app.state::<ScanManager>();
     Ok(scan_mgr.cancel(&scan_id))
+}
+
+#[tauri::command(async)]
+pub fn is_same_path(path_a: String, path_b: String) -> bool {
+    let pa = Path::new(path_a.trim());
+    let pb = Path::new(path_b.trim());
+    if let (Ok(ca), Ok(cb)) = (dunce::canonicalize(pa), dunce::canonicalize(pb)) {
+        return ca == cb;
+    }
+    let norm_a = path_a
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase();
+    let norm_b = path_b
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase();
+    norm_a == norm_b
+}
+
+#[tauri::command(async)]
+pub fn revoke_root(app: AppHandle, root_path: String) -> Result<bool, FsError> {
+    let trimmed = root_path.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let pb = PathBuf::from(trimmed);
+    let allowed = app.state::<AllowedRoots>();
+    let removed = allowed.revoke_root(&pb);
+    if removed {
+        save_persisted_roots(&app, &allowed);
+        // Also remove from last_opened_roots in AppConfig if present
+        if let Some(config_state) = app.try_state::<crate::commands::config::AppConfigState>() {
+            let _ = config_state.update(&app, |cfg| {
+                cfg.last_opened_roots.retain(|r| {
+                    if let (Ok(cr), Ok(cp)) =
+                        (dunce::canonicalize(Path::new(r)), dunce::canonicalize(&pb))
+                    {
+                        cr != cp
+                    } else {
+                        r != trimmed
+                    }
+                });
+            });
+        }
+    }
+    Ok(removed)
+}
+
+#[tauri::command(async)]
+pub fn get_authorized_roots(app: AppHandle) -> Result<Vec<String>, FsError> {
+    let allowed = app.state::<AllowedRoots>();
+    let roots = allowed.get_roots();
+    Ok(roots
+        .into_iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect())
 }
 
 #[tauri::command]
@@ -594,7 +1033,8 @@ pub async fn list_folder(
 
     // Setup cancellation receiver if scan_id provided
     let scan_mgr = app.state::<ScanManager>();
-    let rx = scan_id.as_deref().map(|id| scan_mgr.register(id));
+    let handle = scan_id.as_deref().map(|id| scan_mgr.register(id));
+    let cancel_flag = handle.as_ref().map(|h| std::sync::Arc::clone(&h.flag));
 
     struct ScanGuard<'a> {
         mgr: &'a ScanManager,
@@ -612,16 +1052,16 @@ pub async fn list_folder(
         id: scan_id.as_deref(),
     };
 
-    let check_cancelled = |rx: Option<&tokio::sync::watch::Receiver<bool>>| -> Result<(), FsError> {
-        if let Some(receiver) = rx {
-            if *receiver.borrow() {
+    let check_cancelled = |handle: Option<&ScanHandle>| -> Result<(), FsError> {
+        if let Some(h) = handle {
+            if h.flag.load(std::sync::atomic::Ordering::Relaxed) || *h.receiver.borrow() {
                 return Err(FsError::Cancelled);
             }
         }
         Ok(())
     };
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     // Collect candidates off the main thread
     let root_clone = root.clone();
@@ -645,6 +1085,11 @@ pub async fn list_folder(
             });
 
         for entry_res in walker {
+            if let Some(ref cf) = cancel_flag {
+                if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
             if list.len() >= MAX_SCAN_FILES {
                 break;
             }
@@ -696,7 +1141,7 @@ pub async fn list_folder(
     .await
     .map_err(|e| FsError::Io(e.to_string()))?;
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     let total = candidates.len();
     let _ = app.emit(
@@ -717,7 +1162,7 @@ pub async fn list_folder(
     let mut done = 0;
 
     for chunk in candidates.chunks(SCAN_BATCH_SIZE) {
-        check_cancelled(rx.as_ref())?;
+        check_cancelled(handle.as_ref())?;
 
         let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
         let batch_results: Vec<FolderEntry> = tauri::async_runtime::spawn_blocking(move || {
@@ -754,7 +1199,7 @@ pub async fn list_folder(
         tokio::task::yield_now().await;
     }
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     Ok(results)
 }
@@ -786,7 +1231,8 @@ pub async fn discover_library(
     }
 
     let scan_mgr = app.state::<ScanManager>();
-    let rx = scan_id.as_deref().map(|id| scan_mgr.register(id));
+    let handle = scan_id.as_deref().map(|id| scan_mgr.register(id));
+    let cancel_flag = handle.as_ref().map(|h| std::sync::Arc::clone(&h.flag));
 
     struct ScanGuard<'a> {
         mgr: &'a ScanManager,
@@ -804,16 +1250,16 @@ pub async fn discover_library(
         id: scan_id.as_deref(),
     };
 
-    let check_cancelled = |rx: Option<&tokio::sync::watch::Receiver<bool>>| -> Result<(), FsError> {
-        if let Some(receiver) = rx {
-            if *receiver.borrow() {
+    let check_cancelled = |handle: Option<&ScanHandle>| -> Result<(), FsError> {
+        if let Some(h) = handle {
+            if h.flag.load(std::sync::atomic::Ordering::Relaxed) || *h.receiver.borrow() {
                 return Err(FsError::Cancelled);
             }
         }
         Ok(())
     };
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     // Collect candidates off the main thread
     let root_clone = root.clone();
@@ -837,6 +1283,11 @@ pub async fn discover_library(
             });
 
         for entry_res in walker {
+            if let Some(ref cf) = cancel_flag {
+                if cf.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+            }
             if list.len() >= MAX_SCAN_FILES {
                 break;
             }
@@ -888,7 +1339,7 @@ pub async fn discover_library(
     .await
     .map_err(|e| FsError::Io(e.to_string()))?;
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     let total_files = candidates.len();
     let _ = app.emit(
@@ -908,7 +1359,9 @@ pub async fn discover_library(
         });
     }
 
-    let has_nested_titles = candidates.iter().any(|c| c.rel_path.split('/').count() >= 3);
+    let has_nested_titles = candidates
+        .iter()
+        .any(|c| c.rel_path.split('/').count() >= 3);
     let root_folder_name = root
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
@@ -919,7 +1372,7 @@ pub async fn discover_library(
     let mut done = 0;
 
     for chunk in candidates.chunks(SCAN_BATCH_SIZE) {
-        check_cancelled(rx.as_ref())?;
+        check_cancelled(handle.as_ref())?;
 
         let chunk_vec: Vec<CandidateEntry> = chunk.to_vec();
         let batch: Vec<(CandidateEntry, Option<u32>, Option<u32>)> =
@@ -950,7 +1403,7 @@ pub async fn discover_library(
         tokio::task::yield_now().await;
     }
 
-    check_cancelled(rx.as_ref())?;
+    check_cancelled(handle.as_ref())?;
 
     use std::collections::BTreeMap;
     let mut title_map: BTreeMap<String, BTreeMap<String, Vec<DiscoveredPage>>> = BTreeMap::new();
@@ -1099,12 +1552,20 @@ pub async fn read_file(
         )));
     }
 
-    let metadata = tokio::fs::metadata(&resolved)
+    // Open file directly - holding the descriptor prevents TOCTOU junction / link substitution
+    let mut file = tokio::fs::File::open(&resolved)
+        .await
+        .map_err(|e| FsError::Io(format!("Failed to open file: {e}")))?;
+
+    let metadata = file
+        .metadata()
         .await
         .map_err(|e| FsError::Io(format!("Failed to read metadata: {e}")))?;
 
     if !metadata.is_file() {
-        return Err(FsError::NotFound("Target path is not a regular file".into()));
+        return Err(FsError::NotFound(
+            "Target path is not a regular file".into(),
+        ));
     }
 
     if metadata.len() > MAX_FILE_READ_BYTES {
@@ -1115,7 +1576,8 @@ pub async fn read_file(
         )));
     }
 
-    let bytes = tokio::fs::read(&resolved)
+    let mut bytes = Vec::with_capacity(metadata.len() as usize);
+    tokio::io::AsyncReadExt::read_to_end(&mut file, &mut bytes)
         .await
         .map_err(|e| FsError::Io(format!("Failed to read file bytes: {e}")))?;
 
@@ -1169,9 +1631,17 @@ mod tests {
     fn test_is_image_file() {
         for ext in ALLOWED_IMAGE_EXTENSIONS {
             let filename = format!("cover.{}", ext);
-            assert!(is_image_file(Path::new(&filename)), "Extension .{} should be allowed", ext);
+            assert!(
+                is_image_file(Path::new(&filename)),
+                "Extension .{} should be allowed",
+                ext
+            );
             let uppercase = format!("cover.{}", ext.to_uppercase());
-            assert!(is_image_file(Path::new(&uppercase)), "Uppercase .{} should be allowed", ext);
+            assert!(
+                is_image_file(Path::new(&uppercase)),
+                "Uppercase .{} should be allowed",
+                ext
+            );
         }
 
         assert!(!is_image_file(Path::new("document.pdf")));
@@ -1197,7 +1667,13 @@ mod tests {
 
     #[test]
     fn test_write_atomic() {
-        let temp_dir = std::env::temp_dir().join(format!("manga_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
         let target = temp_dir.join("config.json");
         let tmp = target.with_extension("tmp");
@@ -1213,22 +1689,43 @@ mod tests {
         assert!(write_atomic(&target, updated).is_ok());
         assert_eq!(std::fs::read(&target).unwrap(), updated);
 
+        // Test concurrent writers to the same destination
+        let mut handles = Vec::new();
+        for i in 0..8 {
+            let target_clone = target.clone();
+            handles.push(std::thread::spawn(move || {
+                let data = format!("{{\"worker\":{i}}}");
+                write_atomic(&target_clone, data.as_bytes()).unwrap();
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert!(target.exists());
+        let final_content = std::fs::read_to_string(&target).unwrap();
+        assert!(final_content.starts_with("{\"worker\":"));
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
     fn test_parse_image_dimensions() {
-        let temp_dir = std::env::temp_dir().join(format!("manga_dim_test_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_dim_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // 1x1 transparent PNG
         let png_bytes = [
-            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-            0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00,
-            0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
-            0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00, 0x00, 0x00, 0x00, 0x49,
-            0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+            0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
+            0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+            0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78,
+            0x9c, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+            0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
         ];
         let png_path = temp_dir.join("test.png");
         std::fs::write(&png_path, png_bytes).unwrap();
@@ -1321,7 +1818,13 @@ mod tests {
 
     #[test]
     fn test_parse_image_dimensions_corrupted_headers() {
-        let temp_dir = std::env::temp_dir().join(format!("manga_dim_corrupt_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_dim_corrupt_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
         let _ = std::fs::create_dir_all(&temp_dir);
 
         // Truncated PNG header
@@ -1340,16 +1843,145 @@ mod tests {
 
         // Valid GIF 1x1
         let gif_bytes = [
-            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00,
-            0x00, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00,
-            0x00, 0x00, 0x00, 0x2c, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-            0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3b,
+            0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0xff,
+            0xff, 0xff, 0x00, 0x00, 0x00, 0x21, 0xf9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2c,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00,
+            0x3b,
         ];
         let gif_file = temp_dir.join("test.gif");
         std::fs::write(&gif_file, gif_bytes).unwrap();
         let (gw, gh) = parse_image_dimensions(&gif_file);
         assert_eq!(gw, Some(1));
         assert_eq!(gh, Some(1));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_same_path() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_same_path_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let sub_dir = temp_dir.join("subfolder");
+        let _ = std::fs::create_dir_all(&sub_dir);
+
+        let p1 = sub_dir.to_string_lossy().to_string();
+        let p2 = format!("{}/", p1.replace('\\', "/"));
+        assert!(is_same_path(p1.clone(), p2));
+
+        let non_existent_1 = "C:/test/path/b".to_string();
+        let non_existent_2 = "C:\\test\\path\\b".to_string();
+        // Fallback normalized comparison handles case/slash differences
+        assert!(is_same_path(non_existent_1, non_existent_2));
+
+        let different = temp_dir.to_string_lossy().to_string();
+        assert!(!is_same_path(p1, different));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_scan_manager_atomic_cancellation() {
+        let mgr = ScanManager::default();
+        let handle = mgr.register("scan-123");
+        assert!(!handle.flag.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(!*handle.receiver.borrow());
+
+        assert!(mgr.cancel("scan-123"));
+        assert!(handle.flag.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(*handle.receiver.borrow());
+        assert!(mgr.is_cancelled("scan-123"));
+
+        mgr.unregister("scan-123");
+        assert!(!mgr.cancel("scan-123"));
+    }
+
+    #[test]
+    fn test_resolve_relative_path_safety() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_resolve_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let ch1 = temp_dir.join("Chapter 1");
+        let _ = std::fs::create_dir_all(&ch1);
+        let page1 = ch1.join("01.jpg");
+        std::fs::write(&page1, b"fake image").unwrap();
+
+        // 1. Valid resolution
+        let resolved = resolve_relative_path(&temp_dir, "Chapter 1/01.jpg").unwrap();
+        assert_eq!(
+            dunce::canonicalize(&page1).unwrap(),
+            dunce::canonicalize(resolved).unwrap()
+        );
+
+        // 2. Traversal rejection
+        assert!(matches!(
+            resolve_relative_path(&temp_dir, "../secret.txt"),
+            Err(FsError::PathNotAllowed(_))
+        ));
+        assert!(matches!(
+            resolve_relative_path(&temp_dir, "Chapter 1/../../secret.txt"),
+            Err(FsError::PathNotAllowed(_))
+        ));
+
+        // 3. Absolute path rejection
+        #[cfg(windows)]
+        {
+            assert!(matches!(
+                resolve_relative_path(&temp_dir, "C:/Windows/System32/cmd.exe"),
+                Err(FsError::PathNotAllowed(_))
+            ));
+            assert!(matches!(
+                resolve_relative_path(&temp_dir, "/Windows/System32"),
+                Err(FsError::PathNotAllowed(_))
+            ));
+        }
+
+        // 4. Non-existent file error
+        assert!(matches!(
+            resolve_relative_path(&temp_dir, "Chapter 1/does_not_exist.jpg"),
+            Err(FsError::NotFound(_))
+        ));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_revoke_root_and_get_authorized_roots() {
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_roots_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let allowed = AllowedRoots::default();
+        assert_eq!(allowed.get_roots().len(), 0);
+
+        allowed.add_root(temp_dir.clone());
+        assert!(allowed.is_allowed(&temp_dir));
+        assert_eq!(allowed.get_roots().len(), 1);
+
+        // Revoke root
+        assert!(allowed.revoke_root(&temp_dir));
+        assert!(!allowed.is_allowed(&temp_dir));
+        assert_eq!(allowed.get_roots().len(), 0);
+
+        // Revoking already revoked root returns false
+        assert!(!allowed.revoke_root(&temp_dir));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

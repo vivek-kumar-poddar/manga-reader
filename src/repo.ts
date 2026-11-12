@@ -7,8 +7,6 @@ import {
   type SaveProgressResult,
   broadcastSync,
   notifyDelete,
-  invalidateSummaryCache,
-  invalidateBookmarkCache,
   db,
   IndexedDBLibraryRepo,
 } from './storage';
@@ -38,6 +36,7 @@ export interface LibraryRepo {
   saveStoredSettings(settings: Settings): Promise<Settings>;
   exportBackup?(): Promise<string>;
   restoreBackup(backup: { manga: Manga[]; settings: Settings } | string): Promise<Settings>;
+  invalidateCaches?(): void;
 }
 
 export class TauriSqliteLibraryRepo implements LibraryRepo {
@@ -45,31 +44,33 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
   private cachedAllBookmarkedIds: Set<string> | null = null;
   private cachedMangaBookmarkedIds: Set<string> | null = null;
   private bookmarkCachePromise: Promise<void> | null = null;
+  private bookmarkGeneration = 0;
 
   invalidateCaches(): void {
+    this.bookmarkGeneration++;
     this.cachedSummaries = null;
     this.cachedAllBookmarkedIds = null;
     this.cachedMangaBookmarkedIds = null;
     this.bookmarkCachePromise = null;
-    invalidateSummaryCache();
-    invalidateBookmarkCache();
   }
 
   async listLibrary(): Promise<Summary[]> {
     if (this.cachedSummaries) {
       return this.cachedSummaries.slice();
     }
-    let entries: Summary[] = [];
-    if (desktopAPI.sqliteListLibrary) {
-      entries = await desktopAPI.sqliteListLibrary();
+    if (!desktopAPI.sqliteListLibrary) {
+      throw new Error('desktopAPI.sqliteListLibrary is required on desktop');
     }
+    const entries = await desktopAPI.sqliteListLibrary();
     entries.sort((a, b) => b.updatedAt - a.updatedAt);
     this.cachedSummaries = entries;
     return entries.slice();
   }
 
   async getManga(id: string): Promise<Manga | undefined> {
-    if (!desktopAPI.sqliteGetManga) return undefined;
+    if (!desktopAPI.sqliteGetManga) {
+      throw new Error('desktopAPI.sqliteGetManga is required on desktop');
+    }
     const m = await desktopAPI.sqliteGetManga(id);
     if (!m) return undefined;
     if (!m.cover) {
@@ -120,6 +121,9 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
 
   async saveManga(manga: Manga): Promise<void> {
     assertMangaLimits(manga);
+    if (!desktopAPI.sqliteSaveManga) {
+      throw new Error('desktopAPI.sqliteSaveManga is required on desktop');
+    }
     const revision = (manga.revision ?? 0) + 1;
     const now = Date.now();
     const m: Manga = {
@@ -128,9 +132,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       updatedAt: now,
       slug: manga.slug || uniqueSlug(manga.title, new Set()),
     };
-    if (desktopAPI.sqliteSaveManga) {
-      await desktopAPI.sqliteSaveManga(m);
-    }
+    await desktopAPI.sqliteSaveManga(m);
     if (m.cover instanceof Blob && desktopAPI.saveThumbnail) {
       void m.cover
         .arrayBuffer()
@@ -161,7 +163,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       assertAtMost(bookmarks.length, limits.bookmarksPerChapter, 'Bookmarks per chapter');
     }
     if (!desktopAPI.sqliteSaveProgress) {
-      return 'missing';
+      throw new Error('desktopAPI.sqliteSaveProgress is required on desktop');
     }
     const result = await desktopAPI.sqliteSaveProgress({
       mangaId: m.id,
@@ -185,19 +187,22 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       return;
     }
     if (!this.bookmarkCachePromise) {
+      const currentGen = ++this.bookmarkGeneration;
       this.bookmarkCachePromise = (async () => {
         try {
-          if (desktopAPI.sqliteGetBookmarkedMangaIds) {
-            const { allBookmarkedIds, mangaBookmarkedIds } =
-              await desktopAPI.sqliteGetBookmarkedMangaIds();
+          if (!desktopAPI.sqliteGetBookmarkedMangaIds) {
+            throw new Error('desktopAPI.sqliteGetBookmarkedMangaIds is required on desktop');
+          }
+          const { allBookmarkedIds, mangaBookmarkedIds } =
+            await desktopAPI.sqliteGetBookmarkedMangaIds();
+          if (this.bookmarkGeneration === currentGen) {
             this.cachedAllBookmarkedIds = new Set(allBookmarkedIds);
             this.cachedMangaBookmarkedIds = new Set(mangaBookmarkedIds);
-          } else {
-            this.cachedAllBookmarkedIds = new Set();
-            this.cachedMangaBookmarkedIds = new Set();
           }
         } finally {
-          this.bookmarkCachePromise = null;
+          if (this.bookmarkGeneration === currentGen) {
+            this.bookmarkCachePromise = null;
+          }
         }
       })();
     }
@@ -215,7 +220,9 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
   }
 
   async addBookmark(mangaId: string, chapterName: string, position: Position): Promise<Position[]> {
-    if (!desktopAPI.sqliteAddBookmark) return [];
+    if (!desktopAPI.sqliteAddBookmark) {
+      throw new Error('desktopAPI.sqliteAddBookmark is required on desktop');
+    }
     const res = await desktopAPI.sqliteAddBookmark({
       mangaId,
       chapterName,
@@ -223,7 +230,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     });
     this.cachedAllBookmarkedIds = null;
     this.cachedMangaBookmarkedIds = null;
-    invalidateBookmarkCache();
+    this.bookmarkGeneration++;
     broadcastSync({ type: 'progress', id: mangaId });
     return res;
   }
@@ -233,7 +240,9 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     chapterName: string,
     position: Position,
   ): Promise<Position[]> {
-    if (!desktopAPI.sqliteRemoveBookmark) return [];
+    if (!desktopAPI.sqliteRemoveBookmark) {
+      throw new Error('desktopAPI.sqliteRemoveBookmark is required on desktop');
+    }
     const res = await desktopAPI.sqliteRemoveBookmark({
       mangaId,
       chapterName,
@@ -241,15 +250,16 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     });
     this.cachedAllBookmarkedIds = null;
     this.cachedMangaBookmarkedIds = null;
-    invalidateBookmarkCache();
+    this.bookmarkGeneration++;
     broadcastSync({ type: 'progress', id: mangaId });
     return res;
   }
 
   async deleteManga(id: string): Promise<void> {
-    if (desktopAPI.sqliteDeleteManga) {
-      await desktopAPI.sqliteDeleteManga(id);
+    if (!desktopAPI.sqliteDeleteManga) {
+      throw new Error('desktopAPI.sqliteDeleteManga is required on desktop');
     }
+    await desktopAPI.sqliteDeleteManga(id);
     if (desktopAPI.deleteThumbnail) {
       void desktopAPI.deleteThumbnail(id).catch(() => {});
     }
@@ -259,9 +269,10 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
   }
 
   async clearLibrary(): Promise<void> {
-    if (desktopAPI.sqliteClearLibrary) {
-      await desktopAPI.sqliteClearLibrary();
+    if (!desktopAPI.sqliteClearLibrary) {
+      throw new Error('desktopAPI.sqliteClearLibrary is required on desktop');
     }
+    await desktopAPI.sqliteClearLibrary();
     if (desktopAPI.clearThumbnails) {
       void desktopAPI.clearThumbnails().catch(() => {});
     }
@@ -271,15 +282,18 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
   }
 
   async resetProgress(): Promise<void> {
-    if (desktopAPI.sqliteResetProgress) {
-      await desktopAPI.sqliteResetProgress();
+    if (!desktopAPI.sqliteResetProgress) {
+      throw new Error('desktopAPI.sqliteResetProgress is required on desktop');
     }
+    await desktopAPI.sqliteResetProgress();
     this.invalidateCaches();
     broadcastSync({ type: 'progress' });
   }
 
   async getStoredSettings(): Promise<Settings | undefined> {
-    if (!desktopAPI.sqliteGetSettings) return undefined;
+    if (!desktopAPI.sqliteGetSettings) {
+      throw new Error('desktopAPI.sqliteGetSettings is required on desktop');
+    }
     const s = await desktopAPI.sqliteGetSettings();
     if (!s) return undefined;
     try {
@@ -292,9 +306,10 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
 
   async saveStoredSettings(settings: Settings): Promise<Settings> {
     const validated = parseSettings(settings);
-    if (desktopAPI.sqliteSaveSettings) {
-      await desktopAPI.sqliteSaveSettings(validated);
+    if (!desktopAPI.sqliteSaveSettings) {
+      throw new Error('desktopAPI.sqliteSaveSettings is required on desktop');
     }
+    await desktopAPI.sqliteSaveSettings(validated);
     return validated;
   }
 
@@ -312,76 +327,175 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
   }
 
   async restoreBackup(backup: { manga: Manga[]; settings: Settings } | string): Promise<Settings> {
+    if (!desktopAPI.restoreBackup) {
+      throw new Error('desktopAPI.restoreBackup is required on desktop');
+    }
+    let jsonStr: string;
     if (typeof backup === 'string') {
-      if (desktopAPI.restoreBackup) {
-        const validatedSettings = await desktopAPI.restoreBackup(backup);
-        this.invalidateCaches();
-        notifyDelete();
-        broadcastSync({ type: 'library' });
-        return validatedSettings;
+      jsonStr = backup;
+    } else {
+      assertAtMost(backup.manga.length, limits.titles, 'Library titles in backup');
+      const validatedSettings = parseSettings(backup.settings);
+      for (const m of backup.manga) {
+        assertMangaLimits(m);
       }
-      backup = JSON.parse(backup);
-    }
-
-    if (desktopAPI.restoreBackup) {
-      const jsonStr = JSON.stringify({
+      jsonStr = JSON.stringify({
         version: 2,
-        manga: (backup as { manga: Manga[]; settings: Settings }).manga,
-        settings: (backup as { manga: Manga[]; settings: Settings }).settings,
-      });
-      const validatedSettings = await desktopAPI.restoreBackup(jsonStr);
-      this.invalidateCaches();
-      notifyDelete();
-      broadcastSync({ type: 'library' });
-      return validatedSettings;
-    }
-
-    const payload = backup as { manga: Manga[]; settings: Settings };
-    assertAtMost(payload.manga.length, limits.titles, 'Library titles in backup');
-    const validatedSettings = parseSettings(payload.settings);
-    for (const m of payload.manga) {
-      assertMangaLimits(m);
-    }
-    const existing = new Map<string, Manga>();
-    for (const m of payload.manga) {
-      const ex = await this.getManga(m.id);
-      if (ex) existing.set(m.id, ex);
-    }
-    const preparedManga: Manga[] = payload.manga.map((m) => {
-      const ex = existing.get(m.id);
-      return {
-        ...m,
-        localPath: ex?.localPath ?? m.localPath,
-        slug: ex?.slug ?? m.slug,
-      };
-    });
-
-    if (desktopAPI.sqliteClearLibrary) {
-      await desktopAPI.sqliteClearLibrary();
-    }
-    if (desktopAPI.importLegacyLibrary) {
-      await desktopAPI.importLegacyLibrary({
-        manga: preparedManga,
+        manga: backup.manga,
         settings: validatedSettings,
       });
     }
-    if (desktopAPI.saveThumbnail) {
-      for (const m of payload.manga) {
-        if (m.cover instanceof Blob) {
-          try {
-            const ab = await m.cover.arrayBuffer();
-            await desktopAPI.saveThumbnail(m.id, ab);
-          } catch (err) {
-            console.warn('[restoreBackup] Thumbnail cache failed for', m.id, err);
-          }
-        }
-      }
-    }
+
+    const validatedSettings = await desktopAPI.restoreBackup(jsonStr);
     this.invalidateCaches();
     notifyDelete();
     broadcastSync({ type: 'library' });
     return validatedSettings;
   }
+}
+
+export type LegacyReadResult =
+  | { status: 'unavailable' }
+  | { status: 'empty' }
+  | { status: 'failed'; error: Error }
+  | { status: 'data'; titles: Manga[]; settings?: Settings };
+
+export async function readLegacyIndexedDB(): Promise<LegacyReadResult> {
+  if (typeof window === 'undefined' || typeof window.indexedDB === 'undefined') {
+    return { status: 'unavailable' };
+  }
+
+  return new Promise<LegacyReadResult>((resolve) => {
+    let existed = true;
+    let req: IDBOpenDBRequest;
+    try {
+      req = window.indexedDB.open('manga-reader');
+    } catch (err) {
+      return resolve({
+        status: 'failed',
+        error: err instanceof Error ? err : new Error(String(err)),
+      });
+    }
+
+    req.onupgradeneeded = (event) => {
+      if (event.oldVersion === 0) {
+        existed = false;
+        try {
+          req.transaction?.abort();
+        } catch {
+          // ignore abort error
+        }
+      }
+    };
+
+    req.onerror = () => {
+      if (!existed) {
+        return resolve({ status: 'empty' });
+      }
+      return resolve({
+        status: 'failed',
+        error: req.error ?? new Error('IndexedDB open error'),
+      });
+    };
+
+    req.onsuccess = () => {
+      const db = req.result;
+      try {
+        if (!db.objectStoreNames.contains('manga')) {
+          db.close();
+          return resolve({ status: 'empty' });
+        }
+
+        const storeNames = ['manga'];
+        if (db.objectStoreNames.contains('settings')) {
+          storeNames.push('settings');
+        }
+        if (db.objectStoreNames.contains('progress')) {
+          storeNames.push('progress');
+        }
+
+        const tx = db.transaction(storeNames, 'readonly');
+        const mangaReq = tx.objectStore('manga').getAll();
+        const settingsReq = db.objectStoreNames.contains('settings')
+          ? tx.objectStore('settings').get('global')
+          : null;
+        const progressReq = db.objectStoreNames.contains('progress')
+          ? tx.objectStore('progress').getAll()
+          : null;
+
+        tx.oncomplete = () => {
+          db.close();
+          try {
+            const rawManga = (mangaReq.result || []) as Manga[];
+            let settings: Settings | undefined = undefined;
+            if (settingsReq?.result) {
+              try {
+                settings = parseSettings(settingsReq.result);
+              } catch {
+                // ignore malformed settings in legacy DB
+              }
+            }
+
+            const rawProgress = (progressReq?.result || []) as any[];
+            const progressByManga = new Map<string, Map<string, any>>();
+            for (const p of rawProgress) {
+              if (p && p.mangaId && p.chapter) {
+                let m = progressByManga.get(p.mangaId);
+                if (!m) {
+                  m = new Map();
+                  progressByManga.set(p.mangaId, m);
+                }
+                m.set(p.chapter, p);
+              }
+            }
+
+            const titles: Manga[] = [];
+            for (const item of rawManga) {
+              if (!item || typeof item !== 'object') continue;
+              const mangaProgress = progressByManga.get(item.id);
+              if (mangaProgress && Array.isArray(item.chapters)) {
+                for (const ch of item.chapters) {
+                  const prog = mangaProgress.get(ch.name);
+                  if (prog) {
+                    if (prog.read !== undefined) ch.read = prog.read;
+                    if (prog.position) ch.position = prog.position;
+                    if (prog.bookmarks) ch.bookmarks = prog.bookmarks;
+                  }
+                }
+              }
+              titles.push(item);
+            }
+
+            if (titles.length === 0 && !settings) {
+              return resolve({ status: 'empty' });
+            }
+            return resolve({ status: 'data', titles, settings });
+          } catch (processErr) {
+            return resolve({
+              status: 'failed',
+              error: processErr instanceof Error ? processErr : new Error(String(processErr)),
+            });
+          }
+        };
+
+        tx.onerror = () => {
+          db.close();
+          return resolve({
+            status: 'failed',
+            error: tx.error ?? new Error('IndexedDB transaction error'),
+          });
+        };
+      } catch (err) {
+        try {
+          db.close();
+        } catch {}
+        return resolve({
+          status: 'failed',
+          error: err instanceof Error ? err : new Error(String(err)),
+        });
+      }
+    };
+  });
 }
 
 export async function ensureLibraryMigrated(idbRepo?: LibraryRepo): Promise<boolean> {
@@ -396,24 +510,37 @@ export async function ensureLibraryMigrated(idbRepo?: LibraryRepo): Promise<bool
   let titles: Manga[] = [];
   let settings: Settings | undefined;
 
-  let sourceRepo = idbRepo;
-  if (!sourceRepo) {
-    sourceRepo = new IndexedDBLibraryRepo();
-  }
-
-  if (sourceRepo) {
+  if (idbRepo) {
     try {
-      titles = await sourceRepo.allManga();
-      settings = await sourceRepo.getStoredSettings();
+      titles = await idbRepo.allManga();
+      settings = await idbRepo.getStoredSettings();
     } catch (err) {
-      console.warn('[ensureLibraryMigrated] Failed to read from provided IDB repo:', err);
+      throw new Error(
+        `Failed to read from provided migration repo: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  } else {
+    const legacyResult = await readLegacyIndexedDB();
+    if (legacyResult.status === 'failed') {
+      throw new Error(`Legacy IndexedDB migration read failed: ${legacyResult.error.message}`);
+    }
+    if (legacyResult.status === 'unavailable') {
+      console.warn(
+        '[ensureLibraryMigrated] IndexedDB unavailable in environment; skipping legacy migration',
+      );
+      return false;
+    }
+    if (legacyResult.status === 'data') {
+      titles = legacyResult.titles;
+      settings = legacyResult.settings;
     }
   }
 
   if (titles.length === 0 && !settings) {
-    if (desktopAPI.importLegacyLibrary) {
-      await desktopAPI.importLegacyLibrary({ manga: [], settings: {} });
+    if (!desktopAPI.importLegacyLibrary) {
+      throw new Error('desktopAPI.importLegacyLibrary is required on desktop');
     }
+    await desktopAPI.importLegacyLibrary({ manga: [], settings: {} });
     return true;
   }
 
@@ -423,14 +550,13 @@ export async function ensureLibraryMigrated(idbRepo?: LibraryRepo): Promise<bool
     settings: settings ?? {},
   });
 
-  if (desktopAPI.importLegacyLibrary) {
-    const ok = await desktopAPI.importLegacyLibrary(validated);
-    if (!ok) {
-      throw new Error('SQLite legacy library import failed');
-    }
+  if (!desktopAPI.importLegacyLibrary) {
+    throw new Error('desktopAPI.importLegacyLibrary is required on desktop');
+  }
+  const ok = await desktopAPI.importLegacyLibrary(validated);
+  if (!ok) {
+    throw new Error('SQLite legacy library import failed');
   }
 
-  invalidateSummaryCache();
-  invalidateBookmarkCache();
   return true;
 }

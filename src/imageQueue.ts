@@ -4,14 +4,22 @@ export interface ImageTaskOptions {
   key: string;
   priority?: number;
   run: (signal: AbortSignal) => Promise<void>;
+  onComplete?: () => void;
+  onError?: (err: unknown) => void;
 }
 
 export type CancelHandle = () => void;
 
+interface Subscriber {
+  onComplete?: () => void;
+  onError?: (err: unknown) => void;
+}
+
 interface QueuedItem {
   key: string;
   priority: number;
-  run: (signal: AbortSignal) => Promise<void>;
+  primaryRun: (signal: AbortSignal) => Promise<void>;
+  subscribers: Map<number, Subscriber>;
   controller: AbortController;
   canceled: boolean;
 }
@@ -84,6 +92,7 @@ export class ImageQueue {
   private activeCount = 0;
   private inFlight = new Map<string, QueuedItem>();
   private queueDirty = false;
+  private nextSubscriberId = 0;
 
   get pendingCount(): number {
     return this.queue.length;
@@ -113,27 +122,34 @@ export class ImageQueue {
 
   /**
    * Enqueues an image load task.
-   * Returns a cancellation handle, or null if the queue is full.
+   * If a task with the identical key is already queued or in-flight, registers the caller
+   * as a subscriber so every component receives its own completion.
+   * Returns a cancellation handle that unregisters only this subscriber.
    */
   enqueue(options: ImageTaskOptions): CancelHandle | null {
-    const { key, priority = 0, run } = options;
+    const { key, priority = 0, run, onComplete, onError } = options;
+    const subId = ++this.nextSubscriberId;
+    const sub: Subscriber = { onComplete, onError };
 
-    // Check if task with identical key is already queued; boost priority if higher
-    const existing = this.waiting.get(key);
-    if (existing) {
-      if (priority > existing.priority) {
-        existing.priority = priority;
+    // 1. Task is waiting in queue: register subscriber and boost priority if needed
+    const existingWaiting = this.waiting.get(key);
+    if (existingWaiting) {
+      existingWaiting.subscribers.set(subId, sub);
+      if (priority > existingWaiting.priority) {
+        existingWaiting.priority = priority;
         this.queueDirty = true;
       }
-      return () => this.cancel(key);
+      return () => this.cancelSubscriber(key, subId);
     }
 
-    // Check if task is already running in-flight
-    if (this.inFlight.has(key)) {
-      return () => this.cancel(key);
+    // 2. Task is already in-flight: register subscriber so it executes with completion
+    const existingInFlight = this.inFlight.get(key);
+    if (existingInFlight && !existingInFlight.canceled) {
+      existingInFlight.subscribers.set(subId, sub);
+      return () => this.cancelSubscriber(key, subId);
     }
 
-    // Capacity limit
+    // 3. Queue capacity limit
     if (this.queue.length >= limits.queuedJobs) {
       return null;
     }
@@ -141,7 +157,8 @@ export class ImageQueue {
     const item: QueuedItem = {
       key,
       priority,
-      run,
+      primaryRun: run,
+      subscribers: new Map([[subId, sub]]),
       controller: new AbortController(),
       canceled: false,
     };
@@ -151,14 +168,45 @@ export class ImageQueue {
     this.queueDirty = true;
     this.pump();
 
-    return () => this.cancel(key);
+    return () => this.cancelSubscriber(key, subId);
   }
 
   /**
-   * Cancels a queued or running task by key.
+   * Cancels an individual subscriber's handle.
+   * The underlying operation is only aborted when all subscribers for that key have unsubscribed.
+   */
+  private cancelSubscriber(key: string, subId: number): void {
+    // 1. Check waiting queue
+    const waitingItem = this.waiting.get(key);
+    if (waitingItem) {
+      waitingItem.subscribers.delete(subId);
+      if (waitingItem.subscribers.size === 0) {
+        this.waiting.delete(key);
+        waitingItem.canceled = true;
+        waitingItem.controller.abort();
+        const index = this.queue.indexOf(waitingItem);
+        if (index >= 0) {
+          this.queue.splice(index, 1);
+        }
+      }
+      return;
+    }
+
+    // 2. Check in-flight tasks
+    const running = this.inFlight.get(key);
+    if (running) {
+      running.subscribers.delete(subId);
+      if (running.subscribers.size === 0) {
+        running.canceled = true;
+        running.controller.abort();
+      }
+    }
+  }
+
+  /**
+   * Cancels a queued or running task by key unconditionally (all subscribers).
    */
   cancel(key: string): void {
-    // 1. Remove from waiting queue if not yet started
     const waitingItem = this.waiting.get(key);
     if (waitingItem) {
       this.waiting.delete(key);
@@ -171,7 +219,6 @@ export class ImageQueue {
       return;
     }
 
-    // 2. Abort if currently in-flight
     const running = this.inFlight.get(key);
     if (running) {
       running.canceled = true;
@@ -181,6 +228,7 @@ export class ImageQueue {
 
   /**
    * Clears all waiting tasks and aborts in-flight tasks.
+   * In-flight tasks settle and clean themselves up via identity check.
    */
   clear(): void {
     for (const item of this.queue) {
@@ -195,12 +243,11 @@ export class ImageQueue {
       running.canceled = true;
       running.controller.abort();
     }
-    this.inFlight.clear();
   }
 
   private ensureSorted(): void {
     if (!this.queueDirty) return;
-    // Insertion sort is faster than Array.sort for nearly-sorted priority queues of size ≤ 64
+    // Insertion sort is faster than Array.sort for nearly-sorted priority queues of size <= 64
     for (let i = 1; i < this.queue.length; i++) {
       const item = this.queue[i];
       let j = i - 1;
@@ -224,7 +271,7 @@ export class ImageQueue {
 
       this.waiting.delete(item.key);
 
-      if (item.canceled) {
+      if (item.canceled || item.subscribers.size === 0) {
         continue;
       }
 
@@ -234,15 +281,35 @@ export class ImageQueue {
       void (async () => {
         try {
           if (!item.canceled && !item.controller.signal.aborted) {
-            await item.run(item.controller.signal);
+            await item.primaryRun(item.controller.signal);
+
+            if (!item.canceled && !item.controller.signal.aborted) {
+              for (const sub of Array.from(item.subscribers.values())) {
+                try {
+                  sub.onComplete?.();
+                } catch (e) {
+                  console.error(`[imageQueue] Task ${item.key} onComplete error:`, e);
+                }
+              }
+            }
           }
         } catch (err) {
           if (!item.controller.signal.aborted) {
             console.warn(`[imageQueue] Task ${item.key} failed:`, err);
+            for (const sub of Array.from(item.subscribers.values())) {
+              try {
+                sub.onError?.(err);
+              } catch (e) {
+                console.error(`[imageQueue] Task ${item.key} onError error:`, e);
+              }
+            }
           }
         } finally {
           this.activeCount = Math.max(0, this.activeCount - 1);
-          this.inFlight.delete(item.key);
+          // Strict identity check prevents an old task from deleting a newer task with the same key
+          if (this.inFlight.get(item.key) === item) {
+            this.inFlight.delete(item.key);
+          }
           this.pump();
         }
       })();

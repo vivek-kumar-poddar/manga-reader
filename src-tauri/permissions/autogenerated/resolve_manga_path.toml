@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-resolve-manga-path"
+description = "Enables the resolve_manga_path command without any pre-configured scope."
+commands.allow = ["resolve_manga_path"]
+
+[[permission]]
+identifier = "deny-resolve-manga-path"
+description = "Denies the resolve_manga_path command without any pre-configured scope."
+commands.deny = ["resolve_manga_path"]

@@ -3,7 +3,7 @@
 
 @font-face {
   font-family: 'Inter';
-  src: url('./fonts/Inter_24pt-Regular.ttf') format('truetype');
+  src: url('./fonts/Inter-Regular.woff2') format('woff2');
   font-weight: 400;
   font-style: normal;
   font-display: swap;
@@ -11,8 +11,8 @@
 
 @font-face {
   font-family: 'Inter';
-  src: url('./fonts/Inter_24pt-Bold.ttf') format('truetype');
-  font-weight: 700;
+  src: url('./fonts/Inter-SemiBold.woff2') format('woff2');
+  font-weight: 500;
   font-style: normal;
   font-display: swap;
 }
@@ -33,13 +33,62 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Satoshi';
+  src: url('./fonts/Satoshi-Bold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'WantedSans';
+  src: url('./fonts/WantedSans-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'WantedSans';
+  src: url('./fonts/WantedSans-SemiBold.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'WantedSans';
+  src: url('./fonts/WantedSans-Bold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --font-size-ui: 15px;
   --font-size-title: 15px;
   --font-size-button: 15px;
   font-size: var(--font-size-ui);
   --font-ui:
-    'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
   font-family: var(--font-ui);
   color: #09090b;
@@ -63,6 +112,7 @@
   --line: #353539;
   --text: #fafafa;
   --soft: #26262a;
+  --extra-soft: #56565a;
   --accent: #92c6ab;
   --shadow: 0 4px 16px #0002;
   color-scheme: dark;
@@ -358,7 +408,7 @@ svg {
   font-size: 27px;
 }
 
-.collection-heading>span {
+.collection-heading > span {
   font-size: 16px;
   color: var(--muted);
 }
@@ -370,6 +420,7 @@ svg {
   justify-content: center;
   min-height: 150px;
   color: var(--muted);
+  text-align: center;
 }
 
 .empty-shelf p {
@@ -400,6 +451,35 @@ svg {
   margin-bottom: 49px;
 }
 
+.library-main.bookmarks-empty {
+  padding-top: 0;
+}
+
+.library-main.bookmarks-empty .page-heading {
+  display: none !important;
+}
+
+.library-main.bookmarks-empty .empty-shelf,
+.bookmarks-page-content .empty-shelf {
+  flex: 1;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.library-main.bookmarks-empty .library-footer {
+  margin-top: 0;
+}
+
+.bookmarks-page-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+}
+
 .library-footer span,
 .library-footer a {
   font-size: var(--font-size-ui, 15px) !important;
@@ -410,9 +490,9 @@ svg {
 }
 
 .shelf-sort,
-.shelf-sort>span,
+.shelf-sort > span,
 .shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort>span {
+.shelf-sort.bookmark-sort > span {
   font-size: var(--font-size-ui, 15px) !important;
 }
 
@@ -1063,7 +1143,7 @@ button.danger-text:focus-visible svg,
   font-size: 29px;
 }
 
-.settings-panel>p {
+.settings-panel > p {
   font-size: 16px;
   color: var(--muted);
   margin: 6px 0 30px;
@@ -1320,7 +1400,7 @@ input[type='checkbox'] {
   gap: 7px;
 }
 
-.reader-top>select {
+.reader-top > select {
   max-width: 220px;
 }
 
@@ -1416,7 +1496,7 @@ input[type='checkbox'] {
     max-width: 180px;
   }
 
-  .reader-top>select {
+  .reader-top > select {
     max-width: 150px;
   }
 }
@@ -1489,7 +1569,7 @@ input[type='checkbox'] {
     font-size: 26px;
   }
 
-  .collection-heading>span {
+  .collection-heading > span {
     font-size: 16px;
   }
 
@@ -1516,7 +1596,7 @@ input[type='checkbox'] {
     min-width: 40px;
   }
 
-  .reader-top>select {
+  .reader-top > select {
     max-width: 120px;
     width: 29vw;
     font-size: 16px;
@@ -1616,7 +1696,7 @@ select:active {
   font-size: 32px;
 }
 
-.modal-heading>p {
+.modal-heading > p {
   color: var(--muted);
   font-size: 16px;
   margin-top: 5px;
@@ -1666,7 +1746,7 @@ select:active {
   outline: none;
 }
 
-.settings-tab-body>section:first-child {
+.settings-tab-body > section:first-child {
   border-top: 0;
 }
 
@@ -1689,7 +1769,7 @@ select:active {
   padding: 4px 15px;
 }
 
-.storage-stats>div {
+.storage-stats > div {
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -1698,7 +1778,7 @@ select:active {
   font-size: 16px;
 }
 
-.storage-stats>div:last-child {
+.storage-stats > div:last-child {
   border-bottom: 0;
 }
 
@@ -1718,7 +1798,7 @@ select:active {
   margin: 0;
 }
 
-.storage-notes li+li {
+.storage-notes li + li {
   margin-top: 12px;
 }
 
@@ -1788,7 +1868,7 @@ select:active {
   gap: 12px;
 }
 
-.shortcuts-modal>.dialog-heading+p {
+.shortcuts-modal > .dialog-heading + p {
   font-size: 16px;
   color: var(--muted);
   line-height: 1.6;
@@ -1821,7 +1901,7 @@ select:active {
   padding-right: 14px;
 }
 
-.shortcuts-modal>.subtle {
+.shortcuts-modal > .subtle {
   margin-top: 19px;
 }
 
@@ -1847,7 +1927,7 @@ kbd {
     padding: 17px 19px 12px;
   }
 
-  .modal-heading>p {
+  .modal-heading > p {
     font-size: 16px;
   }
 
@@ -1879,11 +1959,11 @@ kbd {
     font-size: 16px;
   }
 
-  .reader-top>.icon-button {
+  .reader-top > .icon-button {
     width: 33px;
   }
 
-  .reader-top>select {
+  .reader-top > select {
     max-width: 110px;
     width: 27vw;
   }
@@ -1974,7 +2054,7 @@ kbd {
   margin: 10px 0;
 }
 
-.folder-tree>li>span {
+.folder-tree > li > span {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1990,7 +2070,7 @@ kbd {
   color: var(--muted);
 }
 
-.example-body>.folder-tree {
+.example-body > .folder-tree {
   background: var(--soft);
   border: 0;
   border-radius: 8px;
@@ -1999,7 +2079,7 @@ kbd {
 }
 
 .import-choice,
-.import-preview>label {
+.import-preview > label {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2008,7 +2088,7 @@ kbd {
   margin: 15px 0;
 }
 
-.import-choice>span {
+.import-choice > span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2151,9 +2231,11 @@ kbd {
 }
 
 .reader-page {
-  width: min(100%,
-      calc(var(--reading-width) * var(--zoom, 1)),
-      calc(var(--native-width) * var(--zoom, 1)));
+  width: min(
+    100%,
+    calc(var(--reading-width) * var(--zoom, 1)),
+    calc(var(--native-width) * var(--zoom, 1))
+  );
 }
 
 .layout-width .reader-page {
@@ -2166,9 +2248,11 @@ kbd {
 
 .layout-height .reader-page,
 .reader-single.layout-auto .reader-page {
-  width: min(100%,
-      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
-      calc(var(--native-width) * var(--zoom, 1)));
+  width: min(
+    100%,
+    calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+    calc(var(--native-width) * var(--zoom, 1))
+  );
 }
 
 .spread-content {
@@ -2415,9 +2499,11 @@ kbd {
   border: 0;
   border-radius: 20px;
   margin: 0;
-  background: linear-gradient(to right,
-      var(--accent) 0 var(--progress-fill),
-      var(--line) var(--progress-fill) 100%);
+  background: linear-gradient(
+    to right,
+    var(--accent) 0 var(--progress-fill),
+    var(--line) var(--progress-fill) 100%
+  );
   cursor: pointer;
   touch-action: none;
 }
@@ -2474,13 +2560,13 @@ kbd {
   flex-shrink: 0;
 }
 
-.bar-popover>summary {
+.bar-popover > summary {
   list-style: none;
   cursor: pointer;
   user-select: none;
 }
 
-.bar-popover>summary::-webkit-details-marker {
+.bar-popover > summary::-webkit-details-marker {
   display: none;
 }
 
@@ -2499,7 +2585,7 @@ kbd {
 }
 
 .zoom-trigger:hover,
-.bar-popover[open]>summary {
+.bar-popover[open] > summary {
   background: var(--soft);
   border-color: var(--line);
 }
@@ -2815,6 +2901,7 @@ kbd {
   --text: #e9e9ec;
   --muted: #a3a3ad;
   --soft: #2a2a2e;
+  --extra-soft: .bookmark-navigation;
   --line: rgba(255, 255, 255, 0.08);
   --line-hover: rgba(255, 255, 255, 0.15);
   --line-focus: rgba(255, 255, 255, 0.3);
@@ -2963,7 +3050,7 @@ summary:focus-visible {
   text-align: left;
 }
 
-.dropdown-trigger>span:first-child {
+.dropdown-trigger > span:first-child {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -3059,11 +3146,11 @@ summary:focus-visible {
   color: var(--muted);
 }
 
-.settings-panel label>.dropdown-trigger {
+.settings-panel label > .dropdown-trigger {
   max-width: 200px;
 }
 
-.import-choice>.dropdown-trigger {
+.import-choice > .dropdown-trigger {
   max-width: 65%;
 }
 
@@ -3071,7 +3158,7 @@ summary:focus-visible {
   width: 100%;
 }
 
-.bar-popover-panel label>.dropdown-trigger {
+.bar-popover-panel label > .dropdown-trigger {
   max-width: 135px;
 }
 
@@ -3167,7 +3254,7 @@ summary:focus-visible {
     flex-basis: 36px;
   }
 
-  .settings-panel label>.dropdown-trigger {
+  .settings-panel label > .dropdown-trigger {
     max-width: 56%;
   }
 }
@@ -3211,7 +3298,7 @@ summary:focus-visible {
     font-size: 16px;
   }
 
-  .import-choice>.dropdown-trigger {
+  .import-choice > .dropdown-trigger {
     max-width: 100%;
     width: 100%;
   }

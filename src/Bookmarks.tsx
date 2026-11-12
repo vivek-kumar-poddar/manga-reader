@@ -55,17 +55,28 @@ function Thumbnail({ mark }: { mark: Mark }) {
           const page = mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page];
           const shouldLoadPage = page && (!mark.position.mangaBookmark || !blob);
 
-          if (
-            shouldLoadPage &&
-            desktopAPI.isDesktop &&
-            desktopAPI.convertFileSrc &&
-            mark.manga.localPath
-          ) {
-            const sep = mark.manga.localPath.includes('\\') ? '\\' : '/';
-            const absPath = mark.manga.localPath + sep + page.path.split('/').join(sep);
-            url = desktopAPI.convertFileSrc(absPath, 'mangaimg');
-            if (live) setUrl(url);
-            return;
+          if (desktopAPI.isDesktop) {
+            if (shouldLoadPage && desktopAPI.getPageImageUrl && mark.manga.localPath) {
+              url = desktopAPI.getPageImageUrl({
+                mangaId: mark.manga.id,
+                pagePath: page.path,
+                version: mark.manga.updatedAt,
+                transform: 'preview',
+                localPath: mark.manga.localPath,
+              });
+              if (live) setUrl(url);
+              return;
+            } else if (shouldLoadPage && desktopAPI.convertFileSrc && mark.manga.localPath) {
+              const sep = mark.manga.localPath.includes('\\') ? '\\' : '/';
+              const absPath = mark.manga.localPath + sep + page.path.split('/').join(sep);
+              url = desktopAPI.convertFileSrc(absPath, 'mangaimg');
+              if (live) setUrl(url);
+              return;
+            } else if (!shouldLoadPage && desktopAPI.getCoverImageUrl) {
+              url = desktopAPI.getCoverImageUrl(mark.manga.id, mark.manga.updatedAt);
+              if (live) setUrl(url);
+              return;
+            }
           }
 
           try {
@@ -107,7 +118,13 @@ function Thumbnail({ mark }: { mark: Mark }) {
     </div>
   );
 }
-export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
+export function BookmarkShelf({
+  carousel = false,
+  onCountChange,
+}: {
+  carousel?: boolean;
+  onCountChange?: (count: number) => void;
+}) {
   const { library, notify, settings } = useApp();
   const [marks, setMarks] = useState<Mark[]>([]);
   const [loading, setLoading] = useState(true);
@@ -121,15 +138,23 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
   const drag = useRef<{ x: number; scroll: number; id: number; moved: boolean } | null>(null);
   const suppress = useRef(false);
   const tabInitialized = useRef(false);
+  const onCountChangeRef = useRef(onCountChange);
+
+  useEffect(() => {
+    onCountChangeRef.current = onCountChange;
+  });
 
   useEffect(() => {
     let live = true;
+    let loadGen = 0;
     function loadBookmarks() {
+      const currentGen = ++loadGen;
       setLoading(true);
       void (async () => {
         const ids = await getBookmarkedMangaIds();
         const result: Mark[] = [];
         for (const item of library) {
+          if (!live || currentGen !== loadGen) return;
           if (!ids.has(item.id)) continue;
           const manga = await getManga(item.id);
           if (!manga) continue;
@@ -137,16 +162,20 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
             for (const position of manga.chapters[i].bookmarks || [])
               result.push({ manga, chapter: i, position });
         }
-        if (live) {
+        if (live && currentGen === loadGen) {
           setMarks(result);
+          onCountChangeRef.current?.(result.length);
           setError('');
         }
       })()
         .catch((e) => {
-          if (live) setError(errorMessage(e));
+          if (live && currentGen === loadGen) {
+            setError(errorMessage(e));
+            onCountChangeRef.current?.(0);
+          }
         })
         .finally(() => {
-          if (live) setLoading(false);
+          if (live && currentGen === loadGen) setLoading(false);
         });
     }
     loadBookmarks();
@@ -240,7 +269,11 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
     setRemoving(id);
     try {
       await removeBookmark(mark.manga.id, mark.manga.chapters[mark.chapter].name, mark.position);
-      setMarks((items) => items.filter((b) => key(b) !== id));
+      setMarks((items) => {
+        const next = items.filter((b) => key(b) !== id);
+        onCountChangeRef.current?.(next.length);
+        return next;
+      });
       notify('Bookmark removed.');
     } catch (e) {
       notify(errorMessage(e));
@@ -261,7 +294,12 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
       });
   };
 
-  if (loading) return carousel ? null : <p className="subtle">Loading bookmarks…</p>;
+  if (loading)
+    return carousel ? null : (
+      <div className="empty-shelf">
+        <p className="subtle">Loading bookmarks…</p>
+      </div>
+    );
   if (error) return <p role="alert">{error}</p>;
   if (!marks.length)
     return carousel ? null : (
@@ -547,6 +585,10 @@ export function BookmarkShelf({ carousel = false }: { carousel?: boolean }) {
 
 export default function BookmarksPage() {
   const { openSettings } = useApp();
+  const [bookmarkCount, setBookmarkCount] = useState<number | null>(null);
+
+  const hasBookmarks = bookmarkCount !== null && bookmarkCount > 0;
+
   return (
     <>
       <header className="library-header">
@@ -564,14 +606,16 @@ export default function BookmarksPage() {
           </IconButton>
         </div>
       </header>
-      <main className="library-main">
-        <div className="page-heading">
-          <div>
-            <h1>Your bookmarks</h1>
-            <span className="subtle">Saved manga and reading positions</span>
+      <main className={`library-main ${!hasBookmarks ? 'bookmarks-empty' : ''}`}>
+        {hasBookmarks && (
+          <div className="page-heading">
+            <div>
+              <h1>Your bookmarks</h1>
+              <span className="subtle">Saved manga and reading positions</span>
+            </div>
           </div>
-        </div>
-        <BookmarkShelf />
+        )}
+        <BookmarkShelf onCountChange={setBookmarkCount} />
         <footer className="library-footer">
           <span>By Vivek Kr. Poddar · v{APP_VERSION}</span>
           <Link to="/">Back to your library</Link>
