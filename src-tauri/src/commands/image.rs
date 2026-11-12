@@ -1,15 +1,14 @@
 use fast_image_resize as fr;
 use fast_image_resize::PixelType;
 use fast_image_resize::images::Image;
-use image::{DynamicImage, ImageFormat, RgbaImage};
-use std::io::Cursor;
+use image::{DynamicImage, RgbaImage};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 use tauri::{AppHandle, Manager};
 
-pub const MAX_IMAGE_PIXELS: u64 = 16_000_000; // 16M pixels
+pub const MAX_IMAGE_PIXELS: u64 = 48_000_000;
 pub const MAX_IMAGE_SIDE: u32 = 32_768; // 32,768 per side
-pub const MAX_IMAGE_JOB_MEMORY_BYTES: u64 = 64 * 1024 * 1024; // 64 MiB total job memory budget
+pub const MAX_IMAGE_JOB_MEMORY_BYTES: u64 = 256 * 1024 * 1024; // 256 MiB total job memory budget
 pub const THUMBNAIL_MAX_WIDTH: u32 = 160;
 pub const THUMBNAIL_MAX_HEIGHT: u32 = 320;
 pub const IMAGE_ENCODER_VERSION: &str = "v1";
@@ -324,44 +323,44 @@ pub async fn generate_thumbnail(
         return Err("File path cannot be empty".into());
     }
 
-    let resolved = dunce::canonicalize(&trimmed)
-        .map_err(|e| format!("Failed to resolve image path '{trimmed}': {e}"))?;
-
-    let allowed = app.state::<crate::commands::fs::AllowedRoots>();
-    if !allowed.is_allowed(&resolved) {
-        return Err(format!(
-            "Path '{}' is not under an allowed library root",
-            resolved.display()
-        ));
-    }
-
     let thumb_path = crate::commands::cache::get_thumbnail_path(&app, &id)?;
-
-    // Check if cached thumbnail exists and is still fresh compared to source file
-    let should_regenerate = if thumb_path.exists() {
-        match (std::fs::metadata(&resolved), std::fs::metadata(&thumb_path)) {
-            (Ok(src_meta), Ok(thumb_meta)) => match (src_meta.modified(), thumb_meta.modified()) {
-                (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
-                _ => false,
-            },
-            _ => true,
-        }
-    } else {
-        true
-    };
-
-    if !should_regenerate {
-        return Ok(CachedImageResult {
-            path: thumb_path.to_string_lossy().to_string(),
-            url: crate::protocol::path_to_mangaimg_url(&thumb_path),
-            is_placeholder: false,
-            status: "cached".into(),
-            error: None,
-        });
-    }
-
     let thumb_path_clone = thumb_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let app_clone = app.clone();
+
+    let status = tauri::async_runtime::spawn_blocking(move || -> Result<&'static str, String> {
+        let resolved = dunce::canonicalize(&trimmed)
+            .map_err(|e| format!("Failed to resolve image path '{trimmed}': {e}"))?;
+
+        let allowed = app_clone.state::<crate::commands::fs::AllowedRoots>();
+        if !allowed.is_allowed(&resolved) {
+            return Err(format!(
+                "Path '{}' is not under an allowed library root",
+                resolved.display()
+            ));
+        }
+
+        // Check if cached thumbnail exists and is still fresh compared to source file
+        let should_regenerate = if thumb_path_clone.exists() {
+            match (
+                std::fs::metadata(&resolved),
+                std::fs::metadata(&thumb_path_clone),
+            ) {
+                (Ok(src_meta), Ok(thumb_meta)) => {
+                    match (src_meta.modified(), thumb_meta.modified()) {
+                        (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
+                        _ => false,
+                    }
+                }
+                _ => true,
+            }
+        } else {
+            true
+        };
+
+        if !should_regenerate {
+            return Ok("cached");
+        }
+
         IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
             let decoded = safe_decode_image(&resolved)?;
             let (src_w, src_h) = (decoded.width(), decoded.height());
@@ -384,7 +383,9 @@ pub async fn generate_thumbnail(
             }
 
             Ok(())
-        })
+        })?;
+
+        Ok("generated")
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
@@ -393,7 +394,7 @@ pub async fn generate_thumbnail(
         path: thumb_path.to_string_lossy().to_string(),
         url: crate::protocol::path_to_mangaimg_url(&thumb_path),
         is_placeholder: false,
-        status: "generated".into(),
+        status: status.into(),
         error: None,
     })
 }
@@ -533,24 +534,24 @@ pub async fn generate_image_variant(
         return Err("File path cannot be empty".into());
     }
 
-    let resolved = dunce::canonicalize(&trimmed)
-        .map_err(|e| format!("Failed to resolve image path '{trimmed}': {e}"))?;
-
-    let allowed = app.state::<crate::commands::fs::AllowedRoots>();
-    if !allowed.is_allowed(&resolved) {
-        return Err(format!(
-            "Path '{}' is not under an allowed library root",
-            resolved.display()
-        ));
-    }
-
     let app_clone = app.clone();
-    let resolved_clone = resolved.clone();
-    let variant_cache_path = tauri::async_runtime::spawn_blocking(move || {
-        generate_image_variant_direct(&app_clone, &resolved_clone, max_width, max_height)
-    })
-    .await
-    .map_err(|e| format!("Task join error: {e}"))??;
+    let variant_cache_path =
+        tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
+            let resolved = dunce::canonicalize(&trimmed)
+                .map_err(|e| format!("Failed to resolve image path '{trimmed}': {e}"))?;
+
+            let allowed = app_clone.state::<crate::commands::fs::AllowedRoots>();
+            if !allowed.is_allowed(&resolved) {
+                return Err(format!(
+                    "Path '{}' is not under an allowed library root",
+                    resolved.display()
+                ));
+            }
+
+            generate_image_variant_direct(&app_clone, &resolved, max_width, max_height)
+        })
+        .await
+        .map_err(|e| format!("Task join error: {e}"))??;
 
     Ok(CachedImageResult {
         path: variant_cache_path.to_string_lossy().to_string(),

@@ -146,11 +146,11 @@ pub fn run() {
             }
             let writer_conn = rusqlite::Connection::open(&db_path)
                 .map_err(|e| format!("Failed to open SQLite database for writing at {:?}: {e}", db_path))?;
-            db::init_db(&writer_conn)
-                .map_err(|e| format!("Failed to initialize SQLite schema: {e}"))?;
             writer_conn
                 .busy_timeout(std::time::Duration::from_millis(5000))
                 .map_err(|e| format!("Failed to set writer busy timeout: {e}"))?;
+            db::init_db(&writer_conn)
+                .map_err(|e| format!("Failed to initialize SQLite schema: {e}"))?;
 
             let reader_conn = rusqlite::Connection::open_with_flags(
                 &db_path,
@@ -207,13 +207,15 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(if cfg!(debug_assertions) {
+                        log::LevelFilter::Info
+                    } else {
+                        log::LevelFilter::Warn
+                    })
+                    .build(),
+            )?;
 
             let win_cfg = app
                 .config()

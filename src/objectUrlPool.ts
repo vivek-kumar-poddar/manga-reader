@@ -52,14 +52,21 @@ export class ObjectUrlPool {
    */
   retain(key: string): () => void {
     const entry = this.entries.get(key);
-    if (entry) {
-      entry.refCount++;
-    }
-    let released = false;
+    if (!entry) return () => {};
+    entry.refCount++;
+    let done = false;
     return () => {
-      if (released) return;
-      released = true;
-      this.release(key);
+      if (done) return;
+      done = true;
+      entry.refCount = Math.max(0, entry.refCount - 1);
+      if (!entry.inCache && entry.refCount <= 0) {
+        if (this.entries.get(key) === entry) this.entries.delete(key);
+        try {
+          URL.revokeObjectURL(entry.url);
+        } catch {
+          /* Ignore revocation errors */
+        }
+      }
     };
   }
 
@@ -72,7 +79,7 @@ export class ObjectUrlPool {
     if (!entry) return;
     entry.refCount = Math.max(0, entry.refCount - 1);
     if (!entry.inCache && entry.refCount <= 0) {
-      this.entries.delete(key);
+      if (this.entries.get(key) === entry) this.entries.delete(key);
       try {
         URL.revokeObjectURL(entry.url);
       } catch {

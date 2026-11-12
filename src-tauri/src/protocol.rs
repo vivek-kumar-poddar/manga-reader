@@ -451,6 +451,10 @@ fn try_find_and_generate_cover(
     Err("No image found to generate cover".into())
 }
 
+fn safe_name(s: &str) -> bool {
+    !s.is_empty() && !s.contains(['/', '\\', ':']) && !s.contains("..")
+}
+
 pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Response<Vec<u8>> {
     // 0. Method restriction: only GET and HEAD are permitted
     if req.method() != "GET" && req.method() != "HEAD" {
@@ -589,6 +593,9 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
         }
     } else if let Some(id_part) = uri_path.strip_prefix("/thumb/") {
         let decoded = crate::commands::cache::percent_decode(id_part);
+        if !safe_name(&decoded) {
+            return error_response(StatusCode::BAD_REQUEST, "Bad name", &req);
+        }
         let filename = if decoded.starts_with("t_") && decoded.ends_with(".webp") {
             decoded
         } else {
@@ -602,6 +609,9 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
         cache_dir.join("thumbnails").join(filename)
     } else if let Some(hash_part) = uri_path.strip_prefix("/variant/") {
         let decoded = crate::commands::cache::percent_decode(hash_part);
+        if !safe_name(&decoded) {
+            return error_response(StatusCode::BAD_REQUEST, "Bad name", &req);
+        }
         let filename = if decoded.ends_with(".webp") {
             decoded
         } else {

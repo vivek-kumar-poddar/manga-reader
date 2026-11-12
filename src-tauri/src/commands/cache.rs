@@ -191,12 +191,51 @@ pub async fn get_thumbnail_url(app: AppHandle, id: String) -> Result<Option<Stri
     }
 }
 
+/// Prunes image variants cache directory if size exceeds 500 MiB or 1,000 files.
+pub fn prune_cache(app: &AppHandle) -> Result<(), String> {
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to resolve cache dir: {e}"))?;
+    let var_dir = cache_dir.join("variants");
+    if !var_dir.exists() {
+        return Ok(());
+    }
+
+    if let Ok(entries) = std::fs::read_dir(&var_dir) {
+        let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                    files.push((entry.path(), mtime, meta.len()));
+                }
+            }
+        }
+
+        let total_size: u64 = files.iter().map(|f| f.2).sum();
+        if total_size > 500 * 1024 * 1024 || files.len() > 1000 {
+            files.sort_by_key(|f| f.1); // oldest first
+            let to_remove = (files.len() / 5).max(1);
+            for (p, _, _) in files.into_iter().take(to_remove) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn delete_thumbnail(app: AppHandle, id: String) -> Result<(), String> {
     let path = get_thumbnail_path(&app, &id)?;
     if path.exists() {
         let _ = tokio::fs::remove_file(&path).await;
     }
+    let app_clone = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        let _ = prune_cache(&app_clone);
+    })
+    .await;
     Ok(())
 }
 
@@ -243,28 +282,32 @@ fn dir_size(path: &Path) -> u64 {
 
 #[tauri::command]
 pub async fn get_storage_stats(app: AppHandle) -> Result<StorageStats, String> {
-    let mut db_bytes = 0u64;
-    if let Ok(data_dir) = app.path().app_data_dir() {
-        for file_name in &["library.db", "library.db-wal", "library.db-shm"] {
-            let p = data_dir.join(file_name);
-            if let Ok(meta) = std::fs::metadata(&p) {
-                db_bytes += meta.len();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut db_bytes = 0u64;
+        if let Ok(data_dir) = app.path().app_data_dir() {
+            for file_name in &["library.db", "library.db-wal", "library.db-shm"] {
+                let p = data_dir.join(file_name);
+                if let Ok(meta) = std::fs::metadata(&p) {
+                    db_bytes += meta.len();
+                }
             }
         }
-    }
 
-    let mut cache_bytes = 0u64;
-    if let Ok(cache_dir) = app.path().app_cache_dir() {
-        cache_bytes += dir_size(&cache_dir.join("thumbnails"));
-        cache_bytes += dir_size(&cache_dir.join("variants"));
-    }
+        let mut cache_bytes = 0u64;
+        if let Ok(cache_dir) = app.path().app_cache_dir() {
+            cache_bytes += dir_size(&cache_dir.join("thumbnails"));
+            cache_bytes += dir_size(&cache_dir.join("variants"));
+        }
 
-    let total_bytes = db_bytes + cache_bytes;
-    Ok(StorageStats {
-        db_bytes,
-        cache_bytes,
-        total_bytes,
+        let total_bytes = db_bytes + cache_bytes;
+        Ok(StorageStats {
+            db_bytes,
+            cache_bytes,
+            total_bytes,
+        })
     })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
