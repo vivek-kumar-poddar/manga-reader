@@ -17,6 +17,13 @@ pub fn run() {
     migration::migrate_legacy_data_if_needed();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .register_asynchronous_uri_scheme_protocol("mangaimg", |ctx, req, responder| {
             let app_handle = ctx.app_handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
@@ -28,13 +35,6 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.unminimize();
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
-        }))
         .invoke_handler(tauri::generate_handler![
             commands::fs::select_folder,
             commands::fs::list_folder,
@@ -112,12 +112,10 @@ pub fn run() {
                     let app = window.app_handle();
                     if let Some(allowed) = app.try_state::<commands::fs::AllowedRoots>() {
                         for path in paths {
-                            if path.is_dir() {
-                                allowed.add_root(path.clone());
-                            } else if path.is_file() {
-                                // Authorize only the dropped file, never its parent directory
-                                allowed.add_root(path.clone());
+                            if path.parent().is_none() {
+                                continue; // drive root
                             }
+                            allowed.add_root(path.clone());
                         }
                         commands::fs::save_persisted_roots(app, &allowed);
                     }

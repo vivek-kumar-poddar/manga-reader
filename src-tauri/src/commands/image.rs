@@ -198,14 +198,9 @@ pub fn resize_image_fir(
     let dst_rgba = RgbaImage::from_raw(target_width, target_height, dst.into_vec())
         .ok_or_else(|| "Failed to construct destination RgbaImage".to_string())?;
 
-    let dyn_dst = DynamicImage::ImageRgba8(dst_rgba);
-    let mut out = Vec::new();
-    let mut cursor = Cursor::new(&mut out);
-
-    // Fail WebP encoding explicitly rather than writing JPEG bytes into a .webp file
-    dyn_dst
-        .write_to(&mut cursor, ImageFormat::WebP)
-        .map_err(|e| format!("Failed to encode resized image to WebP: {e}"))?;
+    let out = webp::Encoder::from_rgba(dst_rgba.as_raw(), target_width, target_height)
+        .encode(80.0)
+        .to_vec();
 
     Ok(out)
 }
@@ -236,15 +231,10 @@ pub fn create_placeholder_webp(width: u32, height: u32) -> Result<Vec<u8>, Strin
         ));
     }
 
-    let img = DynamicImage::ImageRgba8(RgbaImage::from_pixel(
-        width,
-        height,
-        image::Rgba([39, 39, 42, 255]), // #27272a neutral gray
-    ));
-    let mut out = Vec::new();
-    let mut cursor = Cursor::new(&mut out);
-    img.write_to(&mut cursor, ImageFormat::WebP)
-        .map_err(|e| format!("Failed to encode placeholder to WebP: {e}"))?;
+    let raw = [39u8, 39, 42, 255].repeat((width as usize) * (height as usize));
+    let out = webp::Encoder::from_rgba(&raw, width, height)
+        .encode(80.0)
+        .to_vec();
     Ok(out)
 }
 
