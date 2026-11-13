@@ -6,15 +6,19 @@ import DailyWelcome from './DailyWelcome';
 import {
   useState,
   useEffect,
+  useLayoutEffect,
   useRef,
   useMemo,
+  useCallback,
   memo,
   createContext,
   useContext,
   lazy,
   Suspense,
   type ReactNode,
+  type CSSProperties,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, Route, Routes, useNavigate } from 'react-router-dom';
 import {
   BookOpen,
@@ -217,7 +221,8 @@ export const Cover = memo(function Cover({
           setUrl(coverUrl);
           return;
         }
-        desktopAPI.getThumbnailUrl!(m.id)
+        desktopAPI
+          .getThumbnailUrl!(m.id)
           .then((thumbUrl) => {
             if (!live) return;
             if (thumbUrl) {
@@ -295,17 +300,168 @@ export const Cover = memo(function Cover({
     </div>
   );
 });
-function positionCardMenu(details: HTMLDetailsElement) {
-  const rect = details.getBoundingClientRect();
-  const popover = details.querySelector<HTMLElement>('.menu-popover');
-  const popoverHeight = popover ? popover.offsetHeight || 195 : 195;
-  const spaceBelow = window.innerHeight - rect.bottom;
-  const spaceAbove = rect.top;
-  if (spaceBelow < popoverHeight && spaceAbove > spaceBelow) {
-    details.classList.add('popover-top');
-  } else {
-    details.classList.remove('popover-top');
-  }
+
+function CardMenu({
+  title,
+  needsRelink,
+  onRelink,
+  onMarkRead,
+  onMarkUnread,
+  onRemove,
+}: {
+  title: string;
+  needsRelink: boolean;
+  onRelink: () => void;
+  onMarkRead: () => void;
+  onMarkUnread: () => void;
+  onRemove: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<'top' | 'bottom'>('bottom');
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>({});
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const summaryRef = useRef<HTMLElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  const updatePosition = useCallback(() => {
+    const trigger = summaryRef.current || detailsRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const popoverEl = popoverRef.current;
+    const popoverHeight = popoverEl?.offsetHeight || (needsRelink ? 200 : 160);
+    const popoverWidth = popoverEl?.offsetWidth || 190;
+    const gap = 6;
+    const margin = 10;
+
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    const placeTop = spaceBelow < popoverHeight + gap + margin && spaceAbove > spaceBelow;
+
+    setPlacement(placeTop ? 'top' : 'bottom');
+
+    let left = rect.right - popoverWidth;
+    if (left < margin) {
+      left = Math.min(rect.left, window.innerWidth - popoverWidth - margin);
+    }
+    left = Math.max(margin, left);
+
+    if (placeTop) {
+      setPopoverStyle({
+        position: 'fixed',
+        top: 'auto',
+        bottom: `${Math.max(margin, window.innerHeight - rect.top + gap)}px`,
+        left: `${left}px`,
+        right: 'auto',
+        zIndex: 9999,
+      });
+    } else {
+      setPopoverStyle({
+        position: 'fixed',
+        top: `${Math.min(window.innerHeight - popoverHeight - margin, rect.bottom + gap)}px`,
+        bottom: 'auto',
+        left: `${left}px`,
+        right: 'auto',
+        zIndex: 9999,
+      });
+    }
+  }, [needsRelink]);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    updatePosition();
+    const raf = requestAnimationFrame(updatePosition);
+    return () => cancelAnimationFrame(raf);
+  }, [open, updatePosition]);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleOutside(event: MouseEvent | PointerEvent) {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (detailsRef.current?.contains(target) || popoverRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        setOpen(false);
+        summaryRef.current?.focus();
+      }
+    }
+    document.addEventListener('pointerdown', handleOutside, true);
+    document.addEventListener('click', handleOutside, true);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      document.removeEventListener('pointerdown', handleOutside, true);
+      document.removeEventListener('click', handleOutside, true);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [open, updatePosition]);
+
+  const menuContent = (
+    <div
+      ref={popoverRef}
+      className="menu-popover"
+      style={popoverStyle}
+      onClick={(event) => {
+        if ((event.target as Element).closest('button')) {
+          setOpen(false);
+          summaryRef.current?.focus();
+        }
+      }}
+    >
+      {needsRelink && (
+        <button type="button" onClick={onRelink}>
+          <FolderSync size={16} /> Re-link / re-index
+        </button>
+      )}
+      <button type="button" onClick={onMarkRead}>
+        <Check size={16} /> Mark all read
+      </button>
+      <button type="button" onClick={onMarkUnread}>
+        <BookOpen size={16} /> Mark all unread
+      </button>
+      <button type="button" className="danger-text" onClick={onRemove}>
+        <Trash2 size={16} /> Remove
+      </button>
+    </div>
+  );
+
+  return (
+    <details
+      ref={detailsRef}
+      open={open}
+      className={`card-menu${placement === 'top' ? ' popover-top' : ''}`}
+      onToggle={(e) => {
+        const nextOpen = e.currentTarget.open;
+        if (nextOpen !== open) {
+          setOpen(nextOpen);
+        }
+      }}
+    >
+      <summary
+        ref={summaryRef}
+        aria-label={'Options for ' + title}
+        aria-expanded={open}
+        aria-haspopup="menu"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setOpen((prev) => !prev);
+        }}
+      >
+        <MoreHorizontal className="card-menu-dots" size={19} />
+        <X className="card-menu-close" size={19} />
+      </summary>
+      {open && (typeof document !== 'undefined' ? createPortal(menuContent, document.body) : menuContent)}
+    </details>
+  );
 }
 
 function formatAddedDate(timestamp?: number): string {
@@ -538,34 +694,6 @@ function Library({
     }
   }
   useEffect(() => {
-    function dismiss(event: MouseEvent | KeyboardEvent) {
-      if (event instanceof KeyboardEvent && event.key !== 'Escape') return;
-      document.querySelectorAll<HTMLDetailsElement>('.card-menu[open]').forEach((menu) => {
-        if (event instanceof KeyboardEvent) {
-          if (menu.contains(document.activeElement)) menu.querySelector('summary')?.focus();
-          menu.open = false;
-        } else if (event.target instanceof Node && !menu.contains(event.target)) {
-          menu.open = false;
-        }
-      });
-    }
-    function reposition() {
-      document.querySelectorAll<HTMLDetailsElement>('.card-menu[open]').forEach(positionCardMenu);
-    }
-    document.addEventListener('pointerdown', dismiss, true);
-    document.addEventListener('click', dismiss, true);
-    document.addEventListener('keydown', dismiss);
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      document.removeEventListener('pointerdown', dismiss, true);
-      document.removeEventListener('click', dismiss, true);
-      document.removeEventListener('keydown', dismiss);
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  }, []);
-  useEffect(() => {
     let live = true;
     let revision = 0;
     function checkAccess() {
@@ -667,10 +795,7 @@ function Library({
             </>
           ) : (
             <>
-              <span className="upload-icon">
-                <UploadIcon size={29} strokeWidth={1.5} />
-              </span>
-              <h2>{drag ? 'Drop your stories here' : 'Make room for a good story'}</h2>
+              <h2 className="upload-area-title">{drag ? 'Drop your stories here' : 'Make room for a good story'}</h2>
               <p>Drop manga folders here, or choose your files.</p>
               <div className="upload-buttons">
                 <button className="browse-button" onClick={() => void pick()}>
@@ -702,7 +827,10 @@ function Library({
                     aria-label="Sort manga shelf"
                     value={shelfSort}
                     onChange={(e) =>
-                      setSettings({ ...settings, shelfSort: e.target.value as Settings['shelfSort'] })
+                      setSettings({
+                        ...settings,
+                        shelfSort: e.target.value as Settings['shelfSort'],
+                      })
                     }
                   >
                     <option value="recent">Recent activity</option>
@@ -770,7 +898,9 @@ function Library({
                             'manga-bookmark-btn' + (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
                           }
                           onClick={(e) => void toggleMangaBookmark(m, e)}
-                          title={bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'}
+                          title={
+                            bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+                          }
                           aria-label={
                             bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
                           }
@@ -835,68 +965,25 @@ function Library({
                         <span>Info</span>
                       </Link>
                     )}
-                    <details
-                      className="card-menu"
-                      onToggle={(e) => {
-                        if (e.currentTarget.open) {
-                          positionCardMenu(e.currentTarget);
+                    <CardMenu
+                      title={m.title}
+                      needsRelink={needs.has(m.id)}
+                      onRelink={() => void pick(m)}
+                      onMarkRead={() => void mark(m.id, true).catch((e) => notify(errorMessage(e)))}
+                      onMarkUnread={() =>
+                        void mark(m.id, false).catch((e) => notify(errorMessage(e)))
+                      }
+                      onRemove={() => {
+                        if (settings.confirmDelete) {
+                          setRemoveId(m.id);
+                        } else {
+                          void deleteManga(m.id)
+                            .then(refresh)
+                            .then(() => notify('Manga removed.'))
+                            .catch((e) => notify(errorMessage(e)));
                         }
                       }}
-                    >
-                      <summary
-                        aria-label={'Options for ' + m.title}
-                        onPointerDown={(e) => {
-                          const details = e.currentTarget.closest<HTMLDetailsElement>('details');
-                          if (details) positionCardMenu(details);
-                        }}
-                      >
-                        <MoreHorizontal className="card-menu-dots" size={19} />
-                        <X className="card-menu-close" size={19} />
-                      </summary>
-                      <div
-                        className="menu-popover"
-                        onClick={(event) => {
-                          if ((event.target as Element).closest('button')) {
-                            const menu = event.currentTarget.closest('details');
-                            if (menu) {
-                              menu.querySelector('summary')?.focus();
-                              menu.open = false;
-                            }
-                          }
-                        }}
-                      >
-                        {needs.has(m.id) && (
-                          <button onClick={() => void pick(m)}>
-                            <FolderSync size={16} /> Re-link / re-index
-                          </button>
-                        )}
-                        <button
-                          onClick={() => void mark(m.id, true).catch((e) => notify(errorMessage(e)))}
-                        >
-                          <Check size={16} /> Mark all read
-                        </button>
-                        <button
-                          onClick={() => void mark(m.id, false).catch((e) => notify(errorMessage(e)))}
-                        >
-                          <BookOpen size={16} /> Mark all unread
-                        </button>
-                        <button
-                          className="danger-text"
-                          onClick={() => {
-                            if (settings.confirmDelete) {
-                              setRemoveId(m.id);
-                            } else {
-                              void deleteManga(m.id)
-                                .then(refresh)
-                                .then(() => notify('Manga removed.'))
-                                .catch((e) => notify(errorMessage(e)));
-                            }
-                          }}
-                        >
-                          <Trash2 size={16} /> Remove
-                        </button>
-                      </div>
-                    </details>
+                    />
                   </div>
                 </article>
               ))}

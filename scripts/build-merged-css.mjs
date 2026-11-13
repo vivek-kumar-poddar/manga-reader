@@ -807,7 +807,7 @@ button.danger-text:focus-visible svg,
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   width: min(100%, 380px);
-  margin: 28px 0;
+  margin: 28px 0 ;
 }
 
 .upload-zone .upload-buttons > button {

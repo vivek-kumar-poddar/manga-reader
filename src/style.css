@@ -383,7 +383,7 @@ svg {
 }
 
 .upload-zone h2 {
-  font-size: 29px;
+  font-size: clamp(24px, 3vw, 42px);
 }
 
 .upload-zone p {
@@ -433,7 +433,7 @@ svg {
   font-size: 27px;
 }
 
-.collection-heading > span {
+.collection-heading>span {
   font-size: 16px;
   color: var(--muted);
 }
@@ -515,9 +515,9 @@ svg {
 }
 
 .shelf-sort,
-.shelf-sort > span,
+.shelf-sort>span,
 .shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort > span {
+.shelf-sort.bookmark-sort>span {
   font-size: var(--font-size-ui, 15px) !important;
 }
 
@@ -1168,7 +1168,7 @@ button.danger-text:focus-visible svg,
   font-size: 29px;
 }
 
-.settings-panel > p {
+.settings-panel>p {
   font-size: 16px;
   color: var(--muted);
   margin: 6px 0 30px;
@@ -1425,7 +1425,7 @@ input[type='checkbox'] {
   gap: 7px;
 }
 
-.reader-top > select {
+.reader-top>select {
   max-width: 220px;
 }
 
@@ -1521,7 +1521,7 @@ input[type='checkbox'] {
     max-width: 180px;
   }
 
-  .reader-top > select {
+  .reader-top>select {
     max-width: 150px;
   }
 }
@@ -1594,7 +1594,7 @@ input[type='checkbox'] {
     font-size: 26px;
   }
 
-  .collection-heading > span {
+  .collection-heading>span {
     font-size: 16px;
   }
 
@@ -1621,7 +1621,7 @@ input[type='checkbox'] {
     min-width: 40px;
   }
 
-  .reader-top > select {
+  .reader-top>select {
     max-width: 120px;
     width: 29vw;
     font-size: 16px;
@@ -1721,7 +1721,7 @@ select:active {
   font-size: 32px;
 }
 
-.modal-heading > p {
+.modal-heading>p {
   color: var(--muted);
   font-size: 16px;
   margin-top: 5px;
@@ -1771,7 +1771,7 @@ select:active {
   outline: none;
 }
 
-.settings-tab-body > section:first-child {
+.settings-tab-body>section:first-child {
   border-top: 0;
 }
 
@@ -1794,7 +1794,7 @@ select:active {
   padding: 4px 15px;
 }
 
-.storage-stats > div {
+.storage-stats>div {
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -1803,7 +1803,7 @@ select:active {
   font-size: 16px;
 }
 
-.storage-stats > div:last-child {
+.storage-stats>div:last-child {
   border-bottom: 0;
 }
 
@@ -1823,7 +1823,7 @@ select:active {
   margin: 0;
 }
 
-.storage-notes li + li {
+.storage-notes li+li {
   margin-top: 12px;
 }
 
@@ -1893,7 +1893,7 @@ select:active {
   gap: 12px;
 }
 
-.shortcuts-modal > .dialog-heading + p {
+.shortcuts-modal>.dialog-heading+p {
   font-size: 16px;
   color: var(--muted);
   line-height: 1.6;
@@ -1926,7 +1926,7 @@ select:active {
   padding-right: 14px;
 }
 
-.shortcuts-modal > .subtle {
+.shortcuts-modal>.subtle {
   margin-top: 19px;
 }
 
@@ -1952,7 +1952,7 @@ kbd {
     padding: 17px 19px 12px;
   }
 
-  .modal-heading > p {
+  .modal-heading>p {
     font-size: 16px;
   }
 
@@ -1984,11 +1984,11 @@ kbd {
     font-size: 16px;
   }
 
-  .reader-top > .icon-button {
+  .reader-top>.icon-button {
     width: 33px;
   }
 
-  .reader-top > select {
+  .reader-top>select {
     max-width: 110px;
     width: 27vw;
   }
@@ -2079,7 +2079,7 @@ kbd {
   margin: 10px 0;
 }
 
-.folder-tree > li > span {
+.folder-tree>li>span {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -2095,7 +2095,7 @@ kbd {
   color: var(--muted);
 }
 
-.example-body > .folder-tree {
+.example-body>.folder-tree {
   background: var(--soft);
   border: 0;
   border-radius: 7px;
@@ -2104,7 +2104,7 @@ kbd {
 }
 
 .import-choice,
-.import-preview > label {
+.import-preview>label {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2113,7 +2113,7 @@ kbd {
   margin: 15px 0;
 }
 
-.import-choice > span {
+.import-choice>span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -2256,11 +2256,9 @@ kbd {
 }
 
 .reader-page {
-  width: min(
-    100%,
-    calc(var(--reading-width) * var(--zoom, 1)),
-    calc(var(--native-width) * var(--zoom, 1))
-  );
+  width: min(100%,
+      calc(var(--reading-width) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
 }
 
 .layout-width .reader-page {
@@ -2273,11 +2271,9 @@ kbd {
 
 .layout-height .reader-page,
 .reader-single.layout-auto .reader-page {
-  width: min(
-    100%,
-    calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
-    calc(var(--native-width) * var(--zoom, 1))
-  );
+  width: min(100%,
+      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
 }
 
 .spread-content {
@@ -2524,11 +2520,9 @@ kbd {
   border: 0;
   border-radius: 7px;
   margin: 0;
-  background: linear-gradient(
-    to right,
-    var(--accent) 0 var(--progress-fill),
-    var(--line) var(--progress-fill) 100%
-  );
+  background: linear-gradient(to right,
+      var(--accent) 0 var(--progress-fill),
+      var(--line) var(--progress-fill) 100%);
   cursor: pointer;
   touch-action: none;
 }
@@ -2585,13 +2579,13 @@ kbd {
   flex-shrink: 0;
 }
 
-.bar-popover > summary {
+.bar-popover>summary {
   list-style: none;
   cursor: pointer;
   user-select: none;
 }
 
-.bar-popover > summary::-webkit-details-marker {
+.bar-popover>summary::-webkit-details-marker {
   display: none;
 }
 
@@ -2610,7 +2604,7 @@ kbd {
 }
 
 .zoom-trigger:hover,
-.bar-popover[open] > summary {
+.bar-popover[open]>summary {
   background: var(--soft);
   border-color: var(--line);
 }
@@ -3039,7 +3033,7 @@ summary:focus-visible {
   text-align: left;
 }
 
-.dropdown-trigger > span:first-child {
+.dropdown-trigger>span:first-child {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -3135,11 +3129,11 @@ summary:focus-visible {
   color: var(--muted);
 }
 
-.settings-panel label > .dropdown-trigger {
+.settings-panel label>.dropdown-trigger {
   max-width: 200px;
 }
 
-.import-choice > .dropdown-trigger {
+.import-choice>.dropdown-trigger {
   max-width: 65%;
 }
 
@@ -3147,7 +3141,7 @@ summary:focus-visible {
   width: 100%;
 }
 
-.bar-popover-panel label > .dropdown-trigger {
+.bar-popover-panel label>.dropdown-trigger {
   max-width: 135px;
 }
 
@@ -3243,7 +3237,7 @@ summary:focus-visible {
     flex-basis: 36px;
   }
 
-  .settings-panel label > .dropdown-trigger {
+  .settings-panel label>.dropdown-trigger {
     max-width: 56%;
   }
 }
@@ -3287,7 +3281,7 @@ summary:focus-visible {
     font-size: 16px;
   }
 
-  .import-choice > .dropdown-trigger {
+  .import-choice>.dropdown-trigger {
     max-width: 100%;
     width: 100%;
   }
@@ -3929,7 +3923,7 @@ button.danger-text:focus-visible svg,
   outline-offset: 1px;
 }
 
-.dropdown-trigger > span:first-child {
+.dropdown-trigger>span:first-child {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -4036,7 +4030,7 @@ button.danger-text:focus-visible svg,
   flex-shrink: 0;
 }
 
-.shelf-sort > span {
+.shelf-sort>span {
   font-size: var(--font-size-ui, 15px) !important;
 }
 
@@ -4063,7 +4057,7 @@ button.danger-text:focus-visible svg,
   transition: opacity 180ms ease;
 }
 
-.edge-progress > span {
+.edge-progress>span {
   display: block;
   width: 100%;
   height: 100%;
@@ -4073,10 +4067,7 @@ button.danger-text:focus-visible svg,
   transform-origin: left;
 }
 
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(
-    :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])
-  )
-  .edge-progress {
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
   opacity: 1;
 }
 
@@ -4104,7 +4095,7 @@ button.danger-text:focus-visible svg,
   font-size: var(--font-size-ui, 15px);
 }
 
-.bookmark-navigation > a {
+.bookmark-navigation>a {
   font-size: var(--font-size-ui, 15px);
   margin-right: 8px;
 }
@@ -4239,7 +4230,7 @@ button.danger-text:focus-visible svg,
   gap: 14px;
 }
 
-.import-success-info dl > div {
+.import-success-info dl>div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -4308,7 +4299,7 @@ button.danger-text:focus-visible svg,
   margin-bottom: 16px;
 }
 
-.shortcuts-modal > p,
+.shortcuts-modal>p,
 .shortcuts-modal [data-radix-dialog-description],
 .import-modal [data-radix-dialog-description],
 .confirm-modal [data-radix-dialog-description] {
@@ -4342,7 +4333,7 @@ select,
 textarea,
 .settings-panel,
 .tabbed-modal.settings-panel,
-.modal-heading > p,
+.modal-heading>p,
 .settings-tab-body section p,
 .settings-tab-body label,
 .settings-tab-body select,
@@ -4361,15 +4352,15 @@ textarea,
 .library-footer span,
 .library-footer a,
 .bookmark-navigation,
-.bookmark-navigation > a,
+.bookmark-navigation>a,
 .bookmark-navigation button,
 .bookmark-tabs,
 .bookmark-tab-button,
 .bookmarks-toolbar,
 .shelf-sort,
-.shelf-sort > span,
+.shelf-sort>span,
 .shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort > span,
+.shelf-sort.bookmark-sort>span,
 .manga-card-date-badge,
 .manga-card-date,
 .space-tooltip,
@@ -4384,9 +4375,7 @@ summary.card-menu-trigger,
   font-size: var(--font-size-ui, 15px) !important;
 }
 
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(
-    .menu-popover button
-  ),
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
 .dropdown-trigger,
 .dropdown-trigger span,
 .shelf-sort .dropdown-trigger,
@@ -4400,7 +4389,7 @@ option,
 select,
 .chapter-select,
 .zoom-trigger,
-.bar-popover > summary,
+.bar-popover>summary,
 summary.icon-button:not(.card-menu-trigger),
 .icon-button,
 a.icon-button,
@@ -4419,16 +4408,13 @@ a.secondary,
   text-transform: capitalize;
 }
 
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(
-    .menu-popover button
-  )
-  svg,
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) svg,
 .dropdown-trigger svg,
 .dropdown-chevron svg,
 .dropdown-check svg,
 .dropdown-scroll svg,
 .zoom-trigger svg,
-.bar-popover > summary svg,
+.bar-popover>summary svg,
 .icon-button svg,
 summary.icon-button:not(.card-menu-trigger) svg,
 a.icon-button svg,
@@ -4451,7 +4437,7 @@ a.secondary svg,
 }
 
 .zoom-trigger svg,
-.bar-popover.zoom-menu > summary svg {
+.bar-popover.zoom-menu>summary svg {
   width: calc(var(--font-size-button, 15px) * 0.8) !important;
   height: calc(var(--font-size-button, 15px) * 0.8) !important;
 }
@@ -4503,6 +4489,7 @@ summary.card-menu-trigger svg {
 }
 
 @media (max-width: 359px) {
+
   .reader-top.organized-bar,
   .reader-bottom.organized-bar {
     padding-left: 6px;
@@ -4565,7 +4552,7 @@ summary.card-menu-trigger svg {
     gap: 4px;
   }
 
-  .bookmark-navigation > a {
+  .bookmark-navigation>a {
     margin-right: 4px;
   }
 

@@ -159,7 +159,7 @@ a.primary:hover {
   margin: 40px 0 24px;
 }
 
-.collection-heading > span {
+.collection-heading>span {
   font-size: 16px;
 }
 
@@ -332,6 +332,7 @@ a.primary:hover {
 }
 
 @media (max-width: 359px) {
+
   .reader-top.organized-bar,
   .reader-bottom.organized-bar {
     padding-left: 6px;
@@ -422,10 +423,10 @@ a.primary:hover {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   width: min(100%, 380px);
-  margin: 28px 0;
+  margin: 28px 0 0;
 }
 
-.upload-zone .upload-buttons > button {
+.upload-zone .upload-buttons>button {
   width: 100%;
   height: auto;
   min-height: max(44px, calc(var(--font-size-button, 15px) * 2.8));
@@ -445,22 +446,22 @@ a.primary:hover {
     border-color 0.3s ease-in-out !important;
 }
 
-.dark .upload-zone .upload-buttons > button {
+.dark .upload-zone .upload-buttons>button {
   background-color: var(--soft);
 }
 
-.upload-zone .upload-buttons > button svg {
+.upload-zone .upload-buttons>button svg {
   width: calc(var(--font-size-button, 15px) * 1.15) !important;
   height: calc(var(--font-size-button, 15px) * 1.15) !important;
   flex-shrink: 0;
 }
 
-.upload-zone .upload-buttons > button:hover {
+.upload-zone .upload-buttons>button:hover {
   color: #fff;
   background: var(--text);
 }
 
-.dark .upload-zone .upload-buttons > button:hover {
+.dark .upload-zone .upload-buttons>button:hover {
   color: var(--surface) !important;
   background: #fff;
 }
@@ -490,7 +491,7 @@ a.primary:hover {
   flex-shrink: 0;
 }
 
-.shelf-sort > span {
+.shelf-sort>span {
   font-size: var(--font-size-ui, 15px) !important;
 }
 
@@ -518,7 +519,7 @@ a.primary:hover {
   transition: opacity 180ms ease;
 }
 
-.edge-progress > span {
+.edge-progress>span {
   display: block;
   width: 100%;
   height: 100%;
@@ -528,10 +529,7 @@ a.primary:hover {
   transform-origin: left;
 }
 
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(
-    :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])
-  )
-  .edge-progress {
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
   opacity: 1;
 }
 
@@ -578,7 +576,7 @@ a.primary:hover {
   font-size: var(--font-size-ui, 15px);
 }
 
-.bookmark-navigation > a {
+.bookmark-navigation>a {
   font-size: var(--font-size-ui, 15px);
   margin-right: 8px;
 }
@@ -940,7 +938,7 @@ button.danger-text:focus-visible svg,
     gap: 4px;
   }
 
-  .bookmark-navigation > a {
+  .bookmark-navigation>a {
     margin-right: 4px;
   }
 
@@ -1051,7 +1049,7 @@ button.danger-text:focus-visible svg,
   gap: 14px;
 }
 
-.import-success-info dl > div {
+.import-success-info dl>div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1154,7 +1152,7 @@ button.danger-text:focus-visible svg,
   margin-bottom: 16px;
 }
 
-.shortcuts-modal > p,
+.shortcuts-modal>p,
 .shortcuts-modal [data-radix-dialog-description],
 .import-modal [data-radix-dialog-description],
 .confirm-modal [data-radix-dialog-description] {
@@ -1195,7 +1193,7 @@ select,
 textarea,
 .settings-panel,
 .tabbed-modal.settings-panel,
-.modal-heading > p,
+.modal-heading>p,
 .settings-tab-body section p,
 .settings-tab-body label,
 .settings-tab-body select,
@@ -1214,15 +1212,15 @@ textarea,
 .library-footer span,
 .library-footer a,
 .bookmark-navigation,
-.bookmark-navigation > a,
+.bookmark-navigation>a,
 .bookmark-navigation button,
 .bookmark-tabs,
 .bookmark-tab-button,
 .bookmarks-toolbar,
 .shelf-sort,
-.shelf-sort > span,
+.shelf-sort>span,
 .shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort > span,
+.shelf-sort.bookmark-sort>span,
 .manga-card-date-badge,
 .manga-card-date,
 .space-tooltip,
@@ -1292,9 +1290,7 @@ label .dropdown-trigger {
 }
 
 /* Button font size and toggle options */
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(
-    .menu-popover button
-  ),
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
 .dropdown-trigger,
 .dropdown-trigger span,
 .shelf-sort .dropdown-trigger,
@@ -1308,7 +1304,7 @@ option,
 select,
 .chapter-select,
 .zoom-trigger,
-.bar-popover > summary,
+.bar-popover>summary,
 summary.icon-button:not(.card-menu-trigger),
 .icon-button,
 a.icon-button,
@@ -1332,16 +1328,13 @@ a.secondary,
 }
 
 /* Scale button SVG icons proportionally with button font size */
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(
-    .menu-popover button
-  )
-  svg,
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) svg,
 .dropdown-trigger svg,
 .dropdown-chevron svg,
 .dropdown-check svg,
 .dropdown-scroll svg,
 .zoom-trigger svg,
-.bar-popover > summary svg,
+.bar-popover>summary svg,
 .icon-button svg,
 summary.icon-button:not(.card-menu-trigger) svg,
 a.icon-button svg,
@@ -1364,7 +1357,7 @@ a.secondary svg,
 }
 
 .zoom-trigger svg,
-.bar-popover.zoom-menu > summary svg {
+.bar-popover.zoom-menu>summary svg {
   width: calc(var(--font-size-button, 15px) * 0.8) !important;
   height: calc(var(--font-size-button, 15px) * 0.8) !important;
 }
