@@ -1,7 +1,3 @@
-/**
- * Normalizes absolute or system paths, preserving leading `//` for UNC network paths
- * while converting backslashes to forward slashes and stripping redundant slashes.
- */
 export function normalizePath(path: string): string {
   if (!path) return '';
   const isUnc = path.startsWith('\\\\') || path.startsWith('//');
@@ -14,16 +10,11 @@ export function normalizePath(path: string): string {
   return converted.replace(/\/+/g, '/').replace(/\/+$/, '');
 }
 
-/**
- * Normalizes a logical relative manga/page path.
- * Strips leading/trailing slashes and collapses internal redundant slashes.
- */
 export function normalizeRelativePath(path: string): string {
   if (!path) return '';
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
 }
 
-/** Keep native-script letters while removing emoji, unsafe punctuation and Latin accents. */
 export function folderSlug(name: string) {
   return (
     name
@@ -45,7 +36,6 @@ export function folderSlug(name: string) {
 export function uniqueSlug(name: string, used: Set<string>) {
   const base = folderSlug(name);
   const reserved = ['read', 'assets', 'api', 'bookmarks', 'index.html'];
-  // At most used.size + reserved.length candidates can collide.
   for (let attempt = 0; attempt <= used.size + reserved.length; attempt++) {
     const slug = attempt === 0 ? base : base + '-' + (attempt + 1);
     if (!used.has(slug) && !reserved.includes(slug)) return slug;

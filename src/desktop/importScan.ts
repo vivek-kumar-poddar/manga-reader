@@ -1,8 +1,14 @@
-import { uniqueSlug, normalizePath, normalizeRelativePath } from '../paths';
-import { type Directory, type Page, type Chapter, type Manga } from '../model';
-import { matchingPosition, isRecord } from './validation';
-import { limits, LimitError, assertAtMost, assertPathLimits, assertImageDimensions, withinTime } from '../limits';
-import { imageFile } from '../images';
+import { normalizeRelativePath } from '../paths';
+import { type Directory, type Manga } from '../model';
+import {
+  limits,
+  LimitError,
+  assertAtMost,
+  assertPathLimits,
+  assertImageDimensions,
+  withinTime,
+} from '../limits';
+import { dimensions, imageFile } from '../images';
 import {
   desktopAPI,
   type FolderEntry,
@@ -11,15 +17,16 @@ import {
 } from '../tauriBridge';
 import {
   type SourceFile,
-  summary,
   saveManga,
   getManga,
   listLibrary,
+  fileFor,
   access,
   errorMessage,
   onMangaDelete,
   invalidateSummaryCache,
   invalidateBookmarkCache,
+  clearDirHandleCache,
   broadcastSync,
 } from './storage';
 
@@ -52,6 +59,7 @@ export function naturalOrder(a: string, b: string): number {
 }
 
 export async function naturalSortPaths(paths: string[]): Promise<string[]> {
+  if (paths.length <= 1) return paths;
   if (desktopAPI.naturalSortPaths) {
     try {
       return await desktopAPI.naturalSortPaths(paths);
@@ -148,6 +156,22 @@ function alive(signal?: AbortSignal) {
   if (signal?.aborted) throw new DOMException('Import cancelled', 'AbortError');
 }
 
+function assertSourceLimits(source: Source) {
+  assertAtMost(source.files.size, limits.pagesPerTitle, 'Image candidates per title');
+  for (const path of source.files.keys()) assertPathLimits(path);
+  assertAtMost(chapterGroups(source).size, limits.chaptersPerTitle, 'Chapters per title');
+}
+
+function assertSourcesLimits(sources: Source[]) {
+  assertAtMost(sources.length, limits.titles, 'Selected titles');
+  let total = 0;
+  for (const source of sources) {
+    total += source.files.size;
+    assertAtMost(total, limits.discoveryEntries, 'Selected image candidates');
+    assertSourceLimits(source);
+  }
+}
+
 export async function fromDesktopFolder(
   folderPath: string,
   options: ScanOptions = {},
@@ -163,6 +187,12 @@ export async function fromDesktopFolder(
         desktopAPI.discoverLibrary(folderPath, {
           signal: options.signal,
           onProgress: (prog) => {
+            options.update?.({
+              phase: 'discover',
+              done: prog.done,
+              total: prog.total,
+              title: folderName,
+            });
             if (prog.total > 0) {
               desktopAPI.setProgressBar(prog.done / prog.total);
             }
@@ -203,12 +233,17 @@ export async function fromDesktopFolder(
             }
           }
         }
+        options.update?.({
+          phase: 'discover',
+          done: source.files.size,
+          total: source.files.size,
+          title: folderName,
+        });
         return source;
       }
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') {
-        throw e;
-      }
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      if (e instanceof LimitError) throw e;
       console.warn('Native discoverLibrary failed, falling back to listFolder:', e);
     }
   }
@@ -217,6 +252,12 @@ export async function fromDesktopFolder(
     desktopAPI.listFolder(folderPath, {
       signal: options.signal,
       onProgress: (prog) => {
+        options.update?.({
+          phase: 'discover',
+          done: prog.done,
+          total: prog.total,
+          title: folderName,
+        });
         if (prog.total > 0) {
           desktopAPI.setProgressBar(prog.done / prog.total);
         }
@@ -232,22 +273,42 @@ export async function fromDesktopFolder(
     alive(options.signal);
     const relPath = normalizeRelativePath(entry.relativePath);
     if (ignored(relPath) || !imageFile({ name: relPath, type: '' })) continue;
-    assertPathLimits(relPath);
-    assertAtMost(++discovered, limits.discoveryEntries, 'Discovered entries');
-    assertAtMost(source.files.size + 1, limits.pagesPerTitle, 'Image candidates per title');
+    try {
+      assertPathLimits(relPath);
+      assertAtMost(++discovered, limits.discoveryEntries, 'Discovered entries');
+      assertAtMost(source.files.size + 1, limits.pagesPerTitle, 'Image candidates per title');
 
-    source.files.set(
-      relPath,
-      new DesktopHandle(
-        relPath.split('/').at(-1) ?? relPath,
-        entry.absolutePath,
-        entry.size,
-        entry.modified,
-        entry.width,
-        entry.height,
-      ) as unknown as FileSystemFileHandle,
-    );
+      source.files.set(
+        relPath,
+        new DesktopHandle(
+          relPath.split('/').at(-1) ?? relPath,
+          entry.absolutePath,
+          entry.size,
+          entry.modified,
+          entry.width,
+          entry.height,
+        ) as unknown as FileSystemFileHandle,
+      );
+    } catch (e) {
+      if (e instanceof LimitError) throw e;
+      source.issues.push({ path: relPath, reason: errorMessage(e) });
+    }
+    if (discovered % 256 === 0) {
+      options.update?.({
+        phase: 'discover',
+        done: source.files.size,
+        total: 0,
+        title: folderName,
+      });
+    }
   }
+
+  options.update?.({
+    phase: 'discover',
+    done: source.files.size,
+    total: source.files.size,
+    title: folderName,
+  });
 
   return source;
 }
@@ -268,6 +329,7 @@ export function droppedSources(
 }
 
 export async function splitSource(source: Source): Promise<Source[]> {
+  assertSourceLimits(source);
   if (source.discoveredTitles && source.discoveredTitles.length > 1) {
     const splitTitles: Source[] = [];
     for (const dt of source.discoveredTitles) {
@@ -371,6 +433,7 @@ export async function indexSource(
   previous?: Manga,
   sort: Manga['sort'] = 'natural',
 ) {
+  assertSourceLimits(source);
   if (previous) stopBackground(previous.id);
 
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
@@ -441,9 +504,9 @@ export async function indexSource(
       };
 
       alive(options.signal);
-      // Natively committed directly to SQLite in Rust index_title; invalidate JS caches
       invalidateSummaryCache();
       invalidateBookmarkCache();
+      clearDirHandleCache(m.id);
       broadcastSync({ type: 'library', id: m.id });
 
       return {
@@ -470,10 +533,12 @@ export async function prepareChapter(
   const ch = manga.chapters[chapterIndex];
   if (!ch) return [];
 
-  const unmeasured = ch.pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
+  const pages = ch.pages.map((p) => ({ ...p }));
+  const unmeasured = pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
   if (!unmeasured.length) return [];
 
   const issues: Issue[] = [];
+  let updated = false;
 
   if (desktopAPI.prepareChapterHeaders) {
     const paths = unmeasured.map((p) => p.path).filter((p): p is string => Boolean(p));
@@ -487,21 +552,72 @@ export async function prepareChapter(
           headerMap.set(h.path, h);
         }
         let done = 0;
-        let updated = false;
         for (const p of unmeasured) {
           const found = p.path ? headerMap.get(p.path) : undefined;
           if (found && found.width > 0 && found.height > 0) {
             assertImageDimensions(found.width, found.height);
             p.width = found.width;
             p.height = found.height;
+            p.size = found.size;
+            p.modified = found.modified;
             p.dimensionsPending = false;
             updated = true;
-          } else {
-            issues.push({
-              path: p.path || p.name,
-              reason: 'Could not resolve image dimensions',
+            done++;
+            options.update?.({
+              phase: 'index',
+              done,
+              total: unmeasured.length,
+              title: manga.title,
             });
           }
+        }
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') throw err;
+        console.warn('Native prepareChapterHeaders failed:', err);
+      }
+    }
+  }
+
+  const stillPending = pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
+  if (stillPending.length > 0) {
+    let done = unmeasured.length - stillPending.length;
+    await pooled(
+      stillPending,
+      async (p) => {
+        alive(options.signal);
+        try {
+          if (desktopAPI.getImageDimensions && manga.localPath && p.path) {
+            const sep = manga.localPath.includes('\\') ? '\\' : '/';
+            const absPath =
+              manga.localPath.replace(/[\\/]+$/, '') + sep + p.path.split('/').join(sep);
+            const dim = await desktopAPI.getImageDimensions(absPath);
+            if (dim && dim.width > 0 && dim.height > 0) {
+              assertImageDimensions(dim.width, dim.height);
+              p.width = dim.width;
+              p.height = dim.height;
+              p.dimensionsPending = false;
+              updated = true;
+              return;
+            }
+          }
+          const file = await fileFor(manga, p);
+          alive(options.signal);
+          if (!file.size) throw new Error('Empty file.');
+          const size = await dimensions(file, options.signal);
+          assertImageDimensions(size.width, size.height);
+          p.width = size.width;
+          p.height = size.height;
+          p.size = file.size;
+          p.modified = file.lastModified;
+          p.dimensionsPending = false;
+          updated = true;
+        } catch (err) {
+          alive(options.signal);
+          issues.push({
+            path: p.path || p.name,
+            reason: errorMessage(err),
+          });
+        } finally {
           done++;
           options.update?.({
             phase: 'index',
@@ -510,25 +626,18 @@ export async function prepareChapter(
             title: manga.title,
           });
         }
-        if (updated) {
-          await saveManga(manga);
-        }
-        return issues;
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') throw err;
-        console.warn('Native prepareChapterHeaders failed:', err);
-        return unmeasured.map((p) => ({
-          path: p.path || p.name,
-          reason: `Failed to prepare chapter headers: ${errorMessage(err)}`,
-        }));
-      }
-    }
+      },
+      options.signal,
+    );
   }
 
-  return unmeasured.map((p) => ({
-    path: p.path || p.name,
-    reason: 'Header preparation unavailable or paths missing',
-  }));
+  if (updated) {
+    alive(options.signal);
+    manga.chapters[chapterIndex] = { ...ch, pages };
+    await saveManga(manga);
+  }
+
+  return issues;
 }
 
 interface BackgroundJob {
@@ -642,7 +751,11 @@ export async function resumeBackground(): Promise<void> {
     const list = await listLibrary();
     for (const item of list) {
       const m = await getManga(item.id);
-      if (m && m.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))) {
+      if (
+        m &&
+        (await access(m)) &&
+        m.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))
+      ) {
         scheduleBackground(m);
       }
     }
@@ -660,6 +773,7 @@ export async function warmSources(
   options: ScanOptions = {},
   _sort: Manga['sort'] = 'natural',
 ): Promise<void> {
+  assertSourcesLimits(sources);
   for (const source of sources) {
     alive(options.signal);
     options.update?.({

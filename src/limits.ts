@@ -1,7 +1,5 @@
 import type { Manga } from './model';
 
-// Units, scope, rationale and loop audit: docs/limits.md.
-// Policy ceilings, not a promise of peak memory usage on every browser/device.
 export const limits = Object.freeze({
   backupBytes: 32 * 1024 * 1024,
   titles: 1_000,
@@ -12,7 +10,6 @@ export const limits = Object.freeze({
   pathChars: 4_096,
   directoryDepth: 64,
   discoveryEntries: 100_000,
-  // Budgets for optional bitmap/canvas work, not source-image restrictions.
   imagePixels: 16_000_000,
   imageSide: 32_768,
   queuedJobs: 64,
@@ -54,7 +51,6 @@ export function assertImageDimensions(width: number, height: number): void {
   }
 }
 
-// Resource checks for typed data. Unknown-data parsing/allowlisting belongs to step 04.
 export function assertMangaLimits(manga: Manga): number {
   assertAtMost(manga.chapters.length, limits.chaptersPerTitle, 'Chapters per title');
   let pages = 0;
@@ -76,8 +72,6 @@ export function assertMangaLimits(manga: Manga): number {
   return pages;
 }
 
-// Stops waiting; cannot cancel browser work that has no cancellation API.
-// Attach handlers immediately so a late rejection is still consumed.
 export function withinTime<T>(
   task: PromiseLike<T>,
   milliseconds: number,

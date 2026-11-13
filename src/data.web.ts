@@ -1,4 +1,3 @@
-// Web platform data facade re-exporting model, web validation, web storage, images, and web importScan.
 export { defaults } from './model';
 export type {
   Directory,

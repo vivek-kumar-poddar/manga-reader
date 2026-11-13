@@ -3,7 +3,7 @@ import { Link, useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, BookMarked, Home, Search, Settings } from 'lucide-react';
 import { Cover, IconButton, ThemeButton, useApp } from './App';
 import Dropdown from './Dropdown';
-import { getManga, errorMessage, type Manga } from './data';
+import { getManga, errorMessage, syncChannel, type Manga } from './data';
 import { mangaPath } from './paths';
 
 type ChapterSort = 'first' | 'last' | 'unread';
@@ -48,13 +48,20 @@ export default function MangaDetails() {
     const visible = () => {
       if (!document.hidden) void load();
     };
+    const onSync = (e: MessageEvent) => {
+      if (!e.data?.id || e.data.id === summary?.id) {
+        void load();
+      }
+    };
     void load();
     window.addEventListener('focus', visible);
     document.addEventListener('visibilitychange', visible);
+    syncChannel?.addEventListener('message', onSync);
     return () => {
       live = false;
       window.removeEventListener('focus', visible);
       document.removeEventListener('visibilitychange', visible);
+      syncChannel?.removeEventListener('message', onSync);
     };
   }, [summary, retry]);
 

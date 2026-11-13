@@ -1,13 +1,5 @@
-import { uniqueSlug } from '../paths';
-import {
-  type Manga,
-  type Summary,
-  type Position,
-  type Page,
-  type Settings,
-  defaults,
-} from '../model';
-import { parseSummary, parseManga, parseSettings } from './validation';
+import { type Manga, type Summary, type Position, type Page, type Settings } from '../model';
+import { limits, assertPathLimits, withinTime } from '../limits';
 import { desktopAPI } from '../tauriBridge';
 import {
   type LibraryRepo,
@@ -15,6 +7,15 @@ import {
   ensureLibraryMigrated,
   readLegacyIndexedDB,
 } from '../repo';
+import {
+  type MangaDeleteListener,
+  onMangaDelete,
+  notifyDelete,
+  type StorageSyncMessage,
+  syncChannel,
+  onStorageSync,
+  broadcastSync,
+} from '../web/storage';
 
 export type SourceFile = File | { getFile(): Promise<File> };
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
@@ -27,7 +28,7 @@ export {
   syncChannel,
   onStorageSync,
   broadcastSync,
-} from '../web/storage';
+};
 
 export function invalidateSummaryCache(): void {
   getRepo().invalidateCaches?.();
@@ -36,6 +37,11 @@ export function invalidateSummaryCache(): void {
 export function invalidateBookmarkCache(): void {
   getRepo().invalidateCaches?.();
 }
+
+syncChannel?.addEventListener('message', () => {
+  activeRepo.invalidateCaches?.();
+  clearDirHandleCache();
+});
 
 export const summary = (m: Manga): Summary => {
   const { chapters, cover: _cover, ...rest } = m;
@@ -147,30 +153,62 @@ export interface MangaDB {
   [key: string]: unknown;
 }
 
-export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> {
-  // Desktop storage uses SQLite; no-op for V1->V2 IDB migration
-}
+export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> { }
 
 export const ACCESS_CACHE_TTL_MS = 7500;
 export const dirHandleCache = new Map<string, any>();
 export const accessCache = new Map<string, AccessCacheEntry>();
 
-export function clearAccessCache(): void {
-  accessCache.clear();
+export function clearAccessCache(mangaId?: string): void {
+  if (mangaId) {
+    accessCache.delete(mangaId);
+  } else {
+    accessCache.clear();
+  }
 }
 
-export function clearDirHandleCache(): void {
-  dirHandleCache.clear();
+export function clearDirHandleCache(mangaId?: string): void {
+  clearAccessCache(mangaId);
+  if (mangaId) {
+    const prefix = `${mangaId}:`;
+    for (const key of dirHandleCache.keys()) {
+      if (key.startsWith(prefix)) {
+        dirHandleCache.delete(key);
+      }
+    }
+  } else {
+    dirHandleCache.clear();
+  }
 }
 
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   if (!p.path) throw new Error('Desktop page is missing path');
-  const resolvedPath = desktopAPI.resolvePath
-    ? await desktopAPI.resolvePath(m.id, p.path, m.localPath)
-    : p.path;
-  const buffer = await desktopAPI.readFile(resolvedPath);
-  if (!buffer) throw new Error(`Could not read desktop file at: ${resolvedPath}`);
-  return new File([buffer], p.name || 'image.webp');
+  assertPathLimits(p.path);
+  if (m.localPath || desktopAPI.resolvePath) {
+    const sep = m.localPath?.includes('\\') ? '\\' : '/';
+    const fallbackPath = m.localPath
+      ? `${m.localPath.replace(/[\\/]+$/, '')}${sep}${p.path.split('/').join(sep)}`
+      : p.path;
+    const resolvedPath = desktopAPI.resolvePath
+      ? await desktopAPI.resolvePath(m.id, p.path, m.localPath)
+      : fallbackPath;
+    const buffer = await withinTime(
+      desktopAPI.readFile(resolvedPath),
+      limits.ioTimeoutMs,
+      'Reading file',
+    );
+    if (!buffer) throw new Error(`Could not read desktop file at: ${resolvedPath}`);
+    return new File([buffer], p.name || p.path.split('/').at(-1) || 'image.webp');
+  }
+  const f = sessionFiles.get(m.id)?.get(p.path);
+  if (f) {
+    return withinTime(
+      f instanceof File ? Promise.resolve(f) : f.getFile(),
+      limits.ioTimeoutMs,
+      'Reading file',
+    );
+  }
+  throw new Error('Desktop manga is missing localPath');
 }
 
 export async function access(
@@ -178,6 +216,7 @@ export async function access(
   request = false,
 ): Promise<boolean> {
   if (!manga) return false;
+  if (sessionFiles.has(manga.id)) return true;
 
   const now = Date.now();
   if (!request) {
@@ -194,19 +233,20 @@ export async function access(
 
     accessCache.set(manga.id, {
       expiresAt: now + ACCESS_CACHE_TTL_MS,
+      timestamp: now,
       granted,
     });
     return granted;
   } catch {
     accessCache.set(manga.id, {
       expiresAt: now + ACCESS_CACHE_TTL_MS,
+      timestamp: now,
       granted: false,
     });
     return false;
   }
 }
 
-// Fallback reader for legacy IndexedDB data on desktop platforms
 export class IndexedDBLibraryRepo implements LibraryRepo {
   async listLibrary() {
     return [];

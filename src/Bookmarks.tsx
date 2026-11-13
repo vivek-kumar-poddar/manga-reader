@@ -27,7 +27,6 @@ import { mangaPath } from './paths';
 import { APP_VERSION } from './updates';
 import { desktopAPI, type BookmarkCardDto } from './tauriBridge';
 
-/** pagePath / localPath / chapterName are pre-populated on desktop from BookmarkCardDto; undefined on web. */
 type Mark = {
   manga: Manga;
   chapter: number;
@@ -37,7 +36,6 @@ type Mark = {
   chapterName?: string;
 };
 
-/** Convert a flat SQL bookmark card into the Mark shape used by the UI. */
 function cardToMark(card: BookmarkCardDto): Mark {
   const manga: Manga = {
     id: card.mangaId,
@@ -77,7 +75,6 @@ const key = (b: Mark) =>
   b.chapter +
   '/' +
   (b.position.mangaBookmark ? 'manga' : b.position.path || b.position.page);
-/** Returns the chapter display name, using the pre-populated field (desktop) or the chapters array (web). */
 const getChapterName = (mark: Mark): string =>
   mark.chapterName ?? mark.manga.chapters[mark.chapter]?.name ?? '';
 function Thumbnail({ mark }: { mark: Mark }) {
@@ -91,7 +88,6 @@ function Thumbnail({ mark }: { mark: Mark }) {
         if (!entries[0].isIntersecting) return;
         observer.disconnect();
         void (async () => {
-          // Desktop: use native page/cover URLs — no blob reads needed.
           if (desktopAPI.isDesktop) {
             const lp = mark.localPath ?? mark.manga.localPath;
             const pp =
@@ -114,7 +110,6 @@ function Thumbnail({ mark }: { mark: Mark }) {
             }
           }
 
-          // Web fallback: load blob from filesystem.
           let blob = mark.manga.cover;
           const page = mark.manga.chapters[mark.chapter]?.pages?.[mark.position.page];
           const shouldLoadPage = page && (!mark.position.mangaBookmark || !blob);
@@ -183,16 +178,14 @@ export function BookmarkShelf({
   });
 
   useEffect(() => {
-    // Desktop: use SQL JOIN query — no per-manga getManga() calls needed.
-    // Always fetch tab='all' so badge counts on each tab button remain accurate;
-    // SQL handles sort order; client-side filter drives the active-tab display.
     if (!desktopAPI.isDesktop || !desktopAPI.getBookmarkCards) return;
     let live = true;
     let loadGen = 0;
     function loadBookmarks() {
       const currentGen = ++loadGen;
       setLoading(true);
-      void desktopAPI.getBookmarkCards!({ tab: 'all', sort: carousel ? 'newest' : sortBy })
+      void desktopAPI
+        .getBookmarkCards!({ tab: 'all', sort: carousel ? 'newest' : sortBy })
         .then((res) => {
           if (!live || currentGen !== loadGen) return;
           const result = res.cards.map(cardToMark);
@@ -222,7 +215,6 @@ export function BookmarkShelf({
   }, [carousel, sortBy, library]);
 
   useEffect(() => {
-    // Web fallback: load full Manga objects from IndexedDB via getManga().
     if (desktopAPI.isDesktop) return;
     let live = true;
     let loadGen = 0;
@@ -259,7 +251,7 @@ export function BookmarkShelf({
     }
     loadBookmarks();
     const onSync = (e: MessageEvent) => {
-      if (e.data?.type === 'progress') loadBookmarks();
+      if (e.data?.type === 'progress' || e.data?.type === 'library') loadBookmarks();
     };
     syncChannel?.addEventListener('message', onSync);
     return () => {
@@ -268,7 +260,6 @@ export function BookmarkShelf({
     };
   }, [library]);
 
-  // On desktop, marks is always all-tabs (SQL fetches tab='all'); filter here for tab display and counts.
   const mangaMarks = marks.filter((m) => Boolean(m.position.mangaBookmark));
   const individualMarks = marks.filter((m) => !m.position.mangaBookmark);
 
@@ -311,7 +302,9 @@ export function BookmarkShelf({
   }
 
   const activeMarks = tab === 'all' ? marks : tab === 'manga' ? mangaMarks : individualMarks;
-  const displayMarks = carousel ? getSortedMarks(marks, 'newest') : getSortedMarks(activeMarks, sortBy);
+  const displayMarks = carousel
+    ? getSortedMarks(marks, 'newest')
+    : getSortedMarks(activeMarks, sortBy);
 
   useEffect(() => {
     const el = track.current;
@@ -671,8 +664,10 @@ export default function BookmarksPage() {
     <>
       <header className="library-header">
         <Link to="/" className="brand">
-          <BookOpen size={23} />
-          <span>Reader.</span>
+          <BookOpen size={23} strokeWidth={1.5} />
+          <span>
+            Reader<span className="brand-period">.</span>
+          </span>
         </Link>
         <div className="header-actions">
           <Link className="icon-button" to="/" aria-label="Home" title="Home">

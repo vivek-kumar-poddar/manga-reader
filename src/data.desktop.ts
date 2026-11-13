@@ -1,4 +1,3 @@
-// Desktop platform data facade re-exporting model, desktop validation, desktop storage, images, and desktop importScan.
 export { defaults } from './model';
 export type {
   Directory,

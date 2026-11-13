@@ -7,8 +7,8 @@ import {
   type SaveProgressResult,
   broadcastSync,
   notifyDelete,
+  clearDirHandleCache,
   db,
-  IndexedDBLibraryRepo,
 } from './storage';
 
 export interface LibraryRepo {
@@ -107,9 +107,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
           return blob;
         }
       }
-    } catch {
-      // IndexedDB covers fallback miss
-    }
+    } catch { }
     return undefined;
   }
 
@@ -119,7 +117,6 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     return results.filter((m): m is Manga => Boolean(m));
   }
 
-  // Replace lines 122-136 in src/repo.ts:
   async saveManga(manga: Manga): Promise<void> {
     assertMangaLimits(manga);
     if (!desktopAPI.sqliteSaveManga) {
@@ -155,6 +152,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
         });
     }
     this.invalidateCaches();
+    clearDirHandleCache(m.id);
     broadcastSync({ type: 'library', id: m.id });
   }
 
@@ -274,6 +272,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       void desktopAPI.deleteThumbnail(id).catch(() => { });
     }
     this.invalidateCaches();
+    clearDirHandleCache(id);
     notifyDelete(id);
     broadcastSync({ type: 'library', id });
   }
@@ -287,6 +286,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
       void desktopAPI.clearThumbnails().catch(() => { });
     }
     this.invalidateCaches();
+    clearDirHandleCache();
     notifyDelete();
     broadcastSync({ type: 'library' });
   }
@@ -358,6 +358,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
 
     const validatedSettings = await desktopAPI.restoreBackup(jsonStr);
     this.invalidateCaches();
+    clearDirHandleCache();
     notifyDelete();
     broadcastSync({ type: 'library' });
     return validatedSettings;
@@ -392,9 +393,7 @@ export async function readLegacyIndexedDB(): Promise<LegacyReadResult> {
         existed = false;
         try {
           req.transaction?.abort();
-        } catch {
-          // ignore abort error
-        }
+        } catch { }
       }
     };
 
@@ -441,9 +440,7 @@ export async function readLegacyIndexedDB(): Promise<LegacyReadResult> {
             if (settingsReq?.result) {
               try {
                 settings = parseSettings(settingsReq.result);
-              } catch {
-                // ignore malformed settings in legacy DB
-              }
+              } catch { }
             }
 
             const rawProgress = (progressReq?.result || []) as any[];
@@ -554,11 +551,25 @@ export async function ensureLibraryMigrated(idbRepo?: LibraryRepo): Promise<bool
     return true;
   }
 
+  const localPathsById = new Map<string, string>();
+  for (const t of titles) {
+    if (t && typeof t.id === 'string' && typeof t.localPath === 'string' && t.localPath.trim()) {
+      localPathsById.set(t.id.trim(), t.localPath.trim());
+    }
+  }
+
   const validated = validateBackup({
     version: 2,
     manga: titles,
     settings: settings ?? {},
   });
+
+  for (const m of validated.manga) {
+    const savedLocalPath = localPathsById.get(m.id);
+    if (savedLocalPath && !m.localPath) {
+      m.localPath = savedLocalPath;
+    }
+  }
 
   if (!desktopAPI.importLegacyLibrary) {
     throw new Error('desktopAPI.importLegacyLibrary is required on desktop');

@@ -322,7 +322,12 @@ pub fn validate_chapter(
         let mut valid_bms = Vec::new();
         for bm in bms.iter_mut() {
             if validate_position(bm, page_count).is_ok() {
-                let key = format!("{}:{}", bm.page, bm.path.as_deref().unwrap_or(""));
+                let key = format!(
+                    "{}:{}:{}",
+                    bm.page,
+                    bm.path.as_deref().unwrap_or(""),
+                    bm.manga_bookmark.unwrap_or(false)
+                );
                 if seen_bms.insert(key) {
                     valid_bms.push(bm.clone());
                 }
@@ -707,10 +712,17 @@ mod tests {
                             "bookmarks": [
                                 {
                                     "page": 0,
-                                    "fraction": 0.5,
+                                    "fraction": 0.0,
                                     "path": "ch1/01.jpg",
                                     "mangaBookmark": true,
                                     "timestamp": 1731234567890.0
+                                },
+                                {
+                                    "page": 0,
+                                    "fraction": 0.5,
+                                    "path": "ch1/01.jpg",
+                                    "mangaBookmark": false,
+                                    "timestamp": 1731234567891.0
                                 }
                             ]
                         }
@@ -734,6 +746,12 @@ mod tests {
         assert_eq!(
             payload.manga[0].chapters[0].pages[0].dimensions_pending,
             Some(true)
+        );
+        let bms = payload.manga[0].chapters[0].bookmarks.as_ref().unwrap();
+        assert_eq!(
+            bms.len(),
+            2,
+            "Both title bookmark and page bookmark on page 0 must be preserved"
         );
         let pos = payload.manga[0].chapters[0].position.as_ref().unwrap();
         assert_eq!(pos.manga_bookmark, Some(true));

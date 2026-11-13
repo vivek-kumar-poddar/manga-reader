@@ -1,4 +1,3 @@
-// Unified facade module re-exporting model, validation, storage, images, and importScan.
 export { defaults } from './model';
 export type {
   Directory,

@@ -18,9 +18,6 @@ const subscribers = new Set<() => void>();
 
 let nextId = 1;
 
-/**
- * Strips potentially sensitive or overly verbose paths, keeping only leaf names.
- */
 export function sanitizeIdentifier(raw?: string): string | undefined {
   if (!raw) return undefined;
   const normalized = raw.replace(/\\/g, '/');
@@ -31,7 +28,6 @@ export function sanitizeIdentifier(raw?: string): string | undefined {
 export function recordDiagnostic(
   entry: Omit<DiagnosticRecord, 'id' | 'timestamp'>,
 ): DiagnosticRecord | null {
-  // Silent on expected user cancellation or aborts
   if (
     entry.code === 'AbortError' ||
     entry.message.includes('Import cancelled') ||
@@ -41,8 +37,6 @@ export function recordDiagnostic(
   }
 
   const now = Date.now();
-
-  // Deduplicate rapid repeat diagnostics (within 2000ms) with identical op, level, and message
   const recent = ringBuffer[ringBuffer.length - 1];
   if (
     recent &&
@@ -69,9 +63,7 @@ export function recordDiagnostic(
   for (const listener of subscribers) {
     try {
       listener();
-    } catch {
-      // Ignore listener error
-    }
+    } catch { }
   }
 
   return record;
@@ -86,7 +78,7 @@ export function clearDiagnostics(): void {
   for (const listener of subscribers) {
     try {
       listener();
-    } catch {}
+    } catch { }
   }
 }
 

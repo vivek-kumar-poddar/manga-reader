@@ -8,18 +8,15 @@ import { limits, assertAtMost, withinTime } from './limits';
 import { getDiagnostics } from './diagnostics';
 import { desktopAPI, type StorageStats } from './tauriBridge';
 import {
-  allManga,
   defaults,
   exportBackup,
   restoreBackup,
   resetProgress,
   clearLibrary,
-  getManga,
-  sessionFiles,
   validateBackup,
-  type Manga,
   type Settings,
 } from './data';
+
 const tabs = ['Reading', 'Appearance', 'Storage', 'About'] as const;
 const bytes = (n: number) =>
   n < 1048576
@@ -27,6 +24,7 @@ const bytes = (n: number) =>
     : n < 1073741824
       ? (n / 1048576).toFixed(1) + ' MB'
       : (n / 1073741824).toFixed(1) + ' GB';
+
 export default function SettingsPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { settings: s, setSettings, notify, refresh, library } = useApp();
   const [tab, setTab] = useState<(typeof tabs)[number]>('Reading');
@@ -36,6 +34,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
   const [confirmAction, setConfirmAction] = useState<'progress' | 'all' | null>(null);
   const [clearing, setClearing] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
   async function updateStorage() {
     setStorageError('');
     if (desktopAPI.isDesktop && desktopAPI.getStorageStats) {
@@ -54,14 +53,17 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
       setStorageError('Could not retrieve storage details.');
     }
   }
+
   useEffect(() => {
     if (open) {
       setConfirmAction(null);
       void updateStorage();
     }
   }, [open, library]);
+
   const change = <K extends keyof Settings>(key: K, value: Settings[K]) =>
     setSettings({ ...s, [key]: value });
+
   async function exportData() {
     const jsonStr = await exportBackup();
     if (desktopAPI.isDesktop && desktopAPI.saveFileDialog) {
@@ -78,6 +80,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+
   async function importData(file?: File) {
     if (!file) return;
     try {
@@ -87,11 +90,13 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
       const appliedSettings = await restoreBackup(parsed);
       setSettings(appliedSettings);
       await refresh();
+      await updateStorage();
       notify('Backup imported. Re-link folders when requested.');
     } catch (e) {
       notify(e instanceof Error ? e.message : 'Could not import backup.');
     }
   }
+
   async function clear() {
     if (!confirmAction) return;
     setClearing(true);
@@ -102,6 +107,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
         await clearLibrary();
       }
       await refresh();
+      await updateStorage();
       notify(confirmAction === 'progress' ? 'Reading progress cleared.' : 'Manga data cleared.');
       setConfirmAction(null);
     } catch {
@@ -110,6 +116,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
       setClearing(false);
     }
   }
+
   return (
     <Dialog.Root open={open} onOpenChange={(v) => !v && onClose()}>
       <Dialog.Portal>

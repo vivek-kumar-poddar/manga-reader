@@ -96,7 +96,6 @@ export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () =
 }
 
 export function broadcastSync(msg: StorageSyncMessage): void {
-  // 1. Dispatch locally to all registered store subscribers in the current window
   for (const listener of localSyncListeners) {
     try {
       listener(msg);
@@ -105,20 +104,18 @@ export function broadcastSync(msg: StorageSyncMessage): void {
     }
   }
 
-  // 2. Dispatch synthetic MessageEvent on local syncChannel so local event listeners receive it
   if (syncChannel && typeof MessageEvent !== 'undefined') {
     try {
       syncChannel.dispatchEvent(new MessageEvent('message', { data: msg }));
     } catch {
-      // Ignore dispatch failure if environment does not support synthetic MessageEvent
+      // Ignore dispatch failure
     }
   }
 
-  // 3. Dispatch across contexts / other windows via native BroadcastChannel
   try {
     syncChannel?.postMessage(msg);
   } catch {
-    // Ignore postMessage failure in disconnected or restricted frames
+    // Ignore postMessage failure
   }
 }
 
@@ -231,8 +228,9 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
 
 export const db: Promise<IDBPDatabase<MangaDB>> = desktopAPI.isDesktop
   ? ({
-    then: (onfulfilled?: any, onrejected?: any) =>
-      getWebDb().then(onfulfilled, onrejected),
+    then: (onfulfilled?: any, onrejected?: any) => getWebDb().then(onfulfilled, onrejected),
+    catch: (onrejected?: any) => getWebDb().catch(onrejected),
+    finally: (onfinally?: any) => getWebDb().finally(onfinally),
   } as Promise<IDBPDatabase<MangaDB>>)
   : getWebDb();
 
@@ -289,7 +287,6 @@ export async function getCoverIdb(id: string): Promise<Blob | undefined> {
     }
   }
 
-  // Fallback to IndexedDB
   if (typeof indexedDB === 'undefined') {
     return undefined;
   }
@@ -367,7 +364,7 @@ export async function saveMangaIdb(m: Manga): Promise<void> {
   const existing = (await tx.objectStore('summaries').get(m.id)) as Summary | undefined;
   if (!existing && (await tx.objectStore('summaries').count()) >= limits.titles) {
     tx.abort();
-    await tx.done.catch(() => { }); // Expected rejection from our explicit abort.
+    await tx.done.catch(() => { });
     throw new LimitError(
       `Library title limit is ${limits.titles}. Remove a title before importing.`,
     );
@@ -683,7 +680,6 @@ export async function restoreBackupIdb(backup: {
 
     const database = await db;
 
-    // Read existing handles, local paths, and covers to preserve them
     const existingSummaries = await listLibraryIdb();
     const backupIds = new Set(backup.manga.map((m) => m.id));
     const usedSlugs = new Set<string>(
@@ -760,7 +756,6 @@ export async function restoreBackupIdb(backup: {
       });
     }
 
-    // Atomic transaction across all 5 stores: manga, summaries, covers, progress, settings
     const tx = database.transaction(
       ['manga', 'summaries', 'covers', 'progress', 'settings'],
       'readwrite',
@@ -938,7 +933,6 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   }
 }
 
-// Replace lines 917-951 in src/web/storage.ts:
 let activeRepo: LibraryRepo | null = null;
 
 export function setRepo(newRepo: LibraryRepo): void {
@@ -947,9 +941,7 @@ export function setRepo(newRepo: LibraryRepo): void {
 
 export function getRepo(): LibraryRepo {
   if (!activeRepo) {
-    activeRepo = desktopAPI.isDesktop
-      ? new TauriSqliteLibraryRepo()
-      : new IndexedDBLibraryRepo();
+    activeRepo = desktopAPI.isDesktop ? new TauriSqliteLibraryRepo() : new IndexedDBLibraryRepo();
   }
   return activeRepo;
 }
@@ -1079,10 +1071,14 @@ export function clearDirHandleCache(mangaId?: string): void {
 
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
-  // Desktop: read directly from the filesystem via IPC — works across restarts.
-  if (desktopAPI.isDesktop && m.localPath) {
-    const sep = m.localPath.includes('\\') ? '\\' : '/';
-    const absPath = m.localPath + sep + p.path.split('/').join(sep);
+  if (desktopAPI.isDesktop && (m.localPath || desktopAPI.resolvePath)) {
+    const sep = m.localPath?.includes('\\') ? '\\' : '/';
+    const fallbackAbs = m.localPath
+      ? `${m.localPath.replace(/[\\/]+$/, '')}${sep}${p.path.split('/').join(sep)}`
+      : p.path;
+    const absPath = desktopAPI.resolvePath
+      ? await desktopAPI.resolvePath(m.id, p.path, m.localPath)
+      : fallbackAbs;
     const buf = await withinTime(desktopAPI.readFile(absPath), limits.ioTimeoutMs, 'Reading file');
     if (!buf) throw new Error('File not found on disk. The folder may have moved.');
     return new File([buf], p.path.split('/').at(-1) ?? p.path);
@@ -1147,25 +1143,41 @@ export async function access(
   m: Pick<Manga, 'id' | 'handle' | 'localPath'>,
   request = false,
 ): Promise<boolean> {
-  // Desktop: local files are always accessible via IPC; no permission model needed.
+  if (!m) return false;
+  if (sessionFiles.has(m.id)) return true;
+
   if (desktopAPI.isDesktop) {
-    if (m.localPath) return true;
-    if (sessionFiles.has(m.id)) return true;
-    const full = await getManga(m.id);
-    return Boolean(full?.localPath || sessionFiles.has(m.id));
+    const now = Date.now();
+    if (!request) {
+      const cached = accessCache.get(m.id);
+      if (cached && now - cached.timestamp < ACCESS_CACHE_TTL_MS) {
+        return cached.granted;
+      }
+    }
+    try {
+      const granted = desktopAPI.checkAccess
+        ? await desktopAPI.checkAccess(m.id, m.localPath)
+        : Boolean(m.localPath);
+      accessCache.set(m.id, {
+        granted,
+        timestamp: now,
+        expiresAt: now + ACCESS_CACHE_TTL_MS,
+      });
+      return granted;
+    } catch {
+      accessCache.set(m.id, {
+        granted: false,
+        timestamp: now,
+        expiresAt: now + ACCESS_CACHE_TTL_MS,
+      });
+      return false;
+    }
   }
 
   if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
     return false;
   }
 
-  // In-memory session files are always accessible without querying handle permissions.
-  if (sessionFiles.has(m.id)) {
-    return true;
-  }
-
-  // Passive access checks (request=false) reuse cached permission status within TTL
-  // to avoid bursts of File System Access API queries when alt-tabbing or window refocusing.
   const now = Date.now();
   if (!request) {
     const cached = accessCache.get(m.id);

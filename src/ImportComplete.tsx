@@ -1,4 +1,3 @@
-// Replace lines 1-14 in src/ImportComplete.tsx:
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { BookOpen, Download, X } from 'lucide-react';
@@ -37,7 +36,17 @@ function ImportedTitle({ manga, onClose }: { manga: Manga; onClose: () => void }
   return (
     <article className="import-success-title">
       <div className="import-success-cover">
-        {url ? <img src={url} alt={manga.title + ' cover'} /> : <BookOpen size={42} />}
+        {url ? (
+          <img
+            src={url}
+            alt={manga.title + ' cover'}
+            onError={() => {
+              setUrl('');
+            }}
+          />
+        ) : (
+          <BookOpen size={42} />
+        )}
       </div>
       <div className="import-success-info">
         <h2>{manga.title}</h2>
@@ -58,6 +67,7 @@ function ImportedTitle({ manga, onClose }: { manga: Manga; onClose: () => void }
     </article>
   );
 }
+
 export default function ImportComplete({
   titles,
   issues,

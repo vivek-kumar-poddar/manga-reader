@@ -63,7 +63,6 @@ export async function thumbnail(
   signal?.throwIfAborted();
   const size = await headerDimensions(file);
   signal?.throwIfAborted();
-  // A cover is optional; avoid a second large decode just to make a thumbnail.
   if (
     size &&
     (size.width * size.height > limits.imagePixels ||
@@ -129,10 +128,6 @@ export async function thumbnail(
   }
 }
 
-/**
- * Safely downscales an image using createImageBitmap and an offscreen canvas.
- * Guarantees ImageBitmap closure and canvas memory release on all exit paths.
- */
 export async function downscaleImage(
   blob: Blob,
   targetWidth: number,
@@ -160,14 +155,13 @@ export async function downscaleImage(
     resizeQuality,
   });
 
-  // A timed-out or aborted decoder may still resolve; release its late bitmap.
   void task.then(
     (bitmap) => {
       if (expired || signal?.aborted) {
         bitmap.close();
       }
     },
-    () => {},
+    () => { },
   );
 
   const onAbort = () => {

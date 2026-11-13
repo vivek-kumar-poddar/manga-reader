@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fileFor, errorMessage, type Manga, type Page } from './data';
 import { limits, assertImageDimensions } from './limits';
 import { enqueueImage, reprioritizeImage, type CancelHandle } from './imageQueue';
-import { downscaleImage } from './images';
+import { dimensions, downscaleImage } from './images';
 import { getObjectUrl, storeObjectUrl, retainObjectUrl } from './objectUrlPool';
 import { desktopAPI } from './tauriBridge';
 
@@ -69,30 +69,44 @@ function PageImage({
     localPath: mangaLocalPath,
   } = m;
 
-  // Auto-resolve pending dimensions via native Rust header parser on desktop
   useEffect(() => {
     if (!dimensionsPending) return;
     let live = true;
-    if (desktopAPI.isDesktop && desktopAPI.getImageDimensions && mangaLocalPath) {
-      const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
-      const absPath = mangaLocalPath + sep + pagePath.split('/').join(sep);
-      void desktopAPI
-        .getImageDimensions(absPath)
-        .then((dim) => {
-          if (!live || !dim || dim.width <= 0 || dim.height <= 0) return;
-          onDimensionsResolved?.(index, dim.width, dim.height);
+    const controller = new AbortController();
+    void (async () => {
+      if (desktopAPI.isDesktop && desktopAPI.getImageDimensions && mangaLocalPath) {
+        try {
+          const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
+          const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
+          const absPath = cleanLocal + sep + pagePath.replace(/^[/\\]+/, '').split('/').join(sep);
+          const dim = await desktopAPI.getImageDimensions(absPath);
+          if (!live) return;
+          if (dim && dim.width > 0 && dim.height > 0) {
+            onDimensionsResolved?.(index, dim.width, dim.height);
+            setRetry((r) => r + 1);
+            return;
+          }
+        } catch { }
+      }
+      try {
+        const file = await fileFor(m, page);
+        if (!live || controller.signal.aborted) return;
+        const size = await dimensions(file, controller.signal);
+        if (!live || controller.signal.aborted) return;
+        if (size.width > 0 && size.height > 0) {
+          onDimensionsResolved?.(index, size.width, size.height);
           setRetry((r) => r + 1);
-        })
-        .catch(() => {
-          // Fall through to manual retry or background preparation
-        });
-    }
+        }
+      } catch {
+        // Manual retry remains available if decoding fails
+      }
+    })();
     return () => {
       live = false;
+      controller.abort();
     };
-  }, [dimensionsPending, mangaLocalPath, pagePath, index, onDimensionsResolved]);
+  }, [dimensionsPending, mangaLocalPath, pagePath, index, onDimensionsResolved, m, page]);
 
-  // Dynamically update priority for waiting tasks as user scrolls near/far
   useEffect(() => {
     if (dimensionsPending) return;
     const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
@@ -107,7 +121,6 @@ function PageImage({
       objectUrl = '',
       unpinTask: (() => void) | null = null;
 
-    // Fast zero-copy path on desktop: use native resource URL (page ID + version + transform)
     if (
       !useBlobFallback &&
       desktopAPI.isDesktop &&
@@ -115,18 +128,18 @@ function PageImage({
       mangaLocalPath
     ) {
       const transform = lowQuality ? 'low' : 'full';
+      const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
+      const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
       const nativeSrc = desktopAPI.getPageImageUrl
         ? desktopAPI.getPageImageUrl({
           mangaId,
           pagePath,
           version: mangaUpdatedAt,
           transform,
-          localPath: mangaLocalPath,
+          localPath: cleanLocal,
         })
         : desktopAPI.convertFileSrc!(
-          mangaLocalPath +
-          (mangaLocalPath.includes('\\') ? '\\' : '/') +
-          pagePath.split('/').join(mangaLocalPath.includes('\\') ? '\\' : '/'),
+          cleanLocal + sep + pagePath.replace(/^[/\\]+/, '').split('/').join(sep),
           'mangaimg',
         );
 
@@ -165,7 +178,6 @@ function PageImage({
       if (objectUrl || !wanted) return;
       const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
 
-      // Check LRU Object URL Pool first for instant scroll-back
       const cached = getObjectUrl(taskKey);
       if (cached) {
         if (unpinTask) unpinTask();
@@ -217,9 +229,7 @@ function PageImage({
                   }
                   return;
                 }
-              } catch {
-                /* Fallback to reading file and downscaling */
-              }
+              } catch { }
             }
 
             let blob: Blob = await fileFor(m, page);
@@ -229,9 +239,7 @@ function PageImage({
               const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
               try {
                 blob = await downscaleImage(blob, 1000, targetHeight, signal);
-              } catch {
-                /* Use original unmodified blob if downscaling is unavailable or fails */
-              }
+              } catch { }
             }
 
             if (live && wanted && !signal.aborted) {
@@ -343,7 +351,6 @@ function PageImage({
           decoding="async"
           onError={() => {
             if (!useBlobFallback && desktopAPI.isDesktop && mangaLocalPath) {
-              // Gracefully fall back to the blob IPC path before showing an error
               setUseBlobFallback(true);
               return;
             }

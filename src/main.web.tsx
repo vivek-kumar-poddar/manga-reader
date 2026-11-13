@@ -7,7 +7,6 @@ import App from './App';
 import './updates';
 
 const basename = new URL(document.baseURI).pathname.replace(/\/$/, '') || '/';
-// Preserve bookmarks created by the previous hash-based router.
 if (location.hash.startsWith('#/')) {
   const legacy = location.hash.slice(1);
   if (legacy.startsWith('/') && !legacy.startsWith('//')) {

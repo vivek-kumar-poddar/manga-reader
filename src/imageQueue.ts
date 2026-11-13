@@ -64,12 +64,10 @@ function getHardwareConcurrencyLimit(): number {
     const cores = nav.hardwareConcurrency;
     const mem = nav.deviceMemory;
 
-    // Constrained devices (<= 2 cores or <= 2 GB RAM) -> concurrency 1
     if ((cores && cores <= 2) || (mem && mem <= 2)) {
       cachedHardwareConcurrencyLimit = 1;
       return 1;
     }
-    // Modest devices (<= 4 cores or <= 4 GB RAM) -> concurrency 2
     if ((cores && cores <= 4) || (mem && mem <= 4)) {
       cachedHardwareConcurrencyLimit = Math.min(2, limits.desktopPageConcurrency);
       return cachedHardwareConcurrencyLimit;
@@ -109,9 +107,6 @@ export class ImageQueue {
     return getHardwareConcurrencyLimit();
   }
 
-  /**
-   * Updates priority of an existing waiting task and lazily marks queue dirty.
-   */
   reprioritize(key: string, priority: number): void {
     const item = this.waiting.get(key);
     if (item && item.priority !== priority) {
@@ -120,18 +115,11 @@ export class ImageQueue {
     }
   }
 
-  /**
-   * Enqueues an image load task.
-   * If a task with the identical key is already queued or in-flight, registers the caller
-   * as a subscriber so every component receives its own completion.
-   * Returns a cancellation handle that unregisters only this subscriber.
-   */
   enqueue(options: ImageTaskOptions): CancelHandle | null {
     const { key, priority = 0, run, onComplete, onError } = options;
     const subId = ++this.nextSubscriberId;
     const sub: Subscriber = { onComplete, onError };
 
-    // 1. Task is waiting in queue: register subscriber and boost priority if needed
     const existingWaiting = this.waiting.get(key);
     if (existingWaiting) {
       existingWaiting.subscribers.set(subId, sub);
@@ -142,14 +130,12 @@ export class ImageQueue {
       return () => this.cancelSubscriber(key, subId);
     }
 
-    // 2. Task is already in-flight: register subscriber so it executes with completion
     const existingInFlight = this.inFlight.get(key);
     if (existingInFlight && !existingInFlight.canceled) {
       existingInFlight.subscribers.set(subId, sub);
       return () => this.cancelSubscriber(key, subId);
     }
 
-    // 3. Queue capacity limit
     if (this.queue.length >= limits.queuedJobs) {
       return null;
     }
@@ -171,12 +157,7 @@ export class ImageQueue {
     return () => this.cancelSubscriber(key, subId);
   }
 
-  /**
-   * Cancels an individual subscriber's handle.
-   * The underlying operation is only aborted when all subscribers for that key have unsubscribed.
-   */
   private cancelSubscriber(key: string, subId: number): void {
-    // 1. Check waiting queue
     const waitingItem = this.waiting.get(key);
     if (waitingItem) {
       waitingItem.subscribers.delete(subId);
@@ -192,7 +173,6 @@ export class ImageQueue {
       return;
     }
 
-    // 2. Check in-flight tasks
     const running = this.inFlight.get(key);
     if (running) {
       running.subscribers.delete(subId);
@@ -203,9 +183,6 @@ export class ImageQueue {
     }
   }
 
-  /**
-   * Cancels a queued or running task by key unconditionally (all subscribers).
-   */
   cancel(key: string): void {
     const waitingItem = this.waiting.get(key);
     if (waitingItem) {
@@ -226,10 +203,6 @@ export class ImageQueue {
     }
   }
 
-  /**
-   * Clears all waiting tasks and aborts in-flight tasks.
-   * In-flight tasks settle and clean themselves up via identity check.
-   */
   clear(): void {
     for (const item of this.queue) {
       item.canceled = true;
@@ -247,7 +220,6 @@ export class ImageQueue {
 
   private ensureSorted(): void {
     if (!this.queueDirty) return;
-    // Insertion sort is faster than Array.sort for nearly-sorted priority queues of size <= 64
     for (let i = 1; i < this.queue.length; i++) {
       const item = this.queue[i];
       let j = i - 1;
@@ -262,7 +234,6 @@ export class ImageQueue {
 
   private pump(): void {
     const maxConcurrency = this.getMaxConcurrency();
-
     this.ensureSorted();
 
     while (this.activeCount < maxConcurrency && this.queue.length > 0) {
@@ -306,7 +277,6 @@ export class ImageQueue {
           }
         } finally {
           this.activeCount = Math.max(0, this.activeCount - 1);
-          // Strict identity check prevents an old task from deleting a newer task with the same key
           if (this.inFlight.get(item.key) === item) {
             this.inFlight.delete(item.key);
           }

@@ -34,11 +34,9 @@ import {
   Check,
   LoaderCircle,
   Info,
-  Download,
 } from 'lucide-react';
 import {
   resumeBackground,
-  allManga,
   listLibrary,
   getManga,
   deleteManga,
@@ -51,7 +49,6 @@ import {
   defaults,
   parseSettings,
   saveManga,
-  getBookmarkedMangaIds,
   getMangaBookmarkedIds,
   addBookmark,
   removeBookmark,
@@ -66,11 +63,10 @@ import {
   type Settings,
   type Position,
   type Directory,
-  type ScanOptions,
   type ScanState,
 } from './data';
 import { useImport } from './useImport';
-import { SupportedDialog, ImportDialog, Modal, type ImportPlan } from './ImportDialogs';
+import { SupportedDialog, ImportDialog, Modal } from './ImportDialogs';
 import { APP_VERSION, applyUpdate, hasUpdate } from './updates';
 
 const Reader = lazy(() => import('./Reader'));
@@ -459,7 +455,8 @@ function CardMenu({
         <MoreHorizontal className="card-menu-dots" size={19} />
         <X className="card-menu-close" size={19} />
       </summary>
-      {open && (typeof document !== 'undefined' ? createPortal(menuContent, document.body) : menuContent)}
+      {open &&
+        (typeof document !== 'undefined' ? createPortal(menuContent, document.body) : menuContent)}
     </details>
   );
 }
@@ -544,24 +541,13 @@ function DateTooltip({ timestamp, children }: { timestamp?: number; children: Re
   const showTooltip = () => {
     if (badgeRef.current) {
       const rect = badgeRef.current.getBoundingClientRect();
-      if (rect.top < 44) {
-        setPlacement('bottom');
-      } else {
-        setPlacement('top');
-      }
-      if (rect.left + 260 > window.innerWidth) {
-        setAlign('right');
-      } else {
-        setAlign('left');
-      }
+      setPlacement(rect.top < 44 ? 'bottom' : 'top');
+      setAlign(rect.left + 260 > window.innerWidth ? 'right' : 'left');
     }
     setOpen(true);
   };
 
-  const hideTooltip = () => {
-    setOpen(false);
-  };
-
+  const hideTooltip = () => setOpen(false);
   const wholeDate = formatWholeDate(timestamp);
 
   return (
@@ -640,7 +626,7 @@ function Library({
     }
     updateBookmarkedIds();
     const onSync = (e: MessageEvent) => {
-      if (e.data?.type === 'progress') updateBookmarkedIds();
+      if (e.data?.type === 'progress' || e.data?.type === 'library') updateBookmarkedIds();
     };
     syncChannel?.addEventListener('message', onSync);
     return () => {
@@ -657,7 +643,6 @@ function Library({
       const manga = await getManga(m.id);
       if (!manga) return;
       if (isBookmarked) {
-        // Strictly remove title bookmarks only; never delete ordinary chapter/page bookmarks
         for (const ch of manga.chapters) {
           for (const b of ch.bookmarks || []) {
             if (b.mangaBookmark) {
@@ -671,7 +656,7 @@ function Library({
           return next;
         });
         await refresh();
-        notify(`Bookmark removed.`);
+        notify('Bookmark removed.');
       } else {
         const ch = manga.chapters[0];
         if (ch) {
@@ -732,6 +717,7 @@ function Library({
     await deleteManga(removeId);
     setRemoveId(undefined);
     await refresh();
+    notify('Manga removed.');
   }
   return (
     <>
@@ -795,7 +781,9 @@ function Library({
             </>
           ) : (
             <>
-              <h2 className="upload-area-title">{drag ? 'Drop your stories here' : 'Make room for a good story'}</h2>
+              <h2 className="upload-area-title">
+                {drag ? 'Drop your stories here' : 'Make room for a good story'}
+              </h2>
               <p>Drop manga folders here, or choose your files.</p>
               <div className="upload-buttons">
                 <button className="browse-button" onClick={() => void pick()}>
@@ -1131,14 +1119,12 @@ export default function App() {
   async function pick(m?: Summary | Manga) {
     if (busy) return;
     pending.current = m;
-    // On desktop, use the native folder dialog and IPC-based file access.
-    // This avoids File System Access API permission issues in the installed app.
     if (desktopAPI.isDesktop) {
       let folderPath: string | null = null;
       try {
         folderPath = await desktopAPI.selectFolder();
       } catch {
-        // dialog error — do nothing
+        // dialog error
       }
       if (!folderPath) return;
       await discover(async (opts) => [await fromDesktopFolder(folderPath!, opts)], m);

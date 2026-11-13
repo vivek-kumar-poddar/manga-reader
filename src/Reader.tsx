@@ -50,7 +50,6 @@ import {
   access,
   getManga,
   saveManga,
-  saveProgress,
   addBookmark,
   removeBookmark,
   matchingPosition,
@@ -59,7 +58,6 @@ import {
   clearObjectUrlPool,
   type Manga,
   type Position,
-  type SaveProgressResult,
 } from './data';
 import { useAutoplay } from './useAutoplay';
 import { useReaderKeys } from './useReaderKeys';
@@ -249,7 +247,7 @@ export default function Reader({
         </div>
       </main>
     );
-  return <ReaderView key={manga.id + ':' + manga.updatedAt} manga={manga} />;
+  return <ReaderView key={manga.id} manga={manga} />;
 }
 type Offset = PageOffset;
 function ReaderView({ manga }: { manga: Manga }) {
@@ -290,12 +288,12 @@ function ReaderView({ manga }: { manga: Manga }) {
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const retryPreparation = () => setPreparationAttempt((attempt) => attempt + 1);
   useEffect(() => {
+    stopBackground(manga.id);
     if (!allowed) return;
     if (!manga.chapters[ci].pages.some((p) => p.dimensionsPending)) {
       setPrepared(ci);
       return;
     }
-    stopBackground(manga.id);
     const controller = new AbortController();
     setFailure('');
     setPrepared(-1);
@@ -320,7 +318,6 @@ function ReaderView({ manga }: { manga: Manga }) {
               (issues.length > 3 ? ' More affected pages are marked below.' : ''),
             );
           setPrepared(ci);
-          if (!issues.length) scheduleBackground(manga);
         }
       })
       .catch((e) => {
@@ -497,7 +494,6 @@ function ReaderView({ manga }: { manga: Manga }) {
       setReadRevision((v) => v + 1);
     }
     await flush().catch((e) => notify(errorMessage(e)));
-    // Suspend playback synchronously until the destination has been measured/restored.
     restoring.current = true;
     playbackRevision.current++;
     if (reset)
@@ -553,8 +549,6 @@ function ReaderView({ manga }: { manga: Manga }) {
         void flush().catch((e) => notify(errorMessage(e)));
       }
     } else {
-      // A chapter's saved-position restore may still be queued when the user jumps.
-      // Replace that anchor as well, so it cannot later undo the user's selection.
       const anchor = { page: n, path: chapter.pages[n].path, fraction: 0 };
       pendingRestore.current = anchor;
       pageStore.setPage(n);
@@ -606,7 +600,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     toggleBookmark: () => toggleBookmark(),
   });
 
-  const { playing, setPlaying, ended, setEnded, endHandled, pauseUntil, playbackRevision, pause } =
+  const { playing, setPlaying, ended, setEnded, endHandled, playbackRevision, pause } =
     useAutoplay({
       allowed,
       ready,
@@ -686,7 +680,6 @@ function ReaderView({ manga }: { manga: Manga }) {
             measuredHeights.current.set(k, Math.max(1, Math.round(v * scale)));
           }
         }
-        // When only zoom or max-width changes, recompute offsets from existing measured heights
         measure(true);
         const anchor = pendingRestore.current || position.current;
         updateWindow(true, anchor.page);
@@ -866,6 +859,7 @@ function ReaderView({ manga }: { manga: Manga }) {
           if (res === 'saved') {
             refresh();
           }
+          scheduleBackground(metadata.current);
         })
         .catch((e) => {
           console.warn('Failed to flush progress on unmount:', e);
@@ -1187,22 +1181,24 @@ function ReaderView({ manga }: { manga: Manga }) {
                 aria-hidden="true"
               />
             )}
-            {chapter.pages.slice(windowRange.startIndex, windowRange.endIndex + 1).map((p, idx) => {
-              const actualIndex = windowRange.startIndex + idx;
-              return (
-                <PageImage
-                  key={ci + '/' + p.path}
-                  m={manga}
-                  page={p}
-                  index={actualIndex}
-                  activePage={pageStore.getPage()}
-                  lowQuality={s.lowQuality}
-                  report={setFailure}
-                  retryPreparation={retryPreparation}
-                  onDimensionsResolved={onDimensionsResolved}
-                />
-              );
-            })}
+            {chapter.pages
+              .slice(windowRange.startIndex, windowRange.endIndex + 1)
+              .map((p, idx) => {
+                const actualIndex = windowRange.startIndex + idx;
+                return (
+                  <PageImage
+                    key={ci + '/' + p.path}
+                    m={manga}
+                    page={p}
+                    index={actualIndex}
+                    activePage={pageStore.getPage()}
+                    lowQuality={s.lowQuality}
+                    report={setFailure}
+                    retryPreparation={retryPreparation}
+                    onDimensionsResolved={onDimensionsResolved}
+                  />
+                );
+              })}
             {windowRange.bottomSpacer > 0 && (
               <div
                 className="reader-spacer reader-spacer-bottom"

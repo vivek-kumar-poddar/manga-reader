@@ -1,6 +1,6 @@
-import { uniqueSlug, normalizePath, normalizeRelativePath } from '../paths';
-import { type Directory, type Page, type Chapter, type Manga } from '../model';
-import { matchingPosition, isRecord } from './validation';
+import { uniqueSlug, normalizeRelativePath } from '../paths';
+import { type Directory, type Page, type Manga } from '../model';
+import { matchingPosition } from './validation';
 import {
   limits,
   LimitError,
@@ -23,20 +23,16 @@ import {
   sessionFiles,
   invalidateSummaryCache,
   invalidateBookmarkCache,
+  clearDirHandleCache,
   broadcastSync,
   type SourceFile,
 } from './storage';
 
-/**
- * Generate a UUID v4. Prefers crypto.randomUUID() (secure contexts only),
- * and falls back to crypto.getRandomValues() which works everywhere.
- */
 function generateUUID(): string {
   if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  // RFC 4122 §4.4 UUID v4 via getRandomValues (works in non-secure contexts)
   const b = crypto.getRandomValues(new Uint8Array(16));
-  b[6] = (b[6]! & 0x0f) | 0x40; // version 4
-  b[8] = (b[8]! & 0x3f) | 0x80; // variant 10xx
+  b[6] = (b[6]! & 0x0f) | 0x40;
+  b[8] = (b[8]! & 0x3f) | 0x80;
   const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
@@ -70,10 +66,6 @@ export function naturalOrder(a: string, b: string): number {
   return aa.length - bb.length || natural.compare(a, b);
 }
 
-/**
- * Natural sort a list of paths or names using native Rust command on desktop,
- * falling back to JavaScript naturalOrder collation on web.
- */
 export async function naturalSortPaths(paths: string[]): Promise<string[]> {
   if (paths.length <= 1) return paths;
   if (desktopAPI.isDesktop && desktopAPI.naturalSortPaths) {
@@ -108,12 +100,8 @@ function getDecodeConcurrency(): number {
   if (desktopAPI.isDesktop && typeof navigator !== 'undefined') {
     const cores = navigator.hardwareConcurrency || 4;
     const mem = (navigator as unknown as { deviceMemory?: number }).deviceMemory;
-    if (cores >= 8 && (!mem || mem >= 8)) {
-      return 6;
-    }
-    if (cores >= 4 && (!mem || mem >= 4)) {
-      return 4;
-    }
+    if (cores >= 8 && (!mem || mem >= 8)) return 6;
+    if (cores >= 4 && (!mem || mem >= 4)) return 4;
   }
   return limits.decodeConcurrency;
 }
@@ -155,7 +143,6 @@ function alive(signal?: AbortSignal) {
   signal?.throwIfAborted();
 }
 
-// Lazily reads a local file through the desktop IPC bridge (no browser permission needed).
 export class DesktopHandle {
   readonly kind = 'file';
   constructor(
@@ -181,9 +168,7 @@ export class DesktopHandle {
     if (!buffer) {
       throw new Error(`Failed to read file from desktop path: ${this.absolutePath}`);
     }
-    return new File([buffer], this.name, {
-      lastModified: this.modified,
-    });
+    return new File([buffer], this.name, { lastModified: this.modified });
   }
 }
 
@@ -192,7 +177,7 @@ export type { SourceFile };
 export type Source = {
   title: string;
   handle?: Directory;
-  localPath?: string; // Desktop only: absolute path to the folder on disk.
+  localPath?: string;
   files: Map<string, SourceFile>;
   issues: Issue[];
   discoveredTitles?: import('../tauriBridge').LibraryDiscovery['titles'];
@@ -205,7 +190,6 @@ const readFile = (f: SourceFile) =>
     'Reading file',
   );
 
-// Scan measurements are temporary until the user confirms import.
 const scanned = new WeakMap<SourceFile, Promise<{ file: File; width: number; height: number }>>();
 
 export function scanImage(entry: SourceFile, signal?: AbortSignal) {
@@ -221,7 +205,6 @@ export function scanImage(entry: SourceFile, signal?: AbortSignal) {
     })();
     scanned.set(entry, task);
     void task.catch(() => {
-      // Failed reads must not poison later user-initiated retries.
       if (scanned.get(entry) === task) scanned.delete(entry);
     });
   }
@@ -255,9 +238,7 @@ export async function warmSources(
     }
     const chapters = new Set(chapterKeys.slice(0, limits.warmChapters));
     const entries = [...source.files].filter(([path, entry]) => {
-      if (entry instanceof DesktopHandle && entry.width && entry.height) {
-        return false;
-      }
+      if (entry instanceof DesktopHandle && entry.width && entry.height) return false;
       return chapters.has(
         path.includes('/') ? path.split('/').slice(0, -1).join(' / ') : 'Root pages',
       );
@@ -358,11 +339,9 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
     );
     source.files.set(path, entry);
     const chapter = path.includes('/') ? path.split('/').slice(0, -1).join(' / ') : 'Root pages';
-    // A root cover is not an extra chapter when other pages exist.
     if (path.includes('/') || !/^(thumbnail|cover)\./i.test(path)) chapterNames.add(chapter);
     assertAtMost(chapterNames.size, limits.chaptersPerTitle, 'Chapters per title');
     if ([...chapterNames].sort(naturalOrder).slice(0, limits.warmChapters).includes(chapter)) {
-      // Wait for one worker before retaining another queued source handle.
       while (queue.length >= limits.queuedJobs) {
         alive(options.signal);
         await Promise.race(tasks);
@@ -406,7 +385,6 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
         }
         entries.sort((a, b) => naturalOrder(a.name, b.name));
 
-        // Push subdirectories in reverse order so pop() processes alphabetically
         for (let i = entries.length - 1; i >= 0; i--) {
           const entry = entries[i];
           const path = prefix + entry.name;
@@ -415,7 +393,6 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
           }
         }
 
-        // Process files
         for (const entry of entries) {
           if (entry.kind === 'directory') continue;
           alive(options.signal);
@@ -464,9 +441,7 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
 }
 
 export function fromFiles(list: File[]): Source[] {
-  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
-    return [];
-  }
+  if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) return [];
   assertAtMost(list.length, limits.discoveryEntries, 'Selected files');
   const groups = new Map<string, Source>();
   for (const f of list) {
@@ -495,13 +470,18 @@ export async function fromDesktopFolder(
   const folderName = folderPath.split(/[\\/]/).at(-1) ?? folderPath;
   const source: Source = { title: folderName, localPath: folderPath, files: new Map(), issues: [] };
 
-  // 1. Prefer native Rust library discovery when available
   if (desktopAPI.discoverLibrary) {
     try {
       const discovery = await withinTime(
         desktopAPI.discoverLibrary(folderPath, {
           signal: options.signal,
           onProgress: (prog) => {
+            options.update?.({
+              phase: 'discover',
+              done: prog.done,
+              total: prog.total,
+              title: folderName,
+            });
             if (prog.total > 0) {
               desktopAPI.setProgressBar(prog.done / prog.total);
             }
@@ -542,25 +522,32 @@ export async function fromDesktopFolder(
             }
           }
         }
+        options.update?.({
+          phase: 'discover',
+          done: source.files.size,
+          total: source.files.size,
+          title: folderName,
+        });
         return source;
       }
     } catch (e) {
-      if (e instanceof DOMException && e.name === 'AbortError') {
-        throw e;
-      }
-      if (e instanceof LimitError) {
-        throw e;
-      }
+      if (e instanceof DOMException && e.name === 'AbortError') throw e;
+      if (e instanceof LimitError) throw e;
     }
   }
 
-  // 2. Fallback to listFolder
   let entries: FolderEntry[];
   try {
     entries = await withinTime(
       desktopAPI.listFolder(folderPath, {
         signal: options.signal,
         onProgress: (prog) => {
+          options.update?.({
+            phase: 'discover',
+            done: prog.done,
+            total: prog.total,
+            title: folderName,
+          });
           if (prog.total > 0) {
             desktopAPI.setProgressBar(prog.done / prog.total);
           }
@@ -626,12 +613,10 @@ export function droppedSources(
   if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {
     return async () => [];
   }
-  // Reject asynchronously: App.drop owns cleanup in the returned promise chain.
   if (items.length > limits.discoveryEntries)
     return async () => {
       throw new LimitError(`Dropped items exceed the limit of ${limits.discoveryEntries}.`);
     };
-  // Snapshot entries and start handle requests while the drop event is active.
   const entries = items
     .filter((i) => i.kind === 'file')
     .map((item) => {
@@ -670,7 +655,6 @@ export function droppedSources(
         async function walk(e: Entry, path: string, depth: number) {
           alive(options.signal);
           if (ignored(path)) return;
-          // Count directories, not the leaf file (which is one recursion level deeper).
           if (!e.isFile && depth > limits.directoryDepth) {
             issues.push({
               path,
@@ -858,7 +842,6 @@ export async function indexSource(
   assertSourceLimits(source);
   if (previous) stopBackground(previous.id);
 
-  // High-performance native Rust indexing on desktop
   if (desktopAPI.isDesktop && desktopAPI.indexTitle && source.localPath) {
     alive(options.signal);
     const confirmedTitle = source.title?.trim() || undefined;
@@ -929,6 +912,7 @@ export async function indexSource(
       alive(options.signal);
       invalidateSummaryCache();
       invalidateBookmarkCache();
+      clearDirHandleCache(m.id);
       broadcastSync({ type: 'library', id: m.id });
 
       return {
@@ -1126,7 +1110,6 @@ export async function indexSource(
   let cover = previous?.cover;
   const mangaId = previous?.id || generateUUID();
 
-  // Desktop optimization (C2): Generate thumbnail in Rust via image crate + fast_image_resize directly from disk
   const targetEntry = coverEntry || source.files.get(chapters[0].pages[0].path);
   if (
     !cover &&
@@ -1138,14 +1121,11 @@ export async function indexSource(
   ) {
     try {
       await desktopAPI.generateThumbnail((targetEntry as any).absPath, mangaId);
-      // Thumbnail generated and saved atomically on disk under cache/thumbnails/{mangaId}.webp
-      // Cover Blob is left undefined to prevent memory retention and JS-to-Rust IPC upload
     } catch {
       // Fallback to JS canvas thumbnail path
     }
   }
 
-  // Web fallback: ImageBitmap and canvas path only for web builds
   if (!cover && !desktopAPI.isDesktop) {
     try {
       cover = await thumbnail(
@@ -1174,7 +1154,7 @@ export async function indexSource(
     title: source.title.trim(),
     chapters,
     handle: source.handle,
-    localPath: source.localPath, // persisted so native desktop can re-access files after restart
+    localPath: source.localPath,
     cover,
     lastChapter: Math.max(0, lastChapter),
     addedAt: previous?.addedAt || Date.now(),
@@ -1194,7 +1174,7 @@ export async function indexSource(
 export async function prepareChapter(m: Manga, index: number, options: PrepareChapterOptions = {}) {
   const chapter = m.chapters[index];
   if (!chapter) return [];
-  const database = typeof indexedDB !== 'undefined' ? await db : undefined;
+  const database = typeof indexedDB !== 'undefined' && !desktopAPI.isDesktop ? await db : undefined;
   const cached = database ? ((await database.get('manga', m.id)) as Manga | undefined) : undefined;
   alive(options.signal);
   const savedChapter =
@@ -1220,14 +1200,15 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
     return [];
   }
 
-  // Batch dimension extraction via native Rust prepareChapterHeaders on desktop
   if (desktopAPI.isDesktop && desktopAPI.prepareChapterHeaders && m.localPath) {
     const sep = m.localPath.includes('\\') ? '\\' : '/';
+    const cleanRoot = m.localPath.replace(/[\\/]+$/, '');
     const pathMap = new Map<string, Page>();
     const absPaths: string[] = [];
     for (const page of pending) {
-      const absPath = m.localPath + sep + page.path.split('/').join(sep);
+      const absPath = cleanRoot + sep + page.path.split('/').join(sep);
       pathMap.set(absPath, page);
+      pathMap.set(page.path, page);
       absPaths.push(absPath);
     }
     try {
@@ -1281,7 +1262,7 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
       try {
         if (desktopAPI.isDesktop && desktopAPI.getImageDimensions && m.localPath) {
           const sep = m.localPath.includes('\\') ? '\\' : '/';
-          const absPath = m.localPath + sep + page.path.split('/').join(sep);
+          const absPath = m.localPath.replace(/[\\/]+$/, '') + sep + page.path.split('/').join(sep);
           const dim = await desktopAPI.getImageDimensions(absPath);
           if (dim && dim.width > 0 && dim.height > 0) {
             assertImageDimensions(dim.width, dim.height);
@@ -1372,7 +1353,6 @@ export function stopAllBackground() {
   backgroundJobs.clear();
 }
 
-// Subscribe to manga deletions so jobs are cleanly halted
 onMangaDelete((id) => {
   if (id) stopBackground(id);
   else stopAllBackground();
@@ -1384,7 +1364,6 @@ export function scheduleBackground(manga: Manga) {
     !manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))
   )
     return;
-  // Overflow stays pending in IndexedDB; opening that chapter prepares it on demand.
   if (backgroundJobs.size >= limits.queuedJobs) return;
   backgroundJobs.set(manga.id, {
     id: manga.id,
@@ -1396,7 +1375,7 @@ export function scheduleBackground(manga: Manga) {
 }
 
 async function runDrainPass() {
-  let remaining = backgroundJobs.size; // New arrivals run in a later bounded pass.
+  let remaining = backgroundJobs.size;
   while (backgroundJobs.size && remaining-- > 0) {
     const [id, job] = backgroundJobs.entries().next().value!;
     try {

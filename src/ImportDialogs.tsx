@@ -1,5 +1,5 @@
 import Dropdown from './Dropdown';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X, Folder, FileImage } from 'lucide-react';
 import {
@@ -14,6 +14,7 @@ import {
   type ChapterPreview,
 } from './data';
 import { desktopAPI } from './tauriBridge';
+
 export function Modal({
   open,
   onClose,
@@ -51,6 +52,7 @@ export function Modal({
     </Dialog.Root>
   );
 }
+
 export function Tabs({
   names,
   value,
@@ -97,6 +99,7 @@ export function Tabs({
     </div>
   );
 }
+
 type Node = { name: string; children?: Node[] };
 const examples: { title: string; tree: Node[]; text: string }[] = [
   {
@@ -182,6 +185,7 @@ const examples: { title: string; tree: Node[]; text: string }[] = [
     text: 'Drop multiple folders together to import separate titles. Loose images form one title named Selected images, which you can rename before importing. ZIP, CBZ, RAR, PDF, and encrypted archives are not imported; extract their images first.',
   },
 ];
+
 function Tree({ nodes }: { nodes: Node[] }) {
   return (
     <ul className="folder-tree">
@@ -196,6 +200,7 @@ function Tree({ nodes }: { nodes: Node[] }) {
     </ul>
   );
 }
+
 export function SupportedDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [tab, setTab] = useState(0);
   const example = examples[tab];
@@ -236,11 +241,13 @@ export function SupportedDialog({ open, onClose }: { open: boolean; onClose: () 
     </Modal>
   );
 }
+
 export interface ImportPlan {
   source: Source;
   targetId?: string;
   sort: Manga['sort'];
 }
+
 export function ImportDialog({
   sources,
   target,
@@ -258,9 +265,11 @@ export function ImportDialog({
   const [plans, setPlans] = useState<ImportPlan[]>([]);
   const [loading, setLoading] = useState(true);
   const [confirmed, setConfirmed] = useState(false);
-  const [mismatch, setMismatch] = useState(false);
+  const [contentMismatch, setContentMismatch] = useState(false);
+  const [targetTitles, setTargetTitles] = useState<Map<string, string>>(new Map());
   const [error, setError] = useState('');
   const [checking, setChecking] = useState(false);
+
   useEffect(() => {
     let live = true;
     setLoading(true);
@@ -278,22 +287,18 @@ export function ImportDialog({
                   duplicate = candidate;
                   break;
                 }
-              } catch {
-                /* Compare metadata below when handle identity is unavailable. */
-              }
+              } catch { }
             } else if (source.localPath && candidate.localPath) {
               try {
                 const same = desktopAPI.isSamePath
                   ? await desktopAPI.isSamePath(source.localPath, candidate.localPath)
                   : source.localPath.toLowerCase().replace(/[\\/]+$/, '') ===
-                    candidate.localPath.toLowerCase().replace(/[\\/]+$/, '');
+                  candidate.localPath.toLowerCase().replace(/[\\/]+$/, '');
                 if (same) {
                   duplicate = candidate;
                   break;
                 }
-              } catch {
-                /* Ignore and fall through */
-              }
+              } catch { }
             }
           }
           list.push({
@@ -316,19 +321,29 @@ export function ImportDialog({
     return () => {
       live = false;
     };
-  }, [sources, modes]);
+  }, [sources, modes, library, target]);
+
+  const structuralKey = useMemo(
+    () => plans.map((p, idx) => `${idx}:${p.targetId ?? 'new'}:${p.sort ?? 'natural'}`).join('|'),
+    [plans],
+  );
+
   useEffect(() => {
+    if (loading) return;
     let live = true;
     const controller = new AbortController();
     setConfirmed(false);
-    setMismatch(false);
+    setContentMismatch(false);
     setChecking(true);
     void (async () => {
+      const titlesMap = new Map<string, string>();
+      let hasPageMismatch = false;
       for (const plan of plans) {
         await warmSources([plan.source], { signal: controller.signal }, plan.sort);
         if (!plan.targetId) continue;
         const previous = target?.id === plan.targetId ? target : await getManga(plan.targetId);
         if (!previous) continue;
+        titlesMap.set(plan.targetId, previous.title);
         const oldPages = previous.chapters.flatMap((c) => c.pages);
         const sample = oldPages
           .filter((_, i) => i % Math.max(1, Math.floor(oldPages.length / 24)) === 0)
@@ -372,21 +387,19 @@ export function ImportDialog({
                 matched++;
               }
             }
-          } catch {
-            /* Unreadable candidates require confirmation and appear in the import report. */
-          }
+          } catch { }
         }
-        if (
-          (previous.title !== plan.source.title ||
-            matched < sample.length * 0.5 ||
-            !sample.length) &&
-          live
-        )
-          setMismatch(true);
+        if (matched < sample.length * 0.5 || !sample.length) {
+          hasPageMismatch = true;
+        }
+      }
+      if (live) {
+        setTargetTitles(titlesMap);
+        setContentMismatch(hasPageMismatch);
       }
     })()
       .catch(() => {
-        if (live) setMismatch(true);
+        if (live) setContentMismatch(true);
       })
       .finally(() => {
         if (live) setChecking(false);
@@ -395,7 +408,16 @@ export function ImportDialog({
       live = false;
       controller.abort();
     };
-  }, [plans]);
+  }, [structuralKey, loading]);
+
+  const titleMismatch = plans.some((p) => {
+    if (!p.targetId) return false;
+    const savedTitle =
+      targetTitles.get(p.targetId) ?? library.find((m) => m.id === p.targetId)?.title;
+    return savedTitle !== undefined && savedTitle !== p.source.title;
+  });
+
+  const mismatch = contentMismatch || titleMismatch;
 
   const duplicateTargets = plans.some(
     (p, i) => p.targetId && plans.some((q, j) => j < i && q.targetId === p.targetId),
@@ -456,9 +478,9 @@ export function ImportDialog({
                         p.map((v, j) =>
                           j === i
                             ? {
-                                ...v,
-                                targetId: e.target.value === 'new' ? undefined : e.target.value,
-                              }
+                              ...v,
+                              targetId: e.target.value === 'new' ? undefined : e.target.value,
+                            }
                             : v,
                         ),
                       )

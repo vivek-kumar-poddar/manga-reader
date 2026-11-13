@@ -22,9 +22,6 @@ export interface WindowRange {
   bottomSpacer: number;
 }
 
-/**
- * Calculates the rendered width and height of a page based on layout and container width.
- */
 export function calculatePageDimensions(
   page: Pick<Page, 'width' | 'height'>,
   options: GeometryOptions,
@@ -60,10 +57,6 @@ export function calculatePageDimensions(
   return { width: targetWidth, height: targetHeight };
 }
 
-/**
- * Computes prefix offsets for all pages in a chapter.
- * Uses actual measured heights where recorded; otherwise falls back to calculated height.
- */
 export function computeOffsets(
   pages: Page[],
   options: GeometryOptions,
@@ -93,10 +86,6 @@ export function computeOffsets(
 
 export const VIRTUALIZATION_THRESHOLD = 8;
 
-/**
- * Determines the range of page indexes [startIndex, endIndex] to render
- * in continuous scroll mode, given a scroll position and buffer size.
- */
 export function getWindowRange(
   offsets: PageOffset[],
   scrollY: number,
@@ -119,7 +108,6 @@ export function getWindowRange(
   const minY = Math.max(0, scrollY - buffer);
   const maxY = scrollY + safeViewportHeight + buffer;
 
-  // Binary search for first page where bottom >= minY
   let lo = 0;
   let hi = count - 1;
   while (lo < hi) {
@@ -132,7 +120,6 @@ export function getWindowRange(
   }
   const startIndex = Math.max(0, lo);
 
-  // Binary search for last page where top <= maxY
   lo = startIndex;
   hi = count - 1;
   while (lo < hi) {

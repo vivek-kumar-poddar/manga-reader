@@ -1,4 +1,3 @@
-// Shared data contracts; importing this file performs no storage or browser work.
 export interface Directory extends FileSystemDirectoryHandle {
   values(): AsyncIterableIterator<FileSystemHandle>;
   queryPermission(o: { mode: 'read' }): Promise<PermissionState>;
@@ -34,7 +33,7 @@ export interface Manga {
   title: string;
   chapters: Chapter[];
   handle?: Directory;
-  localPath?: string; // Desktop: absolute path to the manga folder on disk.
+  localPath?: string;
   cover?: Blob;
   lastChapter: number;
   addedAt: number;
@@ -63,7 +62,7 @@ export interface Settings {
   mode: 'continuous' | 'single';
   layout: 'width' | 'height' | 'auto' | 'max';
   maxWidth: number;
-  seconds: number; // Per visible screen in continuous mode; per page/spread in single mode.
+  seconds: number;
   advance: boolean;
   reduced: boolean;
   lowQuality: boolean;

@@ -21,36 +21,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Validates a relative file path:
- * - Must be a non-empty string within pathChars and directoryDepth limits.
- * - Cannot start or end with a slash.
- * - Cannot contain backslashes, '.', or '..' segments.
- * - Cannot contain null bytes or control characters.
- */
 const RESERVED_DOS_NAMES = new Set([
-  'con',
-  'prn',
-  'aux',
-  'nul',
-  'com1',
-  'com2',
-  'com3',
-  'com4',
-  'com5',
-  'com6',
-  'com7',
-  'com8',
-  'com9',
-  'lpt1',
-  'lpt2',
-  'lpt3',
-  'lpt4',
-  'lpt5',
-  'lpt6',
-  'lpt7',
-  'lpt8',
-  'lpt9',
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
 ]);
 
 export function validateRelativePath(path: unknown): string {
@@ -61,7 +35,6 @@ export function validateRelativePath(path: unknown): string {
     throw new ValidationError(`Path cannot start or end with whitespace: "${path}"`);
   }
   const trimmed = path.trim();
-  // Reject colons (Windows drive letters e.g. C:, alternate data streams e.g. :stream)
   if (trimmed.includes(':')) {
     throw new ValidationError(`Path cannot contain drive prefixes or colons: "${trimmed}"`);
   }
@@ -94,9 +67,6 @@ export function validateRelativePath(path: unknown): string {
   return trimmed;
 }
 
-/**
- * Resolves a Position against a chapter's pages list.
- */
 export function matchingPosition(
   p: Position | undefined,
   pages: Page[],
@@ -123,10 +93,6 @@ export function matchingPosition(
   };
 }
 
-/**
- * Parses and strictly validates a Position object from unknown input.
- * Rejects non-integers, NaN, negative indexes, or out-of-range fractions.
- */
 export function parsePosition(
   value: unknown,
   pages: Page[],
@@ -182,9 +148,6 @@ export function parsePosition(
   );
 }
 
-/**
- * Parses and validates an individual Page object.
- */
 export function parsePage(value: unknown, seenPaths: Set<string>): Page {
   if (!isRecord(value)) {
     throw new ValidationError('Page record must be an object.');
@@ -252,9 +215,6 @@ export function parsePage(value: unknown, seenPaths: Set<string>): Page {
   };
 }
 
-/**
- * Parses and validates a Chapter object.
- */
 export function parseChapter(value: unknown, chapterIndex: number, oldChapter?: Chapter): Chapter {
   if (!isRecord(value)) {
     throw new ValidationError(`Chapter ${chapterIndex + 1} must be an object.`);
@@ -315,9 +275,6 @@ export function parseChapter(value: unknown, chapterIndex: number, oldChapter?: 
   };
 }
 
-/**
- * Parses and validates a Manga object.
- */
 export function parseManga(
   value: unknown,
   oldManga?: Manga,
@@ -411,10 +368,6 @@ export function parseManga(
   };
 }
 
-/**
- * Validates a Summary record read from IndexedDB.
- * Returns undefined if the record is missing essential identifiers.
- */
 export function parseSummary(
   value: unknown,
   options: { preserveHardwarePointers?: boolean } = {},
@@ -507,9 +460,6 @@ export function parseSummary(
   };
 }
 
-/**
- * Parses and validates Settings, allowlisting valid fields and falling back to defaults.
- */
 export function parseSettings(value: unknown): Settings {
   if (!isRecord(value)) {
     return { ...defaults };
@@ -610,11 +560,14 @@ export function parseSettings(value: unknown): Settings {
   };
 }
 
-/**
- * Validates untrusted backup JSON records before any database writes.
- * Rejects corrupt versions, oversized payloads, duplicate IDs, and invalid structures.
- */
 export function validateBackup(value: unknown): { manga: Manga[]; settings: Settings } {
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      throw new ValidationError('Backup must be valid JSON');
+    }
+  }
   if (!isRecord(value)) {
     throw new ValidationError('Backup must be an object.');
   }
@@ -637,6 +590,9 @@ export function validateBackup(value: unknown): { manga: Manga[]; settings: Sett
       throw new ValidationError(`Manga item ${index + 1} has an invalid or missing ID.`);
     }
     const id = rawManga.id.trim();
+    if (!id) {
+      throw new ValidationError(`Manga item ${index + 1} has an invalid or missing ID.`);
+    }
     if (seenIds.has(id)) {
       throw new ValidationError(`Duplicate manga ID found in backup: "${id}"`);
     }

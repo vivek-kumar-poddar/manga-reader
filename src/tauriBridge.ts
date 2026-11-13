@@ -164,7 +164,7 @@ export interface PageImageResourceOptions {
   mangaId: string;
   pagePath: string;
   version?: string | number;
-  transform?: 'full' | 'raw' | 'low' | 'preview' | string;
+  transform?: 'full' | 'raw' | 'low' | 'preview' | 'thumb' | string;
   localPath?: string;
 }
 
@@ -217,7 +217,9 @@ export interface DbErrorPayload {
 }
 
 export type TauriErrorPayload =
-  FsErrorPayload | DbErrorPayload | { code: 'Unknown'; message: string };
+  | FsErrorPayload
+  | DbErrorPayload
+  | { code: 'Unknown'; message: string };
 
 export function parseFsError(err: unknown): FsErrorPayload | null {
   if (err && typeof err === 'object') {

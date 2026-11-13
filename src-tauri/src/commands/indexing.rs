@@ -134,12 +134,125 @@ pub struct TitleDto {
     pub reused: usize,
 }
 
+fn is_combining_mark(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x0300..=0x036F
+            | 0x0483..=0x0489
+            | 0x0591..=0x05BD
+            | 0x05BF
+            | 0x05C1..=0x05C2
+            | 0x05C4..=0x05C5
+            | 0x05C7
+            | 0x0610..=0x061A
+            | 0x064B..=0x065F
+            | 0x0670
+            | 0x06D6..=0x06ED
+            | 0x0730..=0x074A
+            | 0x07A6..=0x07B0
+            | 0x07EB..=0x07F3
+            | 0x0816..=0x082D
+            | 0x0859..=0x085B
+            | 0x08D3..=0x0903
+            | 0x093A..=0x094F
+            | 0x0951..=0x0957
+            | 0x0962..=0x0963
+            | 0x0981..=0x0983
+            | 0x09BC..=0x09CD
+            | 0x09D7
+            | 0x09E2..=0x09E3
+            | 0x09FE
+            | 0x0A01..=0x0A51
+            | 0x0A70..=0x0A75
+            | 0x0A81..=0x0AE3
+            | 0x0AFA..=0x0AFF
+            | 0x0B01..=0x0B63
+            | 0x0B82..=0x0BD7
+            | 0x0C00..=0x0C63
+            | 0x0C81..=0x0CE3
+            | 0x0D00..=0x0D63
+            | 0x0D81..=0x0DDF
+            | 0x0E31..=0x0E3A
+            | 0x0E47..=0x0E4E
+            | 0x0EB1..=0x0EBC
+            | 0x0EC8..=0x0ECD
+            | 0x0F18..=0x0F19
+            | 0x0F35
+            | 0x0F37
+            | 0x0F39
+            | 0x0F3E..=0x0F3F
+            | 0x0F71..=0x0F84
+            | 0x0F86..=0x0F87
+            | 0x0F8D..=0x0FBC
+            | 0x102B..=0x103E
+            | 0x1056..=0x1059
+            | 0x105E..=0x1060
+            | 0x1062..=0x1064
+            | 0x1067..=0x106D
+            | 0x1071..=0x1074
+            | 0x1082..=0x108D
+            | 0x108F
+            | 0x109A..=0x109D
+            | 0x135D..=0x135F
+            | 0x1712..=0x1715
+            | 0x1732..=0x1734
+            | 0x1752..=0x1753
+            | 0x1772..=0x1773
+            | 0x17B4..=0x17D3
+            | 0x17DD
+            | 0x180B..=0x180F
+            | 0x1885..=0x1886
+            | 0x18A9
+            | 0x1920..=0x193B
+            | 0x1A17..=0x1A1B
+            | 0x1A55..=0x1A7F
+            | 0x1AB0..=0x1AFF
+            | 0x1B00..=0x1B04
+            | 0x1B34..=0x1B44
+            | 0x1B6B..=0x1B73
+            | 0x1B80..=0x1B82
+            | 0x1BA1..=0x1BAD
+            | 0x1BE6..=0x1BF3
+            | 0x1C24..=0x1C37
+            | 0x1CD0..=0x1CF9
+            | 0x1DC0..=0x1DFF
+            | 0x20D0..=0x20FF
+            | 0x302A..=0x302F
+            | 0x3099..=0x309A
+            | 0xA66F..=0xA67D
+            | 0xA69E..=0xA69F
+            | 0xA6F0..=0xA6F1
+            | 0xA802
+            | 0xA806
+            | 0xA80B
+            | 0xA823..=0xA827
+            | 0xA880..=0xA881
+            | 0xA8B4..=0xA8C5
+            | 0xA8E0..=0xA8F1
+            | 0xA8FF..=0xA953
+            | 0xA980..=0xA9C0
+            | 0xA9E5
+            | 0xAA29..=0xAA36
+            | 0xAA43
+            | 0xAA4C..=0xAA4D
+            | 0xAA7B..=0xAA7D
+            | 0xAAB0..=0xAABE
+            | 0xAAEB..=0xAAEF
+            | 0xAAF5..=0xAAF6
+            | 0xABE3..=0xABEA
+            | 0xABEC..=0xABED
+            | 0xFB1E
+            | 0xFE00..=0xFE0F
+            | 0xFE20..=0xFE2F
+    )
+}
+
 /// Generates a clean URL slug from a title string.
 pub fn generate_slug(name: &str) -> String {
     let mut slug = String::new();
     let mut prev_dash = false;
     for c in name.chars() {
-        if c.is_alphanumeric() {
+        if c.is_alphanumeric() || is_combining_mark(c) {
             for lc in c.to_lowercase() {
                 slug.push(lc);
             }
@@ -153,7 +266,12 @@ pub fn generate_slug(name: &str) -> String {
         }
     }
     let trimmed = slug.trim_matches('-');
-    if trimmed.is_empty() || matches!(trimmed, "read" | "assets" | "api" | "bookmarks" | "index-html") {
+    if trimmed.is_empty()
+        || matches!(
+            trimmed,
+            "read" | "assets" | "api" | "bookmarks" | "index-html" | "index.html"
+        )
+    {
         "manga".to_string()
     } else {
         trimmed.to_string()
@@ -387,14 +505,20 @@ pub async fn index_title(
 
     let root_clone = root_path.clone();
 
-    // 0. Load previous manga from SQLite if not provided in options
+    // 0. Load previous manga from SQLite off the async executor thread if not provided in options
     let mut previous_manga = opts.previous;
     if previous_manga.is_none() {
         if let Some(db_state) = app.try_state::<crate::db::DbState>() {
-            let target_id = opts.target_id.as_deref();
-            let root_str = root_path.to_string_lossy();
-            if let Some(prev_rec) =
-                db_state.get_previous_manga_for_indexing_sync(target_id, Some(&root_str))
+            let db_clone = db_state.inner().clone();
+            let target_id = opts.target_id.clone();
+            let root_str = root_path.to_string_lossy().to_string();
+            if let Ok(Some(prev_rec)) = tauri::async_runtime::spawn_blocking(move || {
+                db_clone.get_previous_manga_for_indexing_sync(
+                    target_id.as_deref(),
+                    Some(&root_str),
+                )
+            })
+            .await
             {
                 previous_manga = Some(manga_record_to_previous_dto(prev_rec));
             }
@@ -494,6 +618,7 @@ pub async fn index_title(
 
     // If no retained snapshot or snapshot had no valid files, run standard recursive walkdir scan
     if scanned_files.is_empty() {
+        let cancel_clone = cancel_flag.clone();
         let (files, issues) = tauri::async_runtime::spawn_blocking(move || {
             let mut files = Vec::new();
             let mut issues = Vec::new();
@@ -515,7 +640,7 @@ pub async fn index_title(
                 });
 
             for entry_res in walker {
-                if let Some(ref cf) = cancel_flag {
+                if let Some(ref cf) = cancel_clone {
                     if cf.load(std::sync::atomic::Ordering::Relaxed) {
                         break;
                     }
@@ -844,7 +969,10 @@ pub async fn index_title(
 
     if chapter_names.is_empty() {
         return Err(if let Some(first_issue) = traversal_issues.first() {
-            format!("No readable pages. {}: {}", first_issue.path, first_issue.reason)
+            format!(
+                "No readable pages. {}: {}",
+                first_issue.path, first_issue.reason
+            )
         } else {
             "No image pages found in this selection.".to_string()
         });
@@ -893,7 +1021,7 @@ pub async fn index_title(
         });
     }
 
-    // 7. Cover identification and thumbnail generation
+    // 7. Cover identification, thumbnail generation, and SQLite commit off the async thread
     let first_page_abs = final_chapters
         .first()
         .and_then(|c| c.pages.first())
@@ -915,23 +1043,17 @@ pub async fn index_title(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let base_slug = generate_slug(&title_name);
-    let slug = if let Some(ref prev) = previous_manga {
-        if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str()) || opts.title.is_none() {
-            prev.slug.clone().unwrap_or_else(|| {
-                app.try_state::<crate::db::DbState>()
-                    .map(|db| db.allocate_unique_slug_sync(&base_slug, &manga_id))
-                    .unwrap_or_else(|| base_slug.clone())
-            })
-        } else if let Some(db_state) = app.try_state::<crate::db::DbState>() {
-            db_state.allocate_unique_slug_sync(&base_slug, &manga_id)
-        } else {
-            base_slug
-        }
-    } else if let Some(db_state) = app.try_state::<crate::db::DbState>() {
-        db_state.allocate_unique_slug_sync(&base_slug, &manga_id)
-    } else {
-        base_slug
-    };
+    let preserve_prev_slug = previous_manga
+        .as_ref()
+        .and_then(|prev| {
+            if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
+                || opts.title.is_none()
+            {
+                prev.slug.clone()
+            } else {
+                None
+            }
+        });
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -955,12 +1077,9 @@ pub async fn index_title(
         .unwrap_or(0)
         .min(final_chapters.len().saturating_sub(1));
 
-    let mut final_cover_path: Option<String> = None;
-    if let Some(cover_file) = cover_abs {
-        final_cover_path = Some(cover_file.to_string_lossy().to_string());
-        // Generate native thumbnail directly to disk cache
-        let _ = crate::commands::image::generate_thumbnail_direct(&app, &cover_file, &manga_id);
-    }
+    let final_cover_path = cover_abs
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string());
 
     let chapter_count = final_chapters.len();
     let page_count = final_chapters.iter().map(|c| c.pages.len()).sum();
@@ -968,61 +1087,91 @@ pub async fn index_title(
         .iter()
         .any(|c| c.pages.iter().any(|p| p.dimensions_pending));
 
-    // Natively commit manga directly to SQLite, eliminating duplicate serialization to JS and back
-    if let Some(db_state) = app.try_state::<crate::db::DbState>() {
-        let rec = crate::db::MangaRecord {
-            id: manga_id.clone(),
-            slug: Some(slug.clone()),
-            title: title_name.clone(),
-            local_path: Some(root_path.to_string_lossy().to_string()),
-            last_chapter,
-            added_at,
-            updated_at: now,
-            revision: Some(revision),
-            sort: Some(sort_mode.clone()),
-            chapters: final_chapters
-                .iter()
-                .map(|c| crate::db::ChapterRecord {
-                    id: None,
-                    name: c.name.clone(),
-                    pages: c
-                        .pages
-                        .iter()
-                        .map(|p| crate::db::PageRecord {
-                            name: p.name.clone(),
-                            path: p.path.clone(),
-                            width: p.width,
-                            height: p.height,
-                            size: p.size,
-                            modified: p.modified,
-                            dimensions_pending: Some(p.dimensions_pending),
-                        })
-                        .collect(),
-                    read: c.read,
-                    position: c.position.as_ref().map(|p| crate::db::PositionRecord {
-                        page: p.page as u32,
-                        path: p.path.clone(),
-                        fraction: p.fraction.unwrap_or(0.0),
-                        manga_bookmark: p.manga_bookmark,
-                        timestamp: p.timestamp,
-                    }),
-                    bookmarks: Some(
-                        c.bookmarks
+    let app_for_commit = app.clone();
+    let manga_id_for_commit = manga_id.clone();
+    let title_for_commit = title_name.clone();
+    let root_str_for_commit = root_path.to_string_lossy().to_string();
+    let sort_for_commit = sort_mode.clone();
+    let chapters_for_commit = final_chapters.clone();
+
+    let slug = tauri::async_runtime::spawn_blocking(move || -> Result<String, String> {
+        let resolved_slug = if let Some(existing_slug) = preserve_prev_slug {
+            existing_slug
+        } else if let Some(db_state) = app_for_commit.try_state::<crate::db::DbState>() {
+            db_state.allocate_unique_slug_sync(&base_slug, &manga_id_for_commit)
+        } else {
+            base_slug
+        };
+
+        if let Some(ref cover_file) = cover_abs {
+            let _ = crate::commands::image::generate_thumbnail_direct(
+                &app_for_commit,
+                cover_file,
+                &manga_id_for_commit,
+            );
+        }
+
+        if let Some(db_state) = app_for_commit.try_state::<crate::db::DbState>() {
+            let rec = crate::db::MangaRecord {
+                id: manga_id_for_commit,
+                slug: Some(resolved_slug.clone()),
+                title: title_for_commit,
+                local_path: Some(root_str_for_commit),
+                last_chapter,
+                added_at,
+                updated_at: now,
+                revision: Some(revision),
+                sort: Some(sort_for_commit),
+                chapters: chapters_for_commit
+                    .iter()
+                    .map(|c| crate::db::ChapterRecord {
+                        id: None,
+                        name: c.name.clone(),
+                        pages: c
+                            .pages
                             .iter()
-                            .map(|b| crate::db::PositionRecord {
-                                page: b.page as u32,
-                                path: b.path.clone(),
-                                fraction: b.fraction.unwrap_or(0.0),
-                                manga_bookmark: b.manga_bookmark,
-                                timestamp: b.timestamp,
+                            .map(|p| crate::db::PageRecord {
+                                name: p.name.clone(),
+                                path: p.path.clone(),
+                                width: p.width,
+                                height: p.height,
+                                size: p.size,
+                                modified: p.modified,
+                                dimensions_pending: Some(p.dimensions_pending),
                             })
                             .collect(),
-                    ),
-                })
-                .collect(),
-        };
-        let _ = db_state.save_manga_sync(&rec);
-    }
+                        read: c.read,
+                        position: c.position.as_ref().map(|p| crate::db::PositionRecord {
+                            page: p.page as u32,
+                            path: p.path.clone(),
+                            fraction: p.fraction.unwrap_or(0.0),
+                            manga_bookmark: p.manga_bookmark,
+                            timestamp: p.timestamp,
+                        }),
+                        bookmarks: Some(
+                            c.bookmarks
+                                .iter()
+                                .map(|b| crate::db::PositionRecord {
+                                    page: b.page as u32,
+                                    path: b.path.clone(),
+                                    fraction: b.fraction.unwrap_or(0.0),
+                                    manga_bookmark: b.manga_bookmark,
+                                    timestamp: b.timestamp,
+                                })
+                                .collect(),
+                        ),
+                    })
+                    .collect(),
+            };
+            db_state
+                .save_manga_sync(&rec)
+                .map_err(|e| format!("Failed to save indexed manga to database: {e}"))?;
+        }
+
+        Ok(resolved_slug)
+    })
+    .await
+    .map_err(|e| format!("Commit task join error: {e}"))??;
 
     Ok(TitleDto {
         id: manga_id,
@@ -1057,6 +1206,10 @@ mod tests {
         );
         assert_eq!(generate_slug("   "), "manga");
         assert_eq!(generate_slug("---"), "manga");
+        assert_eq!(generate_slug("bookmarks"), "manga");
+        assert_eq!(generate_slug("index.html"), "manga");
+        // Verify combining marks (e.g. Devanagari vowel signs) are preserved without hyphen splitting
+        assert_eq!(generate_slug("हिंदी मंगा"), "हिंदी-मंगा");
     }
 
     #[test]
@@ -1204,7 +1357,6 @@ mod tests {
 
     #[test]
     fn test_indexing_grouping_logic() {
-        // Test determine_chapter helper logic
         fn determine_chapter(rel_path: &str, is_cover: bool) -> Option<String> {
             if is_cover {
                 return None;

@@ -1,4 +1,4 @@
-import { limits, assertAtMost, assertImageDimensions } from '../limits';
+import { limits, assertAtMost, assertPathLimits, assertImageDimensions } from '../limits';
 import type { Manga, Chapter, Page, Position, Settings, Summary } from '../model';
 import { defaults } from '../model';
 import { folderSlug } from '../paths';
@@ -16,78 +16,49 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const RESERVED_DOS_NAMES = new Set([
-  'con',
-  'prn',
-  'aux',
-  'nul',
-  'com1',
-  'com2',
-  'com3',
-  'com4',
-  'com5',
-  'com6',
-  'com7',
-  'com8',
-  'com9',
-  'lpt1',
-  'lpt2',
-  'lpt3',
-  'lpt4',
-  'lpt5',
-  'lpt6',
-  'lpt7',
-  'lpt8',
-  'lpt9',
+  'con', 'prn', 'aux', 'nul',
+  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
+  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
 ]);
 
 export function validateRelativePath(path: unknown): string {
   if (typeof path !== 'string' || !path.trim()) {
-    throw new ValidationError('Path must be a non-empty string');
+    throw new ValidationError('Path must be a non-empty string.');
   }
   if (path.startsWith(' ') || path.endsWith(' ')) {
     throw new ValidationError(`Path cannot start or end with whitespace: "${path}"`);
   }
   const trimmed = path.trim();
-  if (trimmed.length > limits.pathChars) {
-    throw new ValidationError(
-      `Relative path length (characters) exceeds the limit of ${limits.pathChars}. Use a smaller selection.`,
-    );
-  }
-  // Reject colons (Windows drive letters e.g. C:, alternate data streams e.g. :stream)
   if (trimmed.includes(':')) {
-    throw new ValidationError(`Path cannot contain drive prefixes or colons: ${path}`);
+    throw new ValidationError(`Path cannot contain drive prefixes or colons: "${trimmed}"`);
   }
-  const normalized = trimmed.replace(/\\/g, '/');
-  // Reject rooted paths, leading double-slashes (UNC), and null bytes
-  if (
-    normalized.startsWith('/') ||
-    normalized.startsWith('//') ||
-    normalized.endsWith('/') ||
-    normalized.includes('\0')
-  ) {
-    throw new ValidationError(`Invalid path traversal or structure: ${path}`);
+  if (trimmed.startsWith('/') || trimmed.endsWith('/')) {
+    throw new ValidationError(`Path cannot start or end with a slash: "${trimmed}"`);
   }
-
-  // Validate individual path components, allowing legitimate double dots in filenames like chapter..jpg
-  const segments = normalized.split('/');
-  if (segments.length - 1 > limits.directoryDepth) {
-    throw new ValidationError(
-      `Folder depth exceeds the limit of ${limits.directoryDepth}. Use a smaller selection.`,
-    );
+  if (trimmed.startsWith('//')) {
+    throw new ValidationError(`Path cannot start with UNC prefix: "${trimmed}"`);
   }
+  if (trimmed.includes('\\')) {
+    throw new ValidationError(`Path must use forward slashes only: "${trimmed}"`);
+  }
+  if (trimmed.includes('\0')) {
+    throw new ValidationError('Path contains invalid null byte.');
+  }
+  assertPathLimits(trimmed);
+  const segments = trimmed.split('/');
   for (const seg of segments) {
     if (!seg || seg === '.' || seg === '..') {
-      throw new ValidationError(`Invalid path traversal segment: ${path}`);
+      throw new ValidationError(`Path contains invalid traversal segment: "${trimmed}"`);
     }
     if (seg.endsWith(' ') || seg.endsWith('.')) {
-      throw new ValidationError(`Path segment cannot end with a space or dot: ${seg}`);
+      throw new ValidationError(`Path segment cannot end with a space or dot: "${seg}"`);
     }
     const stem = seg.split('.')[0].toLowerCase();
     if (RESERVED_DOS_NAMES.has(stem)) {
-      throw new ValidationError(`Path segment uses reserved device name: ${seg}`);
+      throw new ValidationError(`Path segment uses reserved device name: "${seg}"`);
     }
   }
-  return normalized;
+  return trimmed;
 }
 
 export function matchingPosition(
@@ -135,8 +106,7 @@ export function parsePosition(
     throw new ValidationError('Position fraction must be a finite number.');
   }
   const clampedFraction = Math.max(0, Math.min(1, fraction));
-
-  const path = typeof value.path === 'string' ? validateRelativePath(value.path) : undefined;
+  const path = value.path !== undefined ? validateRelativePath(value.path) : undefined;
 
   let mangaBookmark: boolean | undefined;
   if ('mangaBookmark' in value && value.mangaBookmark !== undefined) {
@@ -222,7 +192,8 @@ export function parsePage(value: unknown, seenPaths: Set<string>): Page {
     modified = value.modified;
   }
 
-  const dimensionsPending = isPending ? true : undefined;
+  const dimensionsPending =
+    typeof value.dimensionsPending === 'boolean' ? value.dimensionsPending : undefined;
 
   return {
     name: value.name.trim(),
@@ -240,10 +211,10 @@ export function parseChapter(value: unknown, chapterIndex: number, oldChapter?: 
     throw new ValidationError(`Chapter ${chapterIndex + 1} must be an object.`);
   }
 
-  const name =
-    typeof value.name === 'string' && value.name.trim()
-      ? value.name.trim()
-      : `Chapter ${chapterIndex + 1}`;
+  if (typeof value.name !== 'string' || !value.name.trim()) {
+    throw new ValidationError(`Chapter ${chapterIndex + 1} name must be a non-empty string.`);
+  }
+  const name = value.name.trim();
 
   if (!Array.isArray(value.pages) || !value.pages.length) {
     throw new ValidationError(`Chapter "${name}" must contain at least one page.`);
@@ -581,9 +552,6 @@ export function parseSettings(value: unknown): Settings {
   };
 }
 
-/**
- * On desktop, backup validation delegates directly to the native Rust validator.
- */
 export async function validateBackupAsync(
   value: unknown,
 ): Promise<{ manga: Manga[]; settings: Settings }> {
