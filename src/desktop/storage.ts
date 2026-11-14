@@ -158,12 +158,15 @@ export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> 
 export const ACCESS_CACHE_TTL_MS = 7500;
 export const dirHandleCache = new Map<string, any>();
 export const accessCache = new Map<string, AccessCacheEntry>();
+const accessInFlight = new Map<string, Promise<boolean>>();
 
 export function clearAccessCache(mangaId?: string): void {
   if (mangaId) {
     accessCache.delete(mangaId);
+    accessInFlight.delete(mangaId);
   } else {
     accessCache.clear();
+    accessInFlight.clear();
   }
 }
 
@@ -224,27 +227,42 @@ export async function access(
     if (cached && now < cached.expiresAt) {
       return cached.granted;
     }
+    const inflight = accessInFlight.get(manga.id);
+    if (inflight) return inflight;
+  } else {
+    accessInFlight.delete(manga.id);
   }
 
-  try {
-    const granted = desktopAPI.checkAccess
-      ? await desktopAPI.checkAccess(manga.id, manga.localPath)
-      : Boolean(manga.localPath);
+  const task = (async () => {
+    try {
+      const granted = desktopAPI.checkAccess
+        ? await desktopAPI.checkAccess(manga.id, manga.localPath)
+        : Boolean(manga.localPath);
 
-    accessCache.set(manga.id, {
-      expiresAt: now + ACCESS_CACHE_TTL_MS,
-      timestamp: now,
-      granted,
-    });
-    return granted;
-  } catch {
-    accessCache.set(manga.id, {
-      expiresAt: now + ACCESS_CACHE_TTL_MS,
-      timestamp: now,
-      granted: false,
-    });
-    return false;
+      const finishNow = Date.now();
+      accessCache.set(manga.id, {
+        expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+        timestamp: finishNow,
+        granted,
+      });
+      return granted;
+    } catch {
+      const finishNow = Date.now();
+      accessCache.set(manga.id, {
+        expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+        timestamp: finishNow,
+        granted: false,
+      });
+      return false;
+    } finally {
+      accessInFlight.delete(manga.id);
+    }
+  })();
+
+  if (!request) {
+    accessInFlight.set(manga.id, task);
   }
+  return task;
 }
 
 export class IndexedDBLibraryRepo implements LibraryRepo {

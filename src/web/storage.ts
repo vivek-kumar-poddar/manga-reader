@@ -1,7 +1,8 @@
-import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import { openDB, type DBSchema, type IDBPDatabase, type IDBPTransaction } from 'idb';
 import { uniqueSlug } from '../paths';
 import {
   type Manga,
+  type Chapter,
   type Summary,
   type Position,
   type Page,
@@ -119,12 +120,49 @@ export function broadcastSync(msg: StorageSyncMessage): void {
   }
 }
 
+let activeRepo: LibraryRepo | null = null;
 let cachedSummaries: Summary[] | null = null;
 let cachedBookmarkedMangaIds: Set<string> | null = null;
 let cachedMangaBookmarkedIds: Set<string> | null = null;
 let bookmarkCachePromise: Promise<void> | null = null;
-
 let bookmarkGeneration = 0;
+
+const MAX_CACHED_DIR_HANDLES = 500;
+export const dirHandleCache = new Map<string, FileSystemDirectoryHandle>();
+export const ACCESS_CACHE_TTL_MS = 7500;
+
+export interface AccessCacheEntry {
+  granted: boolean;
+  timestamp: number;
+  expiresAt?: number;
+}
+
+export const accessCache = new Map<string, AccessCacheEntry>();
+const accessInFlight = new Map<string, Promise<boolean>>();
+
+export function clearAccessCache(mangaId?: string): void {
+  if (mangaId) {
+    accessCache.delete(mangaId);
+    accessInFlight.delete(mangaId);
+  } else {
+    accessCache.clear();
+    accessInFlight.clear();
+  }
+}
+
+export function clearDirHandleCache(mangaId?: string): void {
+  clearAccessCache(mangaId);
+  if (mangaId) {
+    const prefix = `${mangaId}:`;
+    for (const key of dirHandleCache.keys()) {
+      if (key.startsWith(prefix)) {
+        dirHandleCache.delete(key);
+      }
+    }
+  } else {
+    dirHandleCache.clear();
+  }
+}
 
 export function invalidateSummaryCache(): void {
   cachedSummaries = null;
@@ -151,9 +189,9 @@ export const summary = (m: Manga): Summary => {
   return {
     ...rest,
     chapterCount: chapters.length,
-    chaptersRead: chapters.filter((c) => c.read).length,
+    chaptersRead: chapters.filter((c: Chapter) => c.read).length,
     lastChapterName: chapters[m.lastChapter]?.name || '',
-    hasProgress: chapters.some((c) => Boolean(c.position)),
+    hasProgress: chapters.some((c: Chapter) => Boolean(c.position)),
     indexedAt: m.updatedAt,
     revision: m.revision ?? 1,
   };
@@ -177,7 +215,7 @@ export async function migrateV1ToV2(tx: any, _d?: IDBPDatabase<MangaDB>): Promis
     const { cover: _cover, ...metadata } = m;
     await cursor.update({
       ...metadata,
-      chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }) => ({
+      chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }: Chapter) => ({
         ...c,
         read: false,
       })),
@@ -193,7 +231,12 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
     dbInstance =
       typeof indexedDB !== 'undefined'
         ? openDB<MangaDB>('manga-reader', 2, {
-          async upgrade(d, old, _new, tx) {
+          async upgrade(
+            d: IDBPDatabase<MangaDB>,
+            old: number,
+            _new: number | null,
+            tx: IDBPTransaction<MangaDB, StoreNames<MangaDB>[], 'versionchange'>,
+          ) {
             if (old < 1) {
               d.createObjectStore('manga', { keyPath: 'id' });
               d.createObjectStore('settings');
@@ -213,7 +256,7 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
             }
           },
           blocking() {
-            void dbInstance?.then((d) => d.close());
+            void dbInstance?.then((d: IDBPDatabase<MangaDB>) => d.close());
           },
           blocked() {
             if (typeof window !== 'undefined') {
@@ -221,10 +264,12 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
             }
           },
         })
-        : (new Promise(() => { }) as unknown as Promise<IDBPDatabase<MangaDB>>);
+        : (new Promise<IDBPDatabase<MangaDB>>(() => { }));
   }
-  return dbInstance;
+  return dbInstance!;
 }
+
+type StoreNames<T> = keyof T & ('manga' | 'summaries' | 'covers' | 'progress' | 'settings');
 
 export const db: Promise<IDBPDatabase<MangaDB>> = desktopAPI.isDesktop
   ? ({
@@ -335,7 +380,7 @@ export async function getMangaIdb(id: string): Promise<Manga | undefined> {
     cover: cover instanceof Blob ? cover : m.cover,
     lastChapter: s && Number.isInteger(s.lastChapter) ? s.lastChapter : m.lastChapter,
     updatedAt: m.updatedAt,
-    chapters: m.chapters.map((c) => {
+    chapters: m.chapters.map((c: Chapter) => {
       const p = byName.get(c.name);
       return {
         ...c,
@@ -343,8 +388,8 @@ export async function getMangaIdb(id: string): Promise<Manga | undefined> {
         position: p?.position ? parsePosition(p.position, c.pages) : undefined,
         bookmarks: Array.isArray(p?.bookmarks)
           ? p.bookmarks
-            .map((bm) => parsePosition(bm, c.pages))
-            .filter((bm): bm is Position => Boolean(bm))
+            .map((bm: Position) => parsePosition(bm, c.pages))
+            .filter((bm: Position | undefined): bm is Position => Boolean(bm))
           : c.bookmarks || [],
       };
     }),
@@ -353,7 +398,7 @@ export async function getMangaIdb(id: string): Promise<Manga | undefined> {
 
 export async function allMangaIdb(): Promise<Manga[]> {
   return (await Promise.all((await listLibraryIdb()).map((m) => getMangaIdb(m.id)))).filter(
-    (m): m is Manga => Boolean(m),
+    (m: Manga | undefined): m is Manga => Boolean(m),
   );
 }
 
@@ -380,7 +425,10 @@ export async function saveMangaIdb(m: Manga): Promise<void> {
     updatedAt,
     revision,
     slug,
-    chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }) => ({ ...c, read: false })),
+    chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }: Chapter) => ({
+      ...c,
+      read: false,
+    })),
   });
   await tx.objectStore('summaries').put(summary({ ...m, updatedAt, revision, slug }));
   if (cover) await tx.objectStore('covers').put(cover, m.id);
@@ -388,7 +436,7 @@ export async function saveMangaIdb(m: Manga): Promise<void> {
   const keys = await progressStore.index('mangaId').getAllKeys(m.id);
   await Promise.all(keys.map((k) => progressStore.delete(k)));
   await Promise.all(
-    m.chapters.map((c) =>
+    m.chapters.map((c: Chapter) =>
       progressStore.put({
         mangaId: m.id,
         chapter: c.name,
@@ -558,7 +606,7 @@ export async function addBookmarkIdb(
   const old = (await tx.store.get(key)) as Progress | undefined;
   const marks = Array.isArray(old?.bookmarks) ? [...old.bookmarks] : [];
 
-  const exists = marks.some((p) => {
+  const exists = marks.some((p: Position) => {
     if (position.mangaBookmark) {
       return Boolean(p.mangaBookmark);
     }
@@ -732,7 +780,7 @@ export async function restoreBackupIdb(backup: {
         ...metadata,
         updatedAt: now,
         slug,
-        chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }) => ({
+        chapters: m.chapters.map(({ position: _p, bookmarks: _b, ...c }: Chapter) => ({
           ...c,
           read: false,
         })),
@@ -740,7 +788,7 @@ export async function restoreBackupIdb(backup: {
 
       const summaryRecord = summary(m);
 
-      const progressRecords = m.chapters.map((c) => ({
+      const progressRecords = m.chapters.map((c: Chapter) => ({
         mangaId: m.id,
         chapter: c.name,
         read: Boolean(c.read),
@@ -795,6 +843,7 @@ export async function restoreBackupIdb(backup: {
           }
         }
       }
+      broadcastSync({ type: 'library' });
     } catch (err) {
       try {
         tx.abort();
@@ -840,6 +889,7 @@ export async function resetProgressIdb(): Promise<void> {
     await tx.done;
     cachedSummaries = null;
     invalidateBookmarkCache();
+    broadcastSync({ type: 'progress' });
   } catch (err) {
     try {
       tx.abort();
@@ -916,7 +966,7 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   }
   async exportBackup(): Promise<string> {
     const list = await this.allManga();
-    const manga = list.map(({ handle, cover, ...rest }) => rest);
+    const manga = list.map(({ handle: _h, cover: _c, ...rest }: Manga) => rest);
     const settings = (await this.getStoredSettings()) ?? defaults;
     return JSON.stringify({ version: 2, manga, settings });
   }
@@ -932,8 +982,6 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     bookmarkCachePromise = null;
   }
 }
-
-let activeRepo: LibraryRepo | null = null;
 
 export function setRepo(newRepo: LibraryRepo): void {
   activeRepo = newRepo;
@@ -1031,44 +1079,6 @@ const readFile = (f: SourceFile): Promise<File> =>
     'Reading file',
   );
 
-const MAX_CACHED_DIR_HANDLES = 500;
-export const dirHandleCache = new Map<string, FileSystemDirectoryHandle>();
-
-export const ACCESS_CACHE_TTL_MS = 7500;
-
-export interface AccessCacheEntry {
-  granted: boolean;
-  timestamp: number;
-  expiresAt?: number;
-}
-
-export const accessCache = new Map<string, AccessCacheEntry>();
-const accessInFlight = new Map<string, Promise<boolean>>();
-
-export function clearAccessCache(mangaId?: string): void {
-  if (mangaId) {
-    accessCache.delete(mangaId);
-    accessInFlight.delete(mangaId);
-  } else {
-    accessCache.clear();
-    accessInFlight.clear();
-  }
-}
-
-export function clearDirHandleCache(mangaId?: string): void {
-  clearAccessCache(mangaId);
-  if (mangaId) {
-    const prefix = `${mangaId}:`;
-    for (const key of dirHandleCache.keys()) {
-      if (key.startsWith(prefix)) {
-        dirHandleCache.delete(key);
-      }
-    }
-  } else {
-    dirHandleCache.clear();
-  }
-}
-
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   assertPathLimits(p.path);
   if (desktopAPI.isDesktop && (m.localPath || desktopAPI.resolvePath)) {
@@ -1153,25 +1163,39 @@ export async function access(
       if (cached && now - cached.timestamp < ACCESS_CACHE_TTL_MS) {
         return cached.granted;
       }
+      const inflight = accessInFlight.get(m.id);
+      if (inflight) return inflight;
+    } else {
+      accessInFlight.delete(m.id);
     }
-    try {
-      const granted = desktopAPI.checkAccess
-        ? await desktopAPI.checkAccess(m.id, m.localPath)
-        : Boolean(m.localPath);
-      accessCache.set(m.id, {
-        granted,
-        timestamp: now,
-        expiresAt: now + ACCESS_CACHE_TTL_MS,
-      });
-      return granted;
-    } catch {
-      accessCache.set(m.id, {
-        granted: false,
-        timestamp: now,
-        expiresAt: now + ACCESS_CACHE_TTL_MS,
-      });
-      return false;
+    const task = (async () => {
+      try {
+        const granted = desktopAPI.checkAccess
+          ? await desktopAPI.checkAccess(m.id, m.localPath)
+          : Boolean(m.localPath);
+        const finishNow = Date.now();
+        accessCache.set(m.id, {
+          granted,
+          timestamp: finishNow,
+          expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+        });
+        return granted;
+      } catch {
+        const finishNow = Date.now();
+        accessCache.set(m.id, {
+          granted: false,
+          timestamp: finishNow,
+          expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+        });
+        return false;
+      } finally {
+        accessInFlight.delete(m.id);
+      }
+    })();
+    if (!request) {
+      accessInFlight.set(m.id, task);
     }
+    return task;
   }
 
   if (typeof __DESKTOP_BUILD__ !== 'undefined' && __DESKTOP_BUILD__) {

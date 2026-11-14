@@ -64,6 +64,10 @@
   --card-hover-shadow: 0 4px 14px -1px rgba(0, 0, 0, 0.09), 0 2px 5px -1px rgba(0, 0, 0, 0.06);
   --floating-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06);
   --shadow: var(--card-shadow);
+  --transition: background-color 300ms ease-in-out,
+    border-color 300ms ease-in-out,
+    color 300ms ease-in-out,
+    box-shadow 300ms ease-in-out;
 }
 
 :root.dark,
@@ -74,6 +78,8 @@
   --surface: #212124;
   --text: #e9e9ec;
   --muted: #a3a3ad;
+  --btn-light: #26262a;
+  --btn-hover-light: #56565a;
   --line: rgb(255 255 255 / 8%);
   --line-hover: rgb(255 255 255 / 15%);
   --line-focus: rgb(255 255 255 / 30%);
@@ -85,6 +91,10 @@
   --card-hover-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
   --floating-shadow: 0 14px 36px -4px rgba(0, 0, 0, 0.55), 0 4px 12px -2px rgba(0, 0, 0, 0.35);
   --shadow: var(--card-shadow);
+  --transition: background-color 300ms ease-in-out,
+    border-color 300ms ease-in-out,
+    color 300ms ease-in-out,
+    box-shadow 300ms ease-in-out;
 }
 
 * {
@@ -252,6 +262,20 @@ summary:focus-visible {
   border-radius: var(--control-radius);
   background: transparent;
   vertical-align: middle;
+}
+
+.bookmark-navigation .icon-button {
+  background: var(--btn-dark);
+  color: var(--color-white) !important;
+  opacity: 1;
+  transition: var(--transition) !important;
+}
+
+.bookmark-navigation .icon-button:hover {
+  background: var(--btn-hover-dark);
+  color: var(--color-white) !important;
+  opacity: 1;
+  box-shadow: var(--card-shadow)
 }
 
 .close-btn {
@@ -500,23 +524,9 @@ a.secondary.no-bookmark-browse-btn {
   stroke: #ffffff !important;
 }
 
-:root.dark .browse-button:hover,
-:root.dark .upload-zone .browse-button:hover,
-.dark .browse-button:hover,
-.dark .upload-zone .browse-button:hover {
-  background-color: #ffffff !important;
-  color: #28282b !important;
-  border-color: #ffffff !important;
-  filter: none !important;
-}
 
-:root.dark .browse-button:hover svg,
-:root.dark .upload-zone .browse-button:hover svg,
-.dark .browse-button:hover svg,
-.dark .upload-zone .browse-button:hover svg {
-  color: #28282b !important;
-  stroke: #28282b !important;
-}
+
+
 
 .upload-buttons {
   display: flex;
@@ -557,6 +567,11 @@ a.secondary.no-bookmark-browse-btn {
   background-color: var(--soft);
 }
 
+.dark .upload-zone .upload-buttons>button:hover {
+  color: var(--color-white);
+  background: var(--extra-soft) !important;
+}
+
 .upload-zone .upload-buttons>button svg {
   width: calc(var(--font-size-button, 15px) * 1.15) !important;
   height: calc(var(--font-size-button, 15px) * 1.15) !important;
@@ -566,11 +581,6 @@ a.secondary.no-bookmark-browse-btn {
 .upload-zone .upload-buttons>button:hover {
   color: #fff;
   background: var(--btn-hover-dark);
-}
-
-.dark .upload-zone .upload-buttons>button:hover {
-  color: var(--surface) !important;
-  background: #fff;
 }
 
 .support-button {
@@ -717,7 +727,26 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .bookmark-navigation>a {
-  margin-right: 8px;
+  margin-right: 9px;
+  background: var(--btn-dark);
+  color: var(--color-white);
+  padding: 8px 12px;
+  border-radius: 7px;
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+  font-weight: bold;
+}
+
+.bookmark-navigation>a:hover {
+  background: var(--btn-hover-dark);
+}
+
+.dark .bookmark-navigation>a {
+  background: var(--soft);
+}
+
+.dark .bookmark-navigation>a:hover {
+  background: var(--extra-soft);
 }
 
 .bookmark-navigation svg {
@@ -965,6 +994,88 @@ a.secondary.no-bookmark-browse-btn {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
   gap: 24px 18px;
+}
+
+/* When No Manga Show Upload Else Hide */
+.page-heading.library-page-heading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+
+.upload-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  cursor: pointer;
+  background: var(--btn-dark);
+  color: var(--color-white);
+  padding: 8px 12px;
+  border-radius: 7px;
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+  font-family: inherit;
+  font-weight: bold;
+  font-size: var(--font-size-button, var(--font-size-ui, 15px));
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.upload-toggle-btn:hover:not(:disabled) {
+  background: var(--btn-hover-dark);
+}
+
+.dark .upload-toggle-btn {
+  background: var(--soft);
+  color: var(--color-white);
+}
+
+.dark .upload-toggle-btn:hover:not(:disabled) {
+  background: var(--extra-soft);
+}
+
+.upload-toggle-btn.is-open {
+  background: #c82828;
+  color: var(--color-white, #ffffff);
+}
+
+.upload-toggle-btn.is-open:hover:not(:disabled) {
+  background: #a81f1f;
+}
+
+.dark .upload-toggle-btn.is-open {
+  background: #8f2424;
+  color: var(--color-white, #ffffff);
+}
+
+.dark .upload-toggle-btn.is-open:hover:not(:disabled) {
+  background: #ab2e2e;
+}
+
+.upload-toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-toggle-btn svg {
+  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
+  flex-shrink: 0;
+}
+
+.reduced .upload-toggle-btn {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .upload-toggle-btn {
+    transition: none;
+  }
 }
 
 /* Manga Grid & Cards */

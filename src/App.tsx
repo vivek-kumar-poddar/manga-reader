@@ -532,6 +532,26 @@ function UploadIcon({
   );
 }
 
+function AddMangaIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="24"
+      height="24"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth="2"
+      viewBox="0 0 24 24"
+      className={className}
+      aria-hidden="true"
+    >
+      <path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 .83.18 2 2 0 0 0 .83-.18l8.58-3.9a1 1 0 0 0 0-1.831zM16 17h6m-3-3v6M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 .825.178M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l2.116-.962" />
+    </svg>
+  );
+}
+
 function DateTooltip({ timestamp, children }: { timestamp?: number; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [placement, setPlacement] = useState<'top' | 'bottom'>('top');
@@ -611,11 +631,26 @@ function Library({
   const shelfSort = settings.shelfSort || 'recent';
   const sortedLibrary = useMemo(() => sortLibraryEntries(library, shelfSort), [library, shelfSort]);
   const [drag, setDrag] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   const [needs, setNeeds] = useState<Set<string>>(new Set());
   const [supported, setSupported] = useState(false);
   const [removeId, setRemoveId] = useState<string>();
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const nav = useNavigate();
+
+  const showUploadZone = library.length === 0 || uploadOpen || busy;
+
+  useEffect(() => {
+    if (library.length === 0) {
+      setUploadOpen(false);
+    }
+  }, [library.length]);
+
+  useEffect(() => {
+    if (!showUploadZone) {
+      setDrag(false);
+    }
+  }, [showUploadZone]);
 
   useEffect(() => {
     let live = true;
@@ -739,63 +774,88 @@ function Library({
         </div>
       </header>
       <main className="library-main">
-        <div className="page-heading">
+        <div className="page-heading library-page-heading">
           <div>
             <h1>Your library</h1>
             <DailyWelcome />
           </div>
-        </div>
-        <div
-          aria-busy={busy}
-          onClick={(e) => {
-            if (!busy && !(e.target as HTMLElement).closest('button,a')) void pick();
-          }}
-          onDragOver={(e) => {
-            e.preventDefault();
-            if (!busy) setDrag(true);
-          }}
-          onDragLeave={() => setDrag(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDrag(false);
-            if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
-          }}
-          className={
-            'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
-            (drag ? 'dragging' : '')
-          }
-        >
-          {busy ? (
-            <>
-              <LoaderCircle className="spin" size={26} />
-              <strong className="index-count" aria-live="polite">
-                {scan.phase === 'index' ? 'Saving…' : `${scan.done} found`}
-              </strong>
-              <span>
-                {scan.phase === 'index' ? 'Adding to your library…' : 'Preparing your manga…'}
-              </span>
-              <span className="subtle">{scan.title}</span>
-              <button className="secondary" onClick={cancel}>
-                Cancel import
-              </button>
-            </>
-          ) : (
-            <>
-              <h2 className="upload-area-title">
-                {drag ? 'Drop your stories here' : 'Make room for a good story'}
-              </h2>
-              <p>Drop manga folders here, or choose your files.</p>
-              <div className="upload-buttons">
-                <button className="browse-button" onClick={() => void pick()}>
-                  Choose a folder <UploadIcon size={16} />
-                </button>
-                <button className="secondary support-button" onClick={() => setSupported(true)}>
-                  <Info size={16} /> What’s supported
-                </button>
-              </div>
-            </>
+          {library.length > 0 && (
+            <button
+              type="button"
+              className={'upload-toggle-btn' + (uploadOpen ? ' is-open' : '')}
+              aria-expanded={showUploadZone}
+              aria-controls={showUploadZone ? 'library-upload-zone' : undefined}
+              disabled={busy}
+              onClick={() => setUploadOpen((prev) => !prev)}
+            >
+              {uploadOpen ? (
+                <>
+                  <X size={18} aria-hidden="true" />
+                  <span>Close Upload</span>
+                </>
+              ) : (
+                <>
+                  <AddMangaIcon />
+                  <span>Add New Manga</span>
+                </>
+              )}
+            </button>
           )}
         </div>
+        {showUploadZone && (
+          <div
+            id="library-upload-zone"
+            aria-busy={busy}
+            onClick={(e) => {
+              if (!busy && !(e.target as HTMLElement).closest('button,a')) void pick();
+            }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              if (!busy) setDrag(true);
+            }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDrag(false);
+              if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
+            }}
+            className={
+              'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
+              (drag ? 'dragging' : '')
+            }
+          >
+            {busy ? (
+              <>
+                <LoaderCircle className="spin" size={26} />
+                <strong className="index-count" aria-live="polite">
+                  {scan.phase === 'index' ? 'Saving…' : `${scan.done} found`}
+                </strong>
+                <span>
+                  {scan.phase === 'index' ? 'Adding to your library…' : 'Preparing your manga…'}
+                </span>
+                <span className="subtle">{scan.title}</span>
+                <button className="secondary" onClick={cancel}>
+                  Cancel import
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="upload-area-title">
+                  {drag ? 'Drop your stories here' : 'Make room for a good story'}
+                </h2>
+                <p>Drop manga folders here, or choose your files.</p>
+                <div className="upload-buttons">
+                  <button className="browse-button" onClick={() => void pick()}>
+                    Choose a folder <UploadIcon size={16} />
+                  </button>
+                  <button className="secondary support-button" onClick={() => setSupported(true)}>
+                    <Info size={16} /> What’s supported
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
 
         {library.length > 0 && (
           <>
@@ -1059,6 +1119,7 @@ export default function App() {
             }
           }),
         ]);
+        void resumeBackground().catch(() => { });
       } catch (e) {
         notify(errorMessage(e));
       } finally {
@@ -1071,9 +1132,6 @@ export default function App() {
       window.removeEventListener('reader-storage-blocked', blocked);
       syncChannel?.removeEventListener('message', onSync);
     };
-  }, []);
-  useEffect(() => {
-    void resumeBackground().catch(() => { });
   }, []);
   useEffect(() => {
     const update = () => setUpdateReady(hasUpdate());

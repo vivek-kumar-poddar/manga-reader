@@ -44,6 +44,9 @@ export function validateRelativePath(path: unknown): string {
   if (trimmed.includes('\0')) {
     throw new ValidationError('Path contains invalid null byte.');
   }
+  if (/[\x00-\x1f\x7f-\x9f]/.test(trimmed)) {
+    throw new ValidationError('Path contains invalid control character.');
+  }
   assertPathLimits(trimmed);
   const segments = trimmed.split('/');
   for (const seg of segments) {

@@ -364,11 +364,12 @@ export async function splitSource(source: Source): Promise<Source[]> {
   const sep = source.localPath?.includes('\\') ? '\\' : '/';
   for (const [path, file] of source.files) {
     const parts = path.split('/');
-    const title = parts.length > 1 ? parts.shift()! : `${source.title} — root pages`;
+    const isSub = parts.length > 1;
+    const title = isSub ? parts.shift()! : `${source.title} — root pages`;
     let s = result.get(title);
     if (!s) {
       const childLocalPath =
-        source.localPath && title !== `${source.title} — root pages`
+        source.localPath && isSub
           ? `${source.localPath.replace(/[\\/]+$/, '')}${sep}${title}`
           : source.localPath;
       s = {
