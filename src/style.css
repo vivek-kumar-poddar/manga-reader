@@ -1140,7 +1140,7 @@ a.secondary.no-bookmark-browse-btn {
   display: flex;
   align-items: stretch;
   flex-shrink: 0;
-  padding: 16px 0 16px 16px;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -1166,10 +1166,10 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .manga-card-left .cover {
-  width: 76px;
+  width: 120px;
   min-height: 96px;
   height: 100%;
-  border-radius: 6px;
+  border-radius: 0;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
 
@@ -1193,7 +1193,7 @@ a.secondary.no-bookmark-browse-btn {
   justify-content: space-between;
   width: 100%;
   flex: 1;
-  padding: 16px 16px 10px 16px;
+  padding: 16px;
   text-align: left;
   border: 0 !important;
   box-shadow: none;
