@@ -15,9 +15,9 @@ export function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, '/').replace(/^\/+/, '').replace(/\/+/g, '/').replace(/\/+$/, '');
 }
 
-export function folderSlug(name: string) {
+export function folderSlug(name = '') {
   return (
-    name
+    (name || '')
       .normalize('NFKD')
       .replace(/[0-9#*]\uFE0F?\u20E3/g, '')
       .replace(

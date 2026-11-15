@@ -86,26 +86,28 @@ export default function MangaDetails() {
 
   return (
     <>
-      <header className="library-header">
-        <Link to="/" className="brand">
-          <BookOpen size={23} strokeWidth={1.5} />
-          <span>
-            Reader<span className="brand-period">.</span>
-          </span>
-        </Link>
-        <div className="header-actions">
-          <Link className="icon-button" to="/" aria-label="Home" title="Home">
-            <Home size={19} />
+      <div className="header-wrap">
+        <header className="library-header">
+          <Link to="/" className="brand">
+            <BookOpen size={23} strokeWidth={1.5} />
+            <span>
+              Reader<span className="brand-period">.</span>
+            </span>
           </Link>
-          <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
-            <BookMarked size={19} />
-          </Link>
-          <ThemeButton />
-          <IconButton label="Settings" onClick={openSettings}>
-            <Settings size={19} />
-          </IconButton>
-        </div>
-      </header>
+          <div className="header-actions">
+            <Link className="icon-button" to="/" aria-label="Home" title="Home">
+              <Home size={19} />
+            </Link>
+            <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
+              <BookMarked size={19} />
+            </Link>
+            <ThemeButton />
+            <IconButton label="Settings" onClick={openSettings}>
+              <Settings size={19} />
+            </IconButton>
+          </div>
+        </header>
+      </div>
       <main className="manga-details">
         <nav className="manga-details-nav" aria-label="Manga navigation">
           <Link to="/">← Library</Link>
@@ -124,7 +126,7 @@ export default function MangaDetails() {
         ) : (
           <>
             <section className="manga-overview" aria-label="Manga overview">
-              <Cover m={manga} />
+              <Cover m={manga} size={1024} />
               <div className="manga-overview-info">
                 <h1>{manga.title}</h1>
                 <dl className="manga-totals">
@@ -139,13 +141,15 @@ export default function MangaDetails() {
                     </dd>
                   </div>
                 </dl>
-                <p className="manga-current" aria-live="polite">
-                  {hasProgress
-                    ? `Currently reading Chapter ${manga.lastChapter + 1} · Page ${current.position!.page + 1}`
-                    : 'Not started yet'}
-                </p>
-                <Link className="primary" to={mangaPath(manga)}>
-                  {hasProgress ? 'Continue reading' : 'Start reading'}
+                <Link className="btn continue-reading" to={mangaPath(manga)}>
+                  {hasProgress ? (
+                    <>
+                      Continue from <span className="text-semibold">Ch. {manga.lastChapter + 1}</span>{' '}
+                      <span className="text-semibold">Pg. {current.position!.page + 1}</span>
+                    </>
+                  ) : (
+                    'Start reading'
+                  )}
                 </Link>
               </div>
             </section>

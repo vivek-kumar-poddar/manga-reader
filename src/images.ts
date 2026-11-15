@@ -103,7 +103,7 @@ export async function thumbnail(
       assertImageDimensions(im.naturalWidth, im.naturalHeight);
       const c = document.createElement('canvas');
       try {
-        const scale = Math.min(160 / im.naturalWidth, 320 / im.naturalHeight);
+        const scale = Math.min(1024 / im.naturalWidth, 1024 / im.naturalHeight, 1.0);
         c.width = Math.max(1, Math.round(im.naturalWidth * scale));
         c.height = Math.max(1, Math.round(im.naturalHeight * scale));
         const ctx = c.getContext('2d');

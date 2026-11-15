@@ -80,6 +80,31 @@ pub fn get_thumbnail_path(app: &AppHandle, id: &str) -> Result<PathBuf, String> 
     Ok(thumb_dir.join(format!("{}.webp", safe_id)))
 }
 
+pub fn get_sized_thumbnail_path(app: &AppHandle, id: &str, size: u32) -> Result<PathBuf, String> {
+    if id.is_empty() {
+        return Err("Thumbnail ID cannot be empty".into());
+    }
+
+    let safe_id = sanitize_id(id);
+    let cache_dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| format!("Failed to resolve cache dir: {e}"))?;
+
+    let thumb_dir = cache_dir.join("thumbnails");
+    if !thumb_dir.exists() {
+        let _ = std::fs::create_dir_all(&thumb_dir);
+    }
+
+    let norm_size = match size {
+        1024 => 1024,
+        768 => 768,
+        _ => 512,
+    };
+
+    Ok(thumb_dir.join(format!("{}_{}.webp", safe_id, norm_size)))
+}
+
 pub fn get_variant_path(
     app: &AppHandle,
     key: &str,
@@ -182,10 +207,19 @@ pub async fn read_thumbnail(app: AppHandle, id: String) -> Result<tauri::ipc::Re
 }
 
 #[tauri::command]
-pub async fn get_thumbnail_url(app: AppHandle, id: String) -> Result<Option<String>, String> {
-    let path = get_thumbnail_path(&app, &id)?;
-    if path.exists() && path.is_file() {
-        Ok(Some(crate::protocol::path_to_mangaimg_url(&path)))
+pub async fn get_thumbnail_url(
+    app: AppHandle,
+    id: String,
+    size: Option<u32>,
+) -> Result<Option<String>, String> {
+    let req_size = size.unwrap_or(512);
+    let sized_path = get_sized_thumbnail_path(&app, &id, req_size)?;
+    if sized_path.exists() && sized_path.is_file() {
+        return Ok(Some(crate::protocol::path_to_mangaimg_url(&sized_path)));
+    }
+    let default_path = get_thumbnail_path(&app, &id)?;
+    if default_path.exists() && default_path.is_file() {
+        Ok(Some(crate::protocol::path_to_mangaimg_url(&default_path)))
     } else {
         Ok(None)
     }
@@ -237,6 +271,13 @@ pub async fn delete_thumbnail(app: AppHandle, id: String) -> Result<(), String> 
     let path = get_thumbnail_path(&app, &id)?;
     if path.exists() {
         let _ = tokio::fs::remove_file(&path).await;
+    }
+    for &size in &[512, 768, 1024] {
+        if let Ok(sized_path) = get_sized_thumbnail_path(&app, &id, size) {
+            if sized_path.exists() {
+                let _ = tokio::fs::remove_file(&sized_path).await;
+            }
+        }
     }
     let app_clone = app.clone();
     let _ = tauri::async_runtime::spawn_blocking(move || {

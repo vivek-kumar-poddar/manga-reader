@@ -1,6 +1,6 @@
 use fast_image_resize as fr;
 use fast_image_resize::PixelType;
-use fast_image_resize::images::Image;
+use fast_image_resize::images::{Image, ImageRef};
 use image::{DynamicImage, RgbaImage};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
@@ -163,8 +163,10 @@ pub static IMAGE_RESIZE_POOL: LazyLock<rayon::ThreadPool> = LazyLock::new(|| {
         .expect("Failed to initialize bounded image thread pool")
 });
 
-pub fn resize_image_fir(
-    src_img: DynamicImage,
+pub fn resize_rgba_fir(
+    rgba_slice: &[u8],
+    src_w: u32,
+    src_h: u32,
     target_width: u32,
     target_height: u32,
 ) -> Result<Vec<u8>, String> {
@@ -182,10 +184,7 @@ pub fn resize_image_fir(
         return Err("Target buffer exceeds job memory budget".into());
     }
 
-    let rgba = src_img.to_rgba8();
-    let (src_w, src_h) = (rgba.width(), rgba.height());
-
-    let src = Image::from_vec_u8(src_w, src_h, rgba.into_raw(), PixelType::U8x4)
+    let src = ImageRef::new(src_w, src_h, rgba_slice, PixelType::U8x4)
         .map_err(|e| format!("Failed to create source image buffer: {e}"))?;
 
     let mut dst = Image::new(target_width, target_height, PixelType::U8x4);
@@ -202,6 +201,15 @@ pub fn resize_image_fir(
         .to_vec();
 
     Ok(out)
+}
+
+pub fn resize_image_fir(
+    src_img: DynamicImage,
+    target_width: u32,
+    target_height: u32,
+) -> Result<Vec<u8>, String> {
+    let rgba = src_img.to_rgba8();
+    resize_rgba_fir(rgba.as_raw(), rgba.width(), rgba.height(), target_width, target_height)
 }
 
 /// Creates a neutral placeholder image in WebP format when requested.
@@ -312,22 +320,25 @@ pub struct CachedImageResult {
     pub error: Option<String>,
 }
 
+pub const THUMBNAIL_SIZES: &[u32] = &[512, 768, 1024];
+
 #[tauri::command]
 pub async fn generate_thumbnail(
     app: AppHandle,
     file_path: String,
     id: String,
+    size: Option<u32>,
 ) -> Result<CachedImageResult, String> {
     let trimmed = file_path.trim().to_string();
     if trimmed.is_empty() {
         return Err("File path cannot be empty".into());
     }
 
-    let thumb_path = crate::commands::cache::get_thumbnail_path(&app, &id)?;
-    let thumb_path_clone = thumb_path.clone();
+    let target_size = size.unwrap_or(512);
     let app_clone = app.clone();
+    let id_clone = id.clone();
 
-    let status = tauri::async_runtime::spawn_blocking(move || -> Result<&'static str, String> {
+    let thumb_path = tauri::async_runtime::spawn_blocking(move || -> Result<PathBuf, String> {
         let resolved = dunce::canonicalize(&trimmed)
             .map_err(|e| format!("Failed to resolve image path '{trimmed}': {e}"))?;
 
@@ -339,53 +350,7 @@ pub async fn generate_thumbnail(
             ));
         }
 
-        // Check if cached thumbnail exists and is still fresh compared to source file
-        let should_regenerate = if thumb_path_clone.exists() {
-            match (
-                std::fs::metadata(&resolved),
-                std::fs::metadata(&thumb_path_clone),
-            ) {
-                (Ok(src_meta), Ok(thumb_meta)) => {
-                    match (src_meta.modified(), thumb_meta.modified()) {
-                        (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
-                        _ => false,
-                    }
-                }
-                _ => true,
-            }
-        } else {
-            true
-        };
-
-        if !should_regenerate {
-            return Ok("cached");
-        }
-
-        IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
-            let decoded = safe_decode_image(&resolved)?;
-            let (src_w, src_h) = (decoded.width(), decoded.height());
-            let (target_w, target_h) = calculate_fitted_dimensions(
-                src_w,
-                src_h,
-                THUMBNAIL_MAX_WIDTH,
-                THUMBNAIL_MAX_HEIGHT,
-            );
-            let bytes = resize_image_fir(decoded, target_w, target_h)?;
-
-            if let Some(parent) = thumb_path_clone.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            crate::commands::fs::write_atomic(&thumb_path_clone, &bytes)
-                .map_err(|e| format!("Failed to write thumbnail: {e}"))?;
-
-            if !thumb_path_clone.exists() {
-                return Err("Failed to verify thumbnail file on disk".into());
-            }
-
-            Ok(())
-        })?;
-
-        Ok("generated")
+        generate_sized_thumbnail_direct(&app_clone, &resolved, &id_clone, target_size)
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))??;
@@ -394,7 +359,7 @@ pub async fn generate_thumbnail(
         path: thumb_path.to_string_lossy().to_string(),
         url: crate::protocol::path_to_mangaimg_url(&thumb_path),
         is_placeholder: false,
-        status: status.into(),
+        status: "generated".into(),
         error: None,
     })
 }
@@ -404,10 +369,27 @@ pub fn generate_thumbnail_direct(
     resolved: &Path,
     id: &str,
 ) -> Result<PathBuf, String> {
-    let thumb_path = crate::commands::cache::get_thumbnail_path(app, id)?;
+    generate_sized_thumbnail_direct(app, resolved, id, 512)
+}
 
-    let should_regenerate = if thumb_path.exists() {
-        match (std::fs::metadata(resolved), std::fs::metadata(&thumb_path)) {
+pub fn generate_sized_thumbnail_direct(
+    app: &AppHandle,
+    resolved: &Path,
+    id: &str,
+    target_size: u32,
+) -> Result<PathBuf, String> {
+    let norm_size = match target_size {
+        1024 => 1024,
+        768 => 768,
+        _ => 512,
+    };
+    let target_path = crate::commands::cache::get_sized_thumbnail_path(app, id, norm_size)?;
+    let p512 = crate::commands::cache::get_sized_thumbnail_path(app, id, 512)?;
+    let p768 = crate::commands::cache::get_sized_thumbnail_path(app, id, 768)?;
+    let p1024 = crate::commands::cache::get_sized_thumbnail_path(app, id, 1024)?;
+
+    let should_regenerate = if p512.exists() && p768.exists() && p1024.exists() {
+        match (std::fs::metadata(resolved), std::fs::metadata(&target_path)) {
             (Ok(src_meta), Ok(thumb_meta)) => match (src_meta.modified(), thumb_meta.modified()) {
                 (Ok(src_mtime), Ok(thumb_mtime)) => src_mtime > thumb_mtime,
                 _ => false,
@@ -419,30 +401,35 @@ pub fn generate_thumbnail_direct(
     };
 
     if !should_regenerate {
-        return Ok(thumb_path);
+        return Ok(target_path);
     }
 
     IMAGE_RESIZE_POOL.install(|| -> Result<(), String> {
         let decoded = safe_decode_image(resolved)?;
-        let (src_w, src_h) = (decoded.width(), decoded.height());
-        let (target_w, target_h) =
-            calculate_fitted_dimensions(src_w, src_h, THUMBNAIL_MAX_WIDTH, THUMBNAIL_MAX_HEIGHT);
-        let bytes = resize_image_fir(decoded, target_w, target_h)?;
+        let rgba = decoded.to_rgba8();
+        let (src_w, src_h) = (rgba.width(), rgba.height());
 
-        if let Some(parent) = thumb_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        crate::commands::fs::write_atomic(&thumb_path, &bytes)
-            .map_err(|e| format!("Failed to write direct thumbnail: {e}"))?;
+        for &size in THUMBNAIL_SIZES {
+            let (target_w, target_h) = calculate_fitted_dimensions(src_w, src_h, size, size);
+            let bytes = resize_rgba_fir(rgba.as_raw(), src_w, src_h, target_w, target_h)?;
 
-        if !thumb_path.exists() {
-            return Err("Failed to verify direct thumbnail on disk".into());
+            let path = crate::commands::cache::get_sized_thumbnail_path(app, id, size)?;
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            crate::commands::fs::write_atomic(&path, &bytes)
+                .map_err(|e| format!("Failed to write sized thumbnail ({size}): {e}"))?;
+
+            if size == 512 {
+                let default_path = crate::commands::cache::get_thumbnail_path(app, id)?;
+                let _ = crate::commands::fs::write_atomic(&default_path, &bytes);
+            }
         }
 
         Ok(())
     })?;
 
-    Ok(thumb_path)
+    Ok(target_path)
 }
 
 pub fn generate_image_variant_direct(

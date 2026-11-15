@@ -193,10 +193,12 @@ function observeCoverVisibility(el: HTMLElement, callback: CoverVisibleCallback)
 
 export const Cover = memo(function Cover({
   m,
+  size = 512,
 }: {
   m: Pick<Summary, 'id'> & { updatedAt?: number };
+  size?: number;
 }) {
-  const cacheKey = `${m.id}:${m.updatedAt ?? 0}`;
+  const cacheKey = `${m.id}:${m.updatedAt ?? 0}:${size}`;
   const [url, setUrl] = useState<string>(() => coverUrlPool.get(cacheKey) || '');
   const host = useRef<HTMLDivElement>(null);
 
@@ -213,12 +215,12 @@ export const Cover = memo(function Cover({
     const unobserve = observeCoverVisibility(host.current, () => {
       if (desktopAPI.isDesktop && (desktopAPI.getCoverImageUrl || desktopAPI.getThumbnailUrl)) {
         if (desktopAPI.getCoverImageUrl) {
-          const coverUrl = desktopAPI.getCoverImageUrl(m.id, m.updatedAt);
+          const coverUrl = desktopAPI.getCoverImageUrl(m.id, m.updatedAt, size);
           setUrl(coverUrl);
           return;
         }
         desktopAPI
-          .getThumbnailUrl!(m.id)
+          .getThumbnailUrl!(m.id, size)
           .then((thumbUrl) => {
             if (!live) return;
             if (thumbUrl) {
@@ -756,23 +758,25 @@ function Library({
   }
   return (
     <>
-      <header className="library-header">
-        <Link to="/" className="brand">
-          <BookOpen size={23} strokeWidth={1.5} />
-          <span>
-            Reader<span className="brand-period">.</span>
-          </span>
-        </Link>
-        <div className="header-actions">
-          <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
-            <BookMarked size={19} />
+      <div className="header-wrap">
+        <header className="library-header">
+          <Link to="/" className="brand">
+            <BookOpen size={23} strokeWidth={1.5} />
+            <span>
+              Reader<span className="brand-period">.</span>
+            </span>
           </Link>
-          <ThemeButton />
-          <IconButton label="Settings" onClick={openSettings}>
-            <Gear size={19} />
-          </IconButton>
-        </div>
-      </header>
+          <div className="header-actions">
+            <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
+              <BookMarked size={19} />
+            </Link>
+            <ThemeButton />
+            <IconButton label="Settings" onClick={openSettings}>
+              <Gear size={19} />
+            </IconButton>
+          </div>
+        </header>
+      </div>
       <main className="library-main">
         <div className="page-heading library-page-heading">
           <div>
@@ -890,151 +894,160 @@ function Library({
               )}
             </div>
             <div className="manga-grid">
-              {sortedLibrary.map((m) => (
-                <article className="manga-card" key={m.id}>
-                  <div
-                    className="manga-open"
-                    role="button"
-                    tabIndex={0}
-                    onClick={() =>
-                      void getManga(m.id)
-                        .then((latest) => {
-                          if (latest) nav(mangaPath(latest));
-                        })
-                        .catch((error) => notify(errorMessage(error)))
-                    }
-                    onKeyDown={(e) => {
-                      if (e.target !== e.currentTarget) return;
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        void getManga(m.id)
-                          .then((latest) => {
-                            if (latest) nav(mangaPath(latest));
-                          })
-                          .catch((error) => notify(errorMessage(error)));
-                      }
-                    }}
-                    aria-label={(m.hasProgress ? 'Continue reading ' : 'Start reading ') + m.title}
-                  >
-                    <div className="manga-card-left">
-                      <Cover m={m} />
+              {sortedLibrary.map((m) => {
+                const openManga = () =>
+                  void getManga(m.id)
+                    .then((latest) => {
+                      if (latest) nav(mangaPath(latest));
+                    })
+                    .catch((error) => notify(errorMessage(error)));
+
+                return (
+                  <article className="manga-card" key={m.id}>
+                    <div
+                      className="manga-card-left"
+                      role="button"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                      onClick={openManga}
+                    >
+                      <Cover m={m} size={512} />
                     </div>
                     <div className="manga-card-right">
-                      <div className="manga-card-right-top">
-                        <div className="manga-card-title-row">
-                          <h3 title={m.title}>{m.title}</h3>
-                          <span className="manga-card-counter">
-                            {m.chaptersRead} / {m.chapterCount}
-                          </span>
+                      <div
+                        className="manga-open"
+                        role="button"
+                        tabIndex={0}
+                        onClick={openManga}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            openManga();
+                          }
+                        }}
+                        aria-label={
+                          (m.hasProgress ? 'Continue reading ' : 'Start reading ') + m.title
+                        }
+                      >
+                        <div className="manga-card-right-top">
+                          <div className="manga-card-title-row">
+                            <h3 title={m.title}>{m.title}</h3>
+                            <span className="manga-card-counter">
+                              {m.chaptersRead} / {m.chapterCount}
+                            </span>
+                          </div>
+                          <div className="reading-progress">
+                            <span
+                              style={{
+                                width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
+                              }}
+                            />
+                          </div>
                         </div>
-                        <div className="reading-progress">
-                          <span
-                            style={{
-                              width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
-                            }}
-                          />
+                        <div className="manga-card-right-bottom">
+                          <DateTooltip timestamp={m.addedAt}>
+                            <CalendarIcon className="manga-card-calendar-icon" />
+                            <span className="manga-card-date">{formatAddedDate(m.addedAt)}</span>
+                          </DateTooltip>
+                          <button
+                            type="button"
+                            className={
+                              'manga-bookmark-btn' + (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
+                            }
+                            onClick={(e) => void toggleMangaBookmark(m, e)}
+                            title={
+                              bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+                            }
+                            aria-label={
+                              bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+                            }
+                            aria-pressed={bookmarkedIds.has(m.id)}
+                          >
+                            <Bookmark
+                              size={16}
+                              fill={bookmarkedIds.has(m.id) ? 'currentColor' : 'none'}
+                            />
+                          </button>
                         </div>
                       </div>
-                      <div className="manga-card-right-bottom">
-                        <DateTooltip timestamp={m.addedAt}>
-                          <CalendarIcon className="manga-card-calendar-icon" />
-                          <span className="manga-card-date">{formatAddedDate(m.addedAt)}</span>
-                        </DateTooltip>
-                        <button
-                          type="button"
-                          className={
-                            'manga-bookmark-btn' + (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
+                      <div className="manga-card-bottom">
+                        {needs.has(m.id) ? (
+                          <button
+                            type="button"
+                            className="relink-needed-btn"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              try {
+                                const allowed = await access(m, true);
+                                if (allowed) {
+                                  setNeeds((prev) => {
+                                    const next = new Set(prev);
+                                    next.delete(m.id);
+                                    return next;
+                                  });
+                                  await refresh();
+                                  return;
+                                }
+                              } catch {
+                                // Fall through to folder picker
+                              }
+                              void pick(m);
+                            }}
+                            title="Grant access or re-link folder"
+                          >
+                            Re-link needed
+                          </button>
+                        ) : (
+                          <Link
+                            className="manga-info-btn"
+                            to={mangaDetailsPath(m)}
+                            aria-label={'Info for ' + m.title}
+                          >
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              width="18"
+                              height="18"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                              color="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <circle cx="12" cy="12" r="10" />
+                              <path d="M12 16v-4m.125-3.75H12m.25 0a.25.25 0 1 0-.5 0 .25.25 0 0 0 .5 0" />
+                            </svg>
+                            <span>Info</span>
+                          </Link>
+                        )}
+                        <CardMenu
+                          title={m.title}
+                          needsRelink={needs.has(m.id)}
+                          onRelink={() => void pick(m)}
+                          onMarkRead={() =>
+                            void mark(m.id, true).catch((e) => notify(errorMessage(e)))
                           }
-                          onClick={(e) => void toggleMangaBookmark(m, e)}
-                          title={
-                            bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+                          onMarkUnread={() =>
+                            void mark(m.id, false).catch((e) => notify(errorMessage(e)))
                           }
-                          aria-label={
-                            bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
-                          }
-                          aria-pressed={bookmarkedIds.has(m.id)}
-                        >
-                          <Bookmark
-                            size={16}
-                            fill={bookmarkedIds.has(m.id) ? 'currentColor' : 'none'}
-                          />
-                        </button>
+                          onRemove={() => {
+                            if (settings.confirmDelete) {
+                              setRemoveId(m.id);
+                            } else {
+                              void deleteManga(m.id)
+                                .then(refresh)
+                                .then(() => notify('Manga removed.'))
+                                .catch((e) => notify(errorMessage(e)));
+                            }
+                          }}
+                        />
                       </div>
                     </div>
-                  </div>
-                  <div className="manga-card-bottom">
-                    {needs.has(m.id) ? (
-                      <button
-                        type="button"
-                        className="relink-needed-btn"
-                        onClick={async (e) => {
-                          e.stopPropagation();
-                          try {
-                            const allowed = await access(m, true);
-                            if (allowed) {
-                              setNeeds((prev) => {
-                                const next = new Set(prev);
-                                next.delete(m.id);
-                                return next;
-                              });
-                              await refresh();
-                              return;
-                            }
-                          } catch {
-                            // Fall through to folder picker
-                          }
-                          void pick(m);
-                        }}
-                        title="Grant access or re-link folder"
-                      >
-                        Re-link needed
-                      </button>
-                    ) : (
-                      <Link
-                        className="manga-info-btn"
-                        to={mangaDetailsPath(m)}
-                        aria-label={'Info for ' + m.title}
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          width="18"
-                          height="18"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="2"
-                          color="currentColor"
-                          viewBox="0 0 24 24"
-                        >
-                          <circle cx="12" cy="12" r="10" />
-                          <path d="M12 16v-4m.125-3.75H12m.25 0a.25.25 0 1 0-.5 0 .25.25 0 0 0 .5 0" />
-                        </svg>
-                        <span>Info</span>
-                      </Link>
-                    )}
-                    <CardMenu
-                      title={m.title}
-                      needsRelink={needs.has(m.id)}
-                      onRelink={() => void pick(m)}
-                      onMarkRead={() => void mark(m.id, true).catch((e) => notify(errorMessage(e)))}
-                      onMarkUnread={() =>
-                        void mark(m.id, false).catch((e) => notify(errorMessage(e)))
-                      }
-                      onRemove={() => {
-                        if (settings.confirmDelete) {
-                          setRemoveId(m.id);
-                        } else {
-                          void deleteManga(m.id)
-                            .then(refresh)
-                            .then(() => notify('Manga removed.'))
-                            .catch((e) => notify(errorMessage(e)));
-                        }
-                      }}
-                    />
-                  </div>
-                </article>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           </>
         )}

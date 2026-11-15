@@ -129,7 +129,7 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     const usedSlugs = new Set(
       existingSummaries.filter((x) => x.id !== manga.id).map((x) => x.slug || ''),
     );
-    const slug = manga.slug || existing?.slug || uniqueSlug(manga.title, usedSlugs);
+    const slug = manga.slug || existing?.slug || uniqueSlug(manga.title || manga.id || 'manga', usedSlugs);
     const m: Manga = {
       ...manga,
       revision,

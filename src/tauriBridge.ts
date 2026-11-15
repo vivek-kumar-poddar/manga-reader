@@ -184,11 +184,16 @@ export function getPageImageUrl(options: PageImageResourceOptions): string {
   return url;
 }
 
-export function getCoverImageUrl(mangaId: string, version?: string | number): string {
+export function getCoverImageUrl(
+  mangaId: string,
+  version?: string | number,
+  size?: number,
+): string {
   const encodedMangaId = encodeURIComponent(mangaId);
   const ver =
     version !== undefined && version !== null ? `/${encodeURIComponent(String(version))}` : '';
-  return `http://mangaimg.localhost/cover/${encodedMangaId}${ver}`;
+  const query = size ? `?size=${size}` : '';
+  return `http://mangaimg.localhost/cover/${encodedMangaId}${ver}${query}`;
 }
 
 export interface StorageStats {
@@ -299,10 +304,13 @@ export interface TauriCommands {
   show_main_window: { args: Record<string, never>; return: void };
   save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
   read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
-  get_thumbnail_url: { args: { id: string }; return: string | null };
+  get_thumbnail_url: { args: { id: string; size?: number | null }; return: string | null };
   delete_thumbnail: { args: { id: string }; return: void };
   clear_thumbnails: { args: Record<string, never>; return: void };
-  generate_thumbnail: { args: { filePath: string; id: string }; return: CachedImageResult };
+  generate_thumbnail: {
+    args: { filePath: string; id: string; size?: number | null };
+    return: CachedImageResult;
+  };
   generate_image_variant: {
     args: { filePath: string; maxWidth: number; maxHeight: number };
     return: CachedImageResult;
@@ -412,10 +420,10 @@ export interface DesktopAPI {
   showMainWindow?(): Promise<boolean>;
   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
-  getThumbnailUrl?(id: string): Promise<string | null>;
+  getThumbnailUrl?(id: string, size?: number): Promise<string | null>;
   deleteThumbnail?(id: string): Promise<void>;
   clearThumbnails?(): Promise<void>;
-  generateThumbnail?(filePath: string, id: string): Promise<CachedImageResult | null>;
+  generateThumbnail?(filePath: string, id: string, size?: number): Promise<CachedImageResult | null>;
   generateImageVariant?(
     filePath: string,
     maxWidth: number,
@@ -473,7 +481,7 @@ export interface DesktopAPI {
   ): Promise<IndexTitleDto>;
   convertFileSrc?(filePath: string, protocol?: string): string;
   getPageImageUrl?(options: PageImageResourceOptions): string;
-  getCoverImageUrl?(mangaId: string, version?: string | number): string;
+  getCoverImageUrl?(mangaId: string, version?: string | number, size?: number): string;
   onDragDrop?(callback: (paths: string[]) => void): () => void;
   checkForUpdate?(): Promise<DesktopUpdateInfo | null>;
   installUpdate?(): Promise<void>;
@@ -743,20 +751,25 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
-  async getThumbnailUrl(id: string): Promise<string | null> {
+  async getThumbnailUrl(id: string, size?: number): Promise<string | null> {
     try {
-      return await invokeCommand('get_thumbnail_url', { id });
+      return await invokeCommand('get_thumbnail_url', { id, size: size ?? null });
     } catch (err) {
       console.warn('Tauri getThumbnailUrl failed for', id, parseFsError(err) ?? err);
       return null;
     }
   }
 
-  async generateThumbnail(filePath: string, id: string): Promise<CachedImageResult | null> {
+  async generateThumbnail(
+    filePath: string,
+    id: string,
+    size?: number,
+  ): Promise<CachedImageResult | null> {
     try {
       return await invokeCommand('generate_thumbnail', {
         filePath,
         id,
+        size: size ?? null,
       });
     } catch (err) {
       console.warn('Tauri generateThumbnail failed for', filePath, id, parseFsError(err) ?? err);
@@ -1159,8 +1172,8 @@ export class TauriDesktopBridge implements DesktopAPI {
     return getPageImageUrl(options);
   }
 
-  getCoverImageUrl(mangaId: string, version?: string | number): string {
-    return getCoverImageUrl(mangaId, version);
+  getCoverImageUrl(mangaId: string, version?: string | number, size?: number): string {
+    return getCoverImageUrl(mangaId, version, size);
   }
 
   onDragDrop(callback: (paths: string[]) => void): () => void {
@@ -1457,7 +1470,7 @@ class WebDesktopBridge implements DesktopAPI {
     return '';
   }
 
-  getCoverImageUrl(_mangaId: string, _version?: string | number): string {
+  getCoverImageUrl(_mangaId: string, _version?: string | number, _size?: number): string {
     return '';
   }
 

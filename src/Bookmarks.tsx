@@ -98,13 +98,13 @@ function Thumbnail({ mark }: { mark: Mark }) {
                 mangaId: mark.manga.id,
                 pagePath: pp,
                 version: mark.manga.updatedAt,
-                transform: 'thumb',
+                transform: 'fit_768x768',
                 localPath: lp,
               });
               if (live) setUrl(currentUrl);
               return;
             } else if (desktopAPI.getCoverImageUrl) {
-              currentUrl = desktopAPI.getCoverImageUrl(mark.manga.id, mark.manga.updatedAt);
+              currentUrl = desktopAPI.getCoverImageUrl(mark.manga.id, mark.manga.updatedAt, 768);
               if (live) setUrl(currentUrl);
               return;
             }
@@ -662,23 +662,25 @@ export default function BookmarksPage() {
 
   return (
     <>
-      <header className="library-header">
-        <Link to="/" className="brand">
-          <BookOpen size={23} strokeWidth={1.5} />
-          <span>
-            Reader<span className="brand-period">.</span>
-          </span>
-        </Link>
-        <div className="header-actions">
-          <Link className="icon-button" to="/" aria-label="Home" title="Home">
-            <Home size={19} />
+      <div className="header-wrap">
+        <header className="library-header">
+          <Link to="/" className="brand">
+            <BookOpen size={23} strokeWidth={1.5} />
+            <span>
+              Reader<span className="brand-period">.</span>
+            </span>
           </Link>
-          <ThemeButton />
-          <IconButton label="Settings" onClick={openSettings}>
-            <Settings size={19} />
-          </IconButton>
-        </div>
-      </header>
+          <div className="header-actions">
+            <Link className="icon-button" to="/" aria-label="Home" title="Home">
+              <Home size={19} />
+            </Link>
+            <ThemeButton />
+            <IconButton label="Settings" onClick={openSettings}>
+              <Settings size={19} />
+            </IconButton>
+          </div>
+        </header>
+      </div >
       <main className={`library-main ${!hasBookmarks ? 'bookmarks-empty' : ''}`}>
         {hasBookmarks && (
           <div className="page-heading">

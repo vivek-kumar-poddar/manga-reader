@@ -1181,10 +1181,19 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
   test('prepareChapter prefers batch desktopAPI.prepareChapterHeaders on desktop', async () => {
     const originalIsDesktop = desktopAPI.isDesktop;
     const originalPrepareHeaders = desktopAPI.prepareChapterHeaders;
+    const originalSqliteList = desktopAPI.sqliteListLibrary;
+    const originalSqliteSave = desktopAPI.sqliteSaveManga;
+    const origRepo = getRepo();
 
     try {
+      setRepo({
+        saveManga: async () => {},
+        listLibrary: async () => [],
+      } as any);
       Object.defineProperty(desktopAPI, 'isDesktop', { value: true, configurable: true });
       let queriedPaths: string[] = [];
+      (desktopAPI as any).sqliteListLibrary = async () => [];
+      (desktopAPI as any).sqliteSaveManga = async () => {};
       (desktopAPI as any).prepareChapterHeaders = async (paths: string[]) => {
         queriedPaths = paths;
         return paths.map((p) => ({
@@ -1240,11 +1249,14 @@ test.describe('Step 06 & Step 11 — Storage, Images & ImportScan Modularization
       expect(manga.chapters[0].pages[1].width).toBe(1080);
       expect(manga.chapters[0].pages[1].dimensionsPending).toBe(false);
     } finally {
+      setRepo(origRepo);
       Object.defineProperty(desktopAPI, 'isDesktop', {
         value: originalIsDesktop,
         configurable: true,
       });
       (desktopAPI as any).prepareChapterHeaders = originalPrepareHeaders;
+      (desktopAPI as any).sqliteListLibrary = originalSqliteList;
+      (desktopAPI as any).sqliteSaveManga = originalSqliteSave;
     }
   });
 

@@ -283,6 +283,7 @@ pub struct PageResourceParams {
 pub struct CoverResourceParams {
     pub manga_id: String,
     pub version: Option<String>,
+    pub size: Option<u32>,
 }
 
 pub fn parse_page_resource_uri(uri_path: &str) -> Option<PageResourceParams> {
@@ -317,8 +318,26 @@ pub fn parse_cover_resource_uri(uri_path: &str) -> Option<CoverResourceParams> {
     if manga_id.is_empty() {
         return None;
     }
-    let version = parts.get(1).map(|v| v.to_string());
-    Some(CoverResourceParams { manga_id, version })
+    let mut version = None;
+    let mut size = None;
+
+    for part in parts.iter().skip(1) {
+        if let Ok(num) = part.parse::<u32>() {
+            if num == 512 || num == 768 || num == 1024 {
+                size = Some(num);
+                continue;
+            }
+        }
+        if version.is_none() {
+            version = Some(part.to_string());
+        }
+    }
+
+    Some(CoverResourceParams {
+        manga_id,
+        version,
+        size,
+    })
 }
 
 pub fn build_page_resource_url(
@@ -381,6 +400,7 @@ fn try_find_and_generate_cover(
     app: &AppHandle,
     base_dir: &Path,
     manga_id: &str,
+    size: u32,
 ) -> Result<PathBuf, String> {
     if !base_dir.is_dir() {
         return Err("Base directory does not exist".into());
@@ -400,7 +420,7 @@ fn try_find_and_generate_cover(
     ] {
         let candidate = base_dir.join(name);
         if candidate.is_file() {
-            return crate::commands::image::generate_thumbnail_direct(app, &candidate, manga_id);
+            return crate::commands::image::generate_sized_thumbnail_direct(app, &candidate, manga_id, size);
         }
     }
 
@@ -416,7 +436,7 @@ fn try_find_and_generate_cover(
         for path in files {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 if ALLOWED_IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                    return crate::commands::image::generate_thumbnail_direct(app, &path, manga_id);
+                    return crate::commands::image::generate_sized_thumbnail_direct(app, &path, manga_id, size);
                 }
             }
         }
@@ -444,8 +464,8 @@ fn try_find_and_generate_cover(
                 for f in files {
                     if let Some(ext) = f.extension().and_then(|e| e.to_str()) {
                         if ALLOWED_IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                            return crate::commands::image::generate_thumbnail_direct(
-                                app, &f, manga_id,
+                            return crate::commands::image::generate_sized_thumbnail_direct(
+                                app, &f, manga_id, size,
                             );
                         }
                     }
@@ -482,31 +502,55 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
 
     // Support resource URLs (/cover/, /page/), opaque image ID endpoints, and canonical path requests
     let raw_target: PathBuf = if let Some(cover_params) = parse_cover_resource_uri(uri_path) {
+        let req_size: u32 = req
+            .uri()
+            .query()
+            .and_then(|q| {
+                q.split('&').find_map(|pair| {
+                    let (k, v) = pair.split_once('=')?;
+                    if k == "size" {
+                        v.parse::<u32>().ok()
+                    } else {
+                        None
+                    }
+                })
+            })
+            .or(cover_params.size)
+            .unwrap_or(512);
+
         let safe_id = crate::commands::cache::sanitize_id(&cover_params.manga_id);
         let cache_dir = app
             .path()
             .app_cache_dir()
             .unwrap_or_else(|_| PathBuf::from("cache"));
-        let thumb_path = cache_dir.join("thumbnails").join(format!("{safe_id}.webp"));
+        let thumb_dir = cache_dir.join("thumbnails");
+        let sized_path = thumb_dir.join(format!("{safe_id}_{req_size}.webp"));
+        let default_path = thumb_dir.join(format!("{safe_id}.webp"));
 
-        if thumb_path.exists() {
-            thumb_path
+        if sized_path.exists() {
+            sized_path
         } else {
             let local_path_opt = app
                 .try_state::<crate::db::DbState>()
                 .and_then(|db| db.get_local_path_sync(&cover_params.manga_id));
             if let Some(ref lp) = local_path_opt {
                 let base = PathBuf::from(lp);
-                match try_find_and_generate_cover(app, &base, &cover_params.manga_id) {
+                match try_find_and_generate_cover(app, &base, &cover_params.manga_id, req_size) {
                     Ok(p) => p,
                     Err(_) => {
-                        return error_response(
-                            StatusCode::NOT_FOUND,
-                            "Cover image not found",
-                            &req,
-                        );
+                        if default_path.exists() {
+                            default_path
+                        } else {
+                            return error_response(
+                                StatusCode::NOT_FOUND,
+                                "Cover image not found",
+                                &req,
+                            );
+                        }
                     }
                 }
+            } else if default_path.exists() {
+                default_path
             } else {
                 return error_response(StatusCode::NOT_FOUND, "Cover thumbnail not found", &req);
             }
@@ -581,7 +625,7 @@ pub fn handle_mangaimg_request(app: &AppHandle, req: Request<Vec<u8>>) -> Respon
             "raw" | "full" | "original" => resolved,
             "thumb" => {
                 match crate::commands::image::generate_image_variant_direct(
-                    app, &resolved, 320, 420,
+                    app, &resolved, 768, 768,
                 ) {
                     Ok(variant_path) => variant_path,
                     Err(_) => resolved,
