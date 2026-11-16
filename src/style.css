@@ -50,7 +50,9 @@
   --font-size-title: 15px;
   --font-size-button: 15px;
   font-size: var(--font-size-ui, 15px);
-  --font-ui: 'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui:
+    'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
   font-family: var(--font-ui);
   color-scheme: light;
@@ -58,8 +60,11 @@
   color: #28282b;
   --surface: #ffffff;
   --text: #28282b;
+  --btn-light: #26262a;
+  --btn-hover-light: #56565a;
   --btn-dark: #38383b;
   --btn-hover-dark: #121212;
+  --color-white: #ffffff;
   --muted: #737379;
   --line: rgb(0 0 0 / 8%);
   --line-hover: rgb(0 0 0 / 15%);
@@ -74,9 +79,8 @@
   --card-hover-shadow: 0 4px 14px -1px rgba(0, 0, 0, 0.09), 0 2px 5px -1px rgba(0, 0, 0, 0.06);
   --floating-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06);
   --shadow: var(--card-shadow);
-  --transition: background-color 300ms ease-in-out,
-    border-color 300ms ease-in-out,
-    color 300ms ease-in-out,
+  --transition:
+    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
     box-shadow 300ms ease-in-out;
 }
 
@@ -90,6 +94,7 @@
   --muted: #a3a3ad;
   --btn-light: #26262a;
   --btn-hover-light: #56565a;
+  --color-white: #ffffff;
   --line: rgb(255 255 255 / 8%);
   --line-hover: rgb(255 255 255 / 15%);
   --line-focus: rgb(255 255 255 / 30%);
@@ -101,9 +106,8 @@
   --card-hover-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
   --floating-shadow: 0 14px 36px -4px rgba(0, 0, 0, 0.55), 0 4px 12px -2px rgba(0, 0, 0, 0.35);
   --shadow: var(--card-shadow);
-  --transition: background-color 300ms ease-in-out,
-    border-color 300ms ease-in-out,
-    color 300ms ease-in-out,
+  --transition:
+    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
     box-shadow 300ms ease-in-out;
 }
 
@@ -219,10 +223,11 @@ a.icon-button,
 a.primary,
 a.secondary {
   border: none !important;
-  background: var(--soft);
+  background: var(--btn-dark);
+  color: var(--color-white);
   border-radius: var(--control-radius);
-  box-shadow: none;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease;
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
 }
 
 button:not(:disabled):hover,
@@ -230,9 +235,32 @@ button:not(:disabled):hover,
 summary.icon-button:hover,
 a.icon-button:hover,
 a.secondary:hover {
+  background: var(--btn-hover-dark);
+  color: var(--color-white);
+  box-shadow: var(--card-shadow);
+}
+
+.dark button,
+.dark .dropdown-trigger,
+.dark summary.icon-button,
+.dark a.icon-button,
+.dark a.primary,
+.dark a.secondary {
   background: var(--soft);
   color: var(--text);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
 }
+
+.dark button:not(:disabled):hover,
+.dark .dropdown-trigger:hover,
+.dark summary.icon-button:hover,
+.dark a.icon-button:hover,
+.dark a.secondary:hover {
+  background: var(--extra-soft);
+  color: var(--text);
+}
+
 
 button:focus-visible,
 summary.icon-button:focus-visible,
@@ -274,10 +302,20 @@ summary:focus-visible {
   vertical-align: middle;
 }
 
+.header-actions .icon-button {
+  background: transparent;
+  transition: var(--transition);
+}
+
+.header-actions .icon-button:hover {
+  background: var(--extra-soft);
+}
+
 .bookmark-navigation .icon-button {
   background: var(--btn-dark);
   color: var(--color-white) !important;
   opacity: 1;
+  box-shadow: var(--card-shadow);
   transition: var(--transition) !important;
 }
 
@@ -285,7 +323,7 @@ summary:focus-visible {
   background: var(--btn-hover-dark);
   color: var(--color-white) !important;
   opacity: 1;
-  box-shadow: var(--card-shadow)
+  box-shadow: var(--card-shadow);
 }
 
 .close-btn {
@@ -307,7 +345,11 @@ summary:focus-visible {
   color: var(--muted);
   cursor: pointer;
   vertical-align: middle;
-  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .close-btn svg,
@@ -316,7 +358,9 @@ summary:focus-visible {
   height: 16px !important;
   color: var(--muted);
   stroke: var(--muted);
-  transition: color 160ms ease, stroke 160ms ease;
+  transition:
+    color 160ms ease,
+    stroke 160ms ease;
 }
 
 .primary,
@@ -334,22 +378,56 @@ summary:focus-visible {
 }
 
 .primary {
-  background: var(--text);
-  color: var(--surface);
+  background: var(--btn-dark);
+  color: var(--color-white);
   border-radius: var(--control-radius);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
   font-weight: 500;
 }
 
 .primary:hover,
 a.primary:hover {
+  background: var(--btn-hover-dark) !important;
+  color: var(--color-white) !important;
+  box-shadow: var(--card-shadow);
+  filter: none;
+}
+
+.secondary {
+  background: var(--btn-dark);
+  color: var(--color-white);
+  border-radius: var(--control-radius);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+}
+
+.secondary:hover {
+  background: var(--btn-hover-dark);
+  color: var(--color-white);
+  box-shadow: var(--card-shadow);
+}
+
+.dark .primary {
+  background: var(--text);
+  color: var(--surface);
+}
+
+.dark .primary:hover,
+.dark a.primary:hover {
   background: var(--text) !important;
   color: var(--surface) !important;
   filter: brightness(0.93);
 }
 
-.secondary {
+.dark .secondary {
   background: var(--surface);
-  border-radius: var(--control-radius);
+  color: var(--text);
+}
+
+.dark .secondary:hover {
+  background: var(--extra-soft);
+  color: var(--text);
 }
 
 a.secondary.no-bookmark-browse-btn {
@@ -450,7 +528,9 @@ a.secondary.no-bookmark-browse-btn {
   background: var(--surface) !important;
   box-shadow: var(--card-shadow);
   gap: 0;
-  transition: background-color 0.3s ease-in-out, box-shadow 0.3s ease-in-out;
+  transition:
+    background-color 0.3s ease-in-out,
+    box-shadow 0.3s ease-in-out;
 }
 
 .upload-zone:hover,
@@ -512,14 +592,19 @@ a.secondary.no-bookmark-browse-btn {
   color: #ffffff !important;
   border: none;
   box-shadow: var(--card-shadow);
-  transition: background-color 0.3s ease-in-out, color 0.3s ease-in-out, border-color 0.3s ease-in-out !important;
+  transition:
+    background-color 0.3s ease-in-out,
+    color 0.3s ease-in-out,
+    border-color 0.3s ease-in-out !important;
 }
 
 .browse-button svg,
 .upload-zone .browse-button svg {
   color: #ffffff;
   stroke: currentColor;
-  transition: color 0.3s ease-in-out, stroke 0.3s ease-in-out !important;
+  transition:
+    color 0.3s ease-in-out,
+    stroke 0.3s ease-in-out !important;
 }
 
 .browse-button:hover,
@@ -534,10 +619,6 @@ a.secondary.no-bookmark-browse-btn {
   color: #ffffff !important;
   stroke: #ffffff !important;
 }
-
-
-
-
 
 .upload-buttons {
   display: flex;
@@ -571,7 +652,10 @@ a.secondary.no-bookmark-browse-btn {
   color: #fff;
   background: var(--btn-dark);
   box-shadow: var(--card-shadow);
-  transition: background-color 0.3s ease-in-out, color 0.3s ease-in-out, border-color 0.3s ease-in-out !important;
+  transition:
+    background-color 0.3s ease-in-out,
+    color 0.3s ease-in-out,
+    border-color 0.3s ease-in-out !important;
 }
 
 .dark .upload-zone .upload-buttons>button {
@@ -767,6 +851,8 @@ a.secondary.no-bookmark-browse-btn {
 
 .dark .bookmark-navigation button.icon-button {
   background: var(--soft);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
 }
 
 .dark .bookmark-navigation button.icon-button:hover {
@@ -936,7 +1022,8 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 :root.dark .bookmark-tabs {
-  background: #1c1d21;
+  background: var(--soft);
+  box-shadow: var(--card-shadow) !important;
 }
 
 .bookmark-tab-button {
@@ -954,7 +1041,11 @@ a.secondary.no-bookmark-browse-btn {
   cursor: pointer;
   line-height: 1.2;
   box-shadow: none !important;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 :root.dark .bookmark-tab-button {
@@ -980,7 +1071,7 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 :root.dark .bookmark-tab-button[aria-selected='true'] {
-  background: #2b2c31 !important;
+  background: var(--extra-soft) !important;
   border: none;
   color: #ffffff !important;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
@@ -1126,7 +1217,9 @@ a.secondary.no-bookmark-browse-btn {
   box-shadow: var(--card-shadow);
   content-visibility: auto;
   contain-intrinsic-size: auto 350px auto 175px;
-  transition: box-shadow 0.22s ease, background-color 0.22s ease;
+  transition:
+    box-shadow 0.22s ease,
+    background-color 0.22s ease;
 }
 
 .manga-card:hover,
@@ -1287,7 +1380,9 @@ a.secondary.no-bookmark-browse-btn {
   padding: 3px 6px;
   margin-left: -6px;
   border-radius: 5px;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
   user-select: none;
 }
 
@@ -1363,7 +1458,9 @@ a.secondary.no-bookmark-browse-btn {
   padding: 4px;
   border-radius: 5px;
   line-height: 1;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .manga-bookmark-btn:hover,
@@ -1393,7 +1490,9 @@ a.secondary.no-bookmark-browse-btn {
   padding: 4px 8px;
   margin-left: -8px;
   border-radius: 5px;
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .manga-info-btn:hover,
@@ -1443,7 +1542,9 @@ a.secondary.no-bookmark-browse-btn {
 
 .card-menu summary svg {
   grid-area: 1 / 1;
-  transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
+  transition:
+    opacity 0.3s ease-in-out,
+    transform 0.3s ease-in-out;
 }
 
 .card-menu .card-menu-close {
@@ -1471,7 +1572,9 @@ a.secondary.no-bookmark-browse-btn {
   padding: 4px;
   border-radius: 5px;
   color: var(--muted);
-  transition: color 0.15s ease, background-color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease;
 }
 
 .manga-card-bottom .card-menu summary:hover,
@@ -1541,7 +1644,12 @@ a.secondary.no-bookmark-browse-btn {
 button.danger-text,
 .menu-popover button.danger-text,
 .danger-text {
-  transition: opacity 160ms ease, background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  transition:
+    opacity 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 .bookmark-card .bookmark-remove:hover,
@@ -1707,7 +1815,10 @@ input[type='number'] {
 select {
   outline: none !important;
   box-shadow: none !important;
-  transition: border-color 0.35s ease, border-width 0.35s ease, padding 0.35s ease;
+  transition:
+    border-color 0.35s ease,
+    border-width 0.35s ease,
+    padding 0.35s ease;
 }
 
 select:hover {
@@ -1783,7 +1894,9 @@ input[type='checkbox'] {
   padding: 9px 12px;
   font-size: 16px;
   color: var(--muted);
-  transition: color 0.35s, border-color 0.35s;
+  transition:
+    color 0.35s,
+    border-color 0.35s;
 }
 
 .settings-tabs button[aria-selected='true'] {
@@ -2081,7 +2194,9 @@ kbd {
   background: var(--surface);
   color: var(--text);
   font-size: 16px;
-  transition: border-color 0.35s ease, background-color 0.35s ease;
+  transition:
+    border-color 0.35s ease,
+    background-color 0.35s ease;
 }
 
 .import-options {
@@ -2405,7 +2520,9 @@ kbd {
   margin: 0 auto;
   padding: 0;
   display: block;
-  width: min(100%, calc(var(--reading-width) * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
+  width: min(100%,
+      calc(var(--reading-width) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
   overflow: hidden;
   background: var(--surface);
   contain: layout paint;
@@ -2423,7 +2540,9 @@ kbd {
 
 .layout-height .reader-page,
 .reader-single.layout-auto .reader-page {
-  width: min(100%, calc(100dvh * var(--page-ratio) * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
+  width: min(100%,
+      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
 }
 
 .reader-page img {
@@ -2540,7 +2659,9 @@ kbd {
   gap: 9px;
   background: color-mix(in srgb, var(--surface) 96%, transparent);
   backdrop-filter: blur(10px);
-  transition: opacity 0.35s ease, transform 0.35s ease;
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
   font-size: 16px;
 }
 
@@ -2765,7 +2886,9 @@ kbd {
   border-radius: 7px;
   margin: 0;
   box-shadow: none;
-  background: linear-gradient(to right, var(--accent) 0 var(--progress-fill), var(--line) var(--progress-fill) 100%);
+  background: linear-gradient(to right,
+      var(--accent) 0 var(--progress-fill),
+      var(--line) var(--progress-fill) 100%);
   cursor: pointer;
   touch-action: none;
 }
@@ -2951,7 +3074,7 @@ kbd {
   transform-origin: left;
 }
 
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(:has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
   opacity: 1;
 }
 
@@ -2962,10 +3085,28 @@ kbd {
   min-width: 0;
   max-width: 100%;
   padding: 7px 10px;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--btn-dark);
+  color: var(--color-white);
   cursor: pointer;
   text-align: left;
+  box-shadow: var(--card-shadow) !important;
+  transition: var(--transition);
+}
+
+.dropdown-trigger:not(:disabled):hover {
+  background: var(--btn-hover-dark);
+  color: var(--color-white);
+  box-shadow: var(--card-shadow);
+}
+
+.dark .dropdown-trigger {
+  background: var(--soft);
+  color: var(--text);
+}
+
+.dark .dropdown-trigger:not(:disabled):hover {
+  background: var(--extra-soft);
+  color: var(--text);
 }
 
 .dropdown-trigger>span:first-child {
@@ -2979,6 +3120,10 @@ kbd {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  color: inherit;
+}
+
+.dark .dropdown-chevron {
   color: var(--muted);
 }
 
@@ -3023,7 +3168,7 @@ kbd {
 }
 
 .dropdown-item[data-highlighted] {
-  background: var(--soft);
+  background: var(--extra-soft);
   color: var(--text);
   outline: none;
 }
@@ -3183,7 +3328,9 @@ kbd {
   box-shadow: var(--card-shadow);
   text-decoration: none;
   overflow-wrap: anywhere;
-  transition: box-shadow 0.3s ease-in-out, background-color 0.3s ease-in-out;
+  transition:
+    box-shadow 0.3s ease-in-out,
+    background-color 0.3s ease-in-out;
 }
 
 .chapter-card:hover,
@@ -3203,7 +3350,9 @@ kbd {
   background: var(--soft);
   color: var(--muted);
   box-shadow: var(--card-shadow);
-  transition: box-shadow 0.3s ease-in-out, background-color 0.3s ease-in-out;
+  transition:
+    box-shadow 0.3s ease-in-out,
+    background-color 0.3s ease-in-out;
 }
 
 .chapter-search:focus-within {
