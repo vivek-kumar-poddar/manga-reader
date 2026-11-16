@@ -42,11 +42,9 @@
   --extra-soft: #e4e4e7;
 
   /* Color-Specific Buttons & Constants */
-  --btn-light-blue: #2953ed;
-  --btn-light: #26262a;
-  --btn-hover-light: #56565a;
+  --btn-default-blue: #2953ed;
   --btn-dark: #38383b;
-  --btn-hover-dark: #121212;
+  --btn-hover: #121212;
   --color-white: #ffffff;
 
   /* Shadow Definitions */
@@ -91,8 +89,8 @@
   --extra-soft: #56565a;
 
   /* Dark Mode Button Mechanics Mapping */
-  --btn-light: #26262a;
-  --btn-hover-dark: #56565a;
+  --btn-default: #26262a;
+  --btn-hover: #56565a;
   --btn-hover-light: #56565a;
   --color-white: #ffffff;
 
@@ -373,7 +371,7 @@ button:not(:disabled):hover,
 summary.icon-button:hover,
 a.icon-button:hover,
 a.secondary:hover {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
   color: var(--color-white);
   box-shadow: var(--card-shadow);
 }
@@ -526,7 +524,7 @@ a.secondary svg,
 
 .primary:hover,
 a.primary:hover {
-  background: var(--btn-hover-dark) !important;
+  background: var(--btn-hover) !important;
   color: var(--color-white) !important;
   box-shadow: var(--card-shadow);
   filter: none;
@@ -541,7 +539,7 @@ a.primary:hover {
 }
 
 .secondary:hover {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
   color: var(--color-white);
   box-shadow: var(--card-shadow);
 }
@@ -737,7 +735,7 @@ button.danger-text:focus-visible svg,
 }
 
 .dropdown-trigger:not(:disabled):hover {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
   color: var(--color-white);
   box-shadow: var(--card-shadow);
 }
@@ -1137,7 +1135,7 @@ input[type='checkbox'] {
 
 .browse-button:hover,
 .upload-zone .browse-button:hover {
-  background-color: var(--btn-hover-dark) !important;
+  background-color: var(--btn-hover) !important;
   color: #ffffff !important;
   filter: none !important;
 }
@@ -1203,7 +1201,7 @@ input[type='checkbox'] {
 
 .upload-zone .upload-buttons>button:hover {
   color: #fff;
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
 }
 
 .support-button {
@@ -1219,7 +1217,7 @@ input[type='checkbox'] {
   gap: 8px;
   border: 0;
   cursor: pointer;
-  background: var(--btn-light-blue);
+  background: var(--btn-default-blue);
   color: var(--color-white);
   padding: 8px 12px;
   border-radius: 7px;
@@ -1233,7 +1231,7 @@ input[type='checkbox'] {
 }
 
 .upload-toggle-btn:hover:not(:disabled) {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
 }
 
 .dark .upload-toggle-btn {
@@ -1864,7 +1862,7 @@ summary.card-menu-trigger svg {
 }
 
 .bookmark-navigation>a:hover {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
 }
 
 .dark .bookmark-navigation>a {
@@ -2310,7 +2308,7 @@ summary.card-menu-trigger svg {
   padding: 0 12px;
   border: none !important;
   border-radius: var(--control-radius);
-  background: var(--btn-light);
+  background: var(--btn-default);
   color: var(--muted);
   box-shadow: var(--card-shadow);
   transition:
@@ -2320,7 +2318,7 @@ summary.card-menu-trigger svg {
 
 .chapter-search:hover,
 .chapter-search:focus-within {
-  background: var(--btn-hover-dark);
+  background: var(--btn-hover);
 }
 
 
