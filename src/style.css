@@ -60,6 +60,7 @@
   color: #28282b;
   --surface: #ffffff;
   --text: #28282b;
+  --btn-light-blue: #2953ed;
   --btn-light: #26262a;
   --btn-hover-light: #56565a;
   --btn-dark: #38383b;
@@ -1133,7 +1134,7 @@ a.secondary.no-bookmark-browse-btn {
   gap: 8px;
   border: 0;
   cursor: pointer;
-  background: var(--btn-dark);
+  background: var(--btn-light-blue);
   color: var(--color-white);
   padding: 8px 12px;
   border-radius: 7px;
