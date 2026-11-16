@@ -1,5 +1,118 @@
-@import 'tailwindcss';
+/* ==========================================================================
+   1. DESIGN SYSTEM: CORE TOKEN DEFINITIONS & DESIGN VARIABLES
+   ========================================================================== */
+
+:root {
+  /* Typography Scale Configuration */
+  --font-size-ui: 15px;
+  --font-size-title: 15px;
+  --font-size-button: 15px;
+  font-size: var(--font-size-ui, 15px);
+
+  /* Font Family Definitions */
+  --font-ui: 'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Instrument Serif', Georgia, serif;
+  font-family: var(--font-ui);
+
+  /* Layout Controls & Alignment */
+  --control-size: 38px;
+  --control-radius: 7px;
+
+  /* Default Light Mode Aesthetics */
+  color-scheme: light;
+  background: #fafafa;
+  color: #28282b;
+
+  /* Surface and Semantic Text Variables */
+  --surface: #ffffff;
+  --text: #28282b;
+  --muted: #737379;
+  --accent: #54545b;
+  --success: var(--text);
+
+  /* UI Separation Lines and Hover States */
+  --line: rgb(0 0 0 / 8%);
+  --line-hover: rgb(0 0 0 / 15%);
+  --line-focus: rgb(0 0 0 / 30%);
+
+  /* Soft Background Fill Variables */
+  --soft: #f3f3f4;
+  --extra-soft: #e4e4e7;
+
+  /* Color-Specific Buttons & Constants */
+  --btn-light-blue: #2953ed;
+  --btn-light: #26262a;
+  --btn-hover-light: #56565a;
+  --btn-dark: #38383b;
+  --btn-hover-dark: #121212;
+  --color-white: #ffffff;
+
+  /* Shadow Definitions */
+  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
+  --card-hover-shadow: 0 4px 14px -1px rgba(0, 0, 0, 0.09), 0 2px 5px -1px rgba(0, 0, 0, 0.06);
+  --floating-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06);
+  --shadow: var(--card-shadow);
+
+  /* Animation / Global Transition Mechanics */
+  --transition:
+    background-color 300ms ease-in-out,
+    border-color 300ms ease-in-out,
+    color 300ms ease-in-out,
+    box-shadow 300ms ease-in-out;
+}
+
+/* ==========================================================================
+   2. THEME ADAPTATION: DARK MODE VARIANTS
+   ========================================================================== */
+
 @custom-variant dark (&:where(.dark, .dark *));
+
+:root.dark,
+.dark {
+  /* Dark Mode Aesthetic Configurations */
+  color-scheme: dark;
+  background: #171719;
+  color: #e9e9ec;
+
+  /* Dark Mode Surfaces and Semantic Text */
+  --surface: #212124;
+  --text: #e9e9ec;
+  --muted: #a3a3ad;
+  --accent: #b7b7c0;
+  --success: var(--text);
+
+  /* Dark Mode Specific Lines */
+  --line: rgb(255 255 255 / 8%);
+  --line-hover: rgb(255 255 255 / 15%);
+  --line-focus: rgb(255 255 255 / 30%);
+
+  /* Dark Mode Fills */
+  --soft: #26262a;
+  --extra-soft: #56565a;
+
+  /* Dark Mode Button Mechanics Mapping */
+  --btn-light: #26262a;
+  --btn-hover-light: #56565a;
+  --color-white: #ffffff;
+
+  /* Dark Mode Shadows */
+  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.35), 0 1px 2px -1px rgba(0, 0, 0, 0.25);
+  --card-hover-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
+  --floating-shadow: 0 14px 36px -4px rgba(0, 0, 0, 0.55), 0 4px 12px -2px rgba(0, 0, 0, 0.35);
+  --shadow: var(--card-shadow);
+
+  --transition:
+    background-color 300ms ease-in-out,
+    border-color 300ms ease-in-out,
+    color 300ms ease-in-out,
+    box-shadow 300ms ease-in-out;
+}
+
+/* ==========================================================================
+   3. TAILWIND DEPENDENCY & TYPOGRAPHY SYSTEM (@FONT-FACE / HEADINGS)
+   ========================================================================== */
+
+@import 'tailwindcss';
 
 @font-face {
   font-family: 'Instrument Serif';
@@ -33,84 +146,138 @@
   font-display: swap;
 }
 
-.header-wrap {
-  width: 100%;
-  margin: 0 auto;
-  background: var(--surface);
-  display: flex;
-  float: none;
-  text-align: center;
-  align-items: center;
-  justify-content: space-around;
-  box-shadow: var(--card-shadow);
+/* Typography Hierarchy Setup */
+h1,
+h2,
+h3,
+p {
+  margin: 0;
 }
 
-:root {
-  --font-size-ui: 15px;
-  --font-size-title: 15px;
-  --font-size-button: 15px;
-  font-size: var(--font-size-ui, 15px);
-  --font-ui:
-    'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', sans-serif;
-  --font-display: 'Instrument Serif', Georgia, serif;
+h1,
+h2,
+h3,
+.brand,
+.page-heading h1,
+.manga-info h3,
+.manga-card h3,
+.manga-overview-info h1,
+.reader-title,
+.bookmark-card h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+.settings-panel h2,
+.settings-panel h3,
+.settings-tab-body section h3 {
   font-family: var(--font-ui);
-  color-scheme: light;
-  background: #fafafa;
-  color: #28282b;
-  --surface: #ffffff;
-  --text: #28282b;
-  --btn-light-blue: #2953ed;
-  --btn-light: #26262a;
-  --btn-hover-light: #56565a;
-  --btn-dark: #38383b;
-  --btn-hover-dark: #121212;
-  --color-white: #ffffff;
-  --muted: #737379;
-  --line: rgb(0 0 0 / 8%);
-  --line-hover: rgb(0 0 0 / 15%);
-  --line-focus: rgb(0 0 0 / 30%);
-  --soft: #f3f3f4;
-  --extra-soft: #e4e4e7;
-  --accent: #54545b;
-  --success: var(--text);
-  --control-size: 38px;
-  --control-radius: 7px;
-  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.08), 0 1px 2px -1px rgba(0, 0, 0, 0.08);
-  --card-hover-shadow: 0 4px 14px -1px rgba(0, 0, 0, 0.09), 0 2px 5px -1px rgba(0, 0, 0, 0.06);
-  --floating-shadow: 0 10px 30px -4px rgba(0, 0, 0, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.06);
-  --shadow: var(--card-shadow);
-  --transition:
-    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
-    box-shadow 300ms ease-in-out;
+  font-weight: 600;
 }
 
-:root.dark,
-.dark {
-  color-scheme: dark;
-  background: #171719;
-  color: #e9e9ec;
-  --surface: #212124;
-  --text: #e9e9ec;
-  --muted: #a3a3ad;
-  --btn-light: #26262a;
-  --btn-hover-light: #56565a;
-  --color-white: #ffffff;
-  --line: rgb(255 255 255 / 8%);
-  --line-hover: rgb(255 255 255 / 15%);
-  --line-focus: rgb(255 255 255 / 30%);
-  --soft: #26262a;
-  --extra-soft: #56565a;
-  --accent: #b7b7c0;
-  --success: var(--text);
-  --card-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.35), 0 1px 2px -1px rgba(0, 0, 0, 0.25);
-  --card-hover-shadow: 0 4px 16px -2px rgba(0, 0, 0, 0.45), 0 2px 6px -1px rgba(0, 0, 0, 0.3);
-  --floating-shadow: 0 14px 36px -4px rgba(0, 0, 0, 0.55), 0 4px 12px -2px rgba(0, 0, 0, 0.35);
-  --shadow: var(--card-shadow);
-  --transition:
-    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
-    box-shadow 300ms ease-in-out;
+h1 {
+  font-size: 50px;
+  letter-spacing: -0.5px;
+  line-height: 1.1;
 }
+
+h2 {
+  font-size: 30px;
+  letter-spacing: -0.3px;
+}
+
+h3 {
+  font-size: 24px;
+}
+
+p {
+  line-height: 1.6;
+}
+
+/* Global Font UI Metric Scaling Enforcements */
+body,
+input,
+select,
+textarea,
+.settings-panel,
+.tabbed-modal.settings-panel,
+.modal-heading>p,
+.settings-tab-body section p,
+.settings-tab-body label,
+.settings-tab-body select,
+.settings-tab-body input,
+.reader-bar,
+.reader-top,
+.reader-bottom,
+.reader-bottom .current-page-input,
+.reader-bottom .total-page-count,
+.reader-top select,
+.reader-bottom select,
+.header-selectors select,
+.bar-popover-panel,
+.bar-popover-panel label,
+.library-footer,
+.library-footer span,
+.library-footer a,
+.bookmark-navigation,
+.bookmark-navigation>a,
+.bookmark-navigation button,
+.bookmark-tabs,
+.bookmark-tab-button,
+.bookmarks-toolbar,
+.shelf-sort,
+.shelf-sort>span,
+.shelf-sort.bookmark-sort,
+.shelf-sort.bookmark-sort>span,
+.manga-card-date-badge,
+.manga-card-date,
+.space-tooltip,
+.manga-bookmark-btn,
+.manga-info-btn,
+.relink-needed-btn,
+.manga-card-bottom .card-menu summary,
+summary.card-menu-trigger,
+.card-menu summary,
+.menu-popover,
+.menu-popover button {
+  font-size: var(--font-size-ui, 15px) !important;
+}
+
+.modal-heading .dialog-heading h2,
+.settings-panel h3,
+.settings-tab-body section h3,
+.reader-title,
+.organized-bar .reader-title,
+.bar-popover-panel h3,
+.manga-info h3,
+.bookmark-card h3 {
+  font-size: var(--font-size-title, 15px) !important;
+}
+
+/* Form Semantic Element Weights */
+label,
+.label,
+.settings-tab-body label,
+.settings-panel label,
+.bar-popover-panel label {
+  font-family: var(--font-ui);
+  font-weight: 700;
+}
+
+option,
+.dropdown-item,
+select,
+label select,
+label input,
+label textarea,
+label .dropdown-trigger {
+  font-family: var(--font-ui);
+  font-weight: 400;
+}
+
+/* ==========================================================================
+   4. BASE ELEMENTS & RESET RULES
+   ========================================================================== */
 
 * {
   box-sizing: border-box;
@@ -169,52 +336,23 @@ svg {
   flex-shrink: 0;
 }
 
-h1,
-h2,
-h3,
-p {
-  margin: 0;
+/* kbd Styling Rules */
+kbd {
+  font-family: inherit;
+  font-size: 16px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  background: var(--soft);
+  border-radius: 4px;
+  padding: 2px 5px;
+  white-space: nowrap;
+  display: inline-block;
+  line-height: 1.5;
 }
 
-h1,
-h2,
-h3,
-.brand,
-.page-heading h1,
-.manga-info h3,
-.manga-card h3,
-.manga-overview-info h1,
-.reader-title,
-.bookmark-card h3 {
-  font-family: var(--font-display);
-  font-weight: 400;
-}
-
-.settings-panel h2,
-.settings-panel h3,
-.settings-tab-body section h3 {
-  font-family: var(--font-ui);
-  font-weight: 600;
-}
-
-h1 {
-  font-size: 50px;
-  letter-spacing: -0.5px;
-  line-height: 1.1;
-}
-
-h2 {
-  font-size: 30px;
-  letter-spacing: -0.3px;
-}
-
-h3 {
-  font-size: 24px;
-}
-
-p {
-  line-height: 1.6;
-}
+/* ==========================================================================
+   5. GLOBAL ACTIONS SYSTEM: BUTTON CONTROLS & INTERACTION GEOMETRIES
+   ========================================================================== */
 
 /* Shared control geometry & interaction states */
 button,
@@ -241,6 +379,7 @@ a.secondary:hover {
   box-shadow: var(--card-shadow);
 }
 
+/* Theme Override Layers for Global Buttons */
 .dark button,
 .dark .dropdown-trigger,
 .dark summary.icon-button,
@@ -262,7 +401,7 @@ a.secondary:hover {
   color: var(--text);
 }
 
-
+/* Accessible Focus States */
 button:focus-visible,
 summary.icon-button:focus-visible,
 a.icon-button:focus-visible {
@@ -278,12 +417,62 @@ summary:focus-visible {
   outline-offset: 3px;
 }
 
-.dropdown-trigger:focus-visible,
-.dropdown-trigger[data-state='open'] {
-  border-color: var(--line-focus) !important;
-  outline: none;
+/* Action Utility Typography Definitions */
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
+.dropdown-trigger,
+.dropdown-trigger span,
+.shelf-sort .dropdown-trigger,
+.shelf-sort .dropdown-trigger span,
+.shelf-sort.bookmark-sort .dropdown-trigger,
+.shelf-sort.bookmark-sort .dropdown-trigger span,
+.dropdown-content,
+.dropdown-item,
+.dropdown-item span,
+option,
+select,
+.chapter-select,
+.zoom-trigger,
+.bar-popover>summary,
+summary.icon-button:not(.card-menu-trigger),
+.icon-button,
+a.icon-button,
+a.primary,
+a.secondary,
+.primary,
+.secondary,
+.browse-button,
+.support-button,
+.settings-tabs button,
+.bar-popover-panel button,
+.reader-bottom .zoom-trigger,
+.organized-bar .chapter-navigation .chapter-select {
+  font-size: var(--font-size-button, 15px) !important;
+  font-weight: 500 !important;
+  text-transform: capitalize;
 }
 
+/* Scalable Svg Asset Icons Config inside Generic Buttons */
+button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) svg,
+.dropdown-trigger svg,
+.dropdown-chevron svg,
+.dropdown-check svg,
+.dropdown-scroll svg,
+.zoom-trigger svg,
+.bar-popover>summary svg,
+.icon-button svg,
+summary.icon-button:not(.card-menu-trigger) svg,
+a.icon-button svg,
+a.primary svg,
+a.secondary svg,
+.primary svg,
+.secondary svg,
+.browse-button svg,
+.support-button svg {
+  width: calc(var(--font-size-button, 15px) * 1.15) !important;
+  height: calc(var(--font-size-button, 15px) * 1.15) !important;
+}
+
+/* Icon Buttons Configuration Block */
 .icon-button,
 .organized-bar .icon-button {
   display: inline-flex;
@@ -303,67 +492,16 @@ summary:focus-visible {
   vertical-align: middle;
 }
 
-.header-actions .icon-button {
+/* Text Buttons Reset rule */
+.text-button {
+  display: block;
   background: transparent;
-  transition: var(--transition);
+  border: 0;
+  padding: 9px 0;
+  font-size: 16px;
 }
 
-.header-actions .icon-button:hover {
-  background: var(--extra-soft);
-}
-
-.bookmark-navigation .icon-button {
-  background: var(--btn-dark);
-  color: var(--color-white) !important;
-  opacity: 1;
-  box-shadow: var(--card-shadow);
-  transition: var(--transition) !important;
-}
-
-.bookmark-navigation .icon-button:hover {
-  background: var(--btn-hover-dark);
-  color: var(--color-white) !important;
-  opacity: 1;
-  box-shadow: var(--card-shadow);
-}
-
-.close-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px !important;
-  height: 32px !important;
-  min-width: 32px !important;
-  min-height: 32px !important;
-  max-width: 32px;
-  max-height: 32px;
-  flex: 0 0 32px !important;
-  aspect-ratio: 1;
-  padding: 0 !important;
-  border: 1px solid var(--line) !important;
-  border-radius: var(--control-radius);
-  background: var(--surface);
-  color: var(--muted);
-  cursor: pointer;
-  vertical-align: middle;
-  transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.close-btn svg,
-.close-btn svg.lucide.lucide-x {
-  width: 16px !important;
-  height: 16px !important;
-  color: var(--muted);
-  stroke: var(--muted);
-  transition:
-    color 160ms ease,
-    stroke 160ms ease;
-}
-
+/* Specific Buttons Layout Architectures */
 .primary,
 .secondary,
 .browse-button,
@@ -435,15 +573,374 @@ a.secondary.no-bookmark-browse-btn {
   margin: 32px auto 0;
 }
 
-.text-button {
-  display: block;
-  background: transparent;
-  border: 0;
-  padding: 9px 0;
-  font-size: 16px;
+/* Close/Dismiss Structural Action Elements */
+.close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+  max-width: 32px;
+  max-height: 32px;
+  flex: 0 0 32px !important;
+  aspect-ratio: 1;
+  padding: 0 !important;
+  border: 1px solid var(--line) !important;
+  border-radius: var(--control-radius);
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  vertical-align: middle;
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
 }
 
-/* Header & Library Layout */
+.close-btn svg,
+.close-btn svg.lucide.lucide-x {
+  width: 16px !important;
+  height: 16px !important;
+  color: var(--muted);
+  stroke: var(--muted);
+  transition:
+    color 160ms ease,
+    stroke 160ms ease;
+}
+
+/* Danger Structural Actions Theme Control */
+.danger-text {
+  color: #b64545 !important;
+}
+
+.dark .danger-text {
+  color: #ff9d9d !important;
+}
+
+.bookmark-card .bookmark-remove,
+.bookmark-remove,
+.close-btn,
+button.danger-text,
+.menu-popover button.danger-text,
+.danger-text {
+  transition:
+    opacity 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.bookmark-card .bookmark-remove:hover,
+.bookmark-card .bookmark-remove:focus-visible,
+.bookmark-remove:hover,
+.bookmark-remove:focus-visible,
+.close-btn:hover,
+.close-btn:focus-visible,
+button.danger-text:hover,
+button.danger-text:focus-visible,
+.menu-popover button.danger-text:hover,
+.menu-popover button.danger-text:focus-visible {
+  background: #dc2626 !important;
+  border-color: #991b1b !important;
+  color: #ffffff !important;
+}
+
+.bookmark-card .bookmark-remove:hover svg,
+.bookmark-card .bookmark-remove:focus-visible svg,
+.bookmark-remove:hover svg,
+.bookmark-remove:focus-visible svg,
+.close-btn:hover svg,
+.close-btn:focus-visible svg,
+.close-btn:hover svg.lucide.lucide-x,
+.close-btn:focus-visible svg.lucide.lucide-x,
+button.danger-text:hover svg,
+button.danger-text:focus-visible svg,
+.menu-popover button.danger-text:hover svg,
+.menu-popover button.danger-text:focus-visible svg {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+/* Dark Mode Danger Context State Refinement */
+:root.dark .bookmark-card .bookmark-remove:hover,
+:root.dark .bookmark-card .bookmark-remove:focus-visible,
+:root.dark .bookmark-remove:hover,
+:root.dark .bookmark-remove:focus-visible,
+:root.dark .close-btn:hover,
+:root.dark .close-btn:focus-visible,
+:root.dark button.danger-text:hover,
+:root.dark button.danger-text:focus-visible,
+:root.dark .menu-popover button.danger-text:hover,
+:root.dark .menu-popover button.danger-text:focus-visible,
+.dark .bookmark-card .bookmark-remove:hover,
+.dark .bookmark-card .bookmark-remove:focus-visible,
+.dark .bookmark-remove:hover,
+.dark .bookmark-remove:focus-visible,
+.dark .close-btn:hover,
+.dark .close-btn:focus-visible,
+.dark button.danger-text:hover,
+.dark button.danger-text:focus-visible,
+.dark .menu-popover button.danger-text:hover,
+.dark .menu-popover button.danger-text:focus-visible {
+  background: #b91c1c !important;
+  border-color: #7f1d1d !important;
+  color: #ffffff !important;
+}
+
+:root.dark .bookmark-card .bookmark-remove:hover svg,
+:root.dark .bookmark-card .bookmark-remove:focus-visible svg,
+:root.dark .bookmark-remove:hover svg,
+:root.dark .bookmark-remove:focus-visible svg,
+:root.dark .close-btn:hover svg,
+:root.dark .close-btn:focus-visible svg,
+:root.dark .close-btn:hover svg.lucide.lucide-x,
+:root.dark .close-btn:focus-visible svg.lucide.lucide-x,
+:root.dark button.danger-text:hover svg,
+:root.dark button.danger-text:focus-visible svg,
+:root.dark .menu-popover button.danger-text:hover svg,
+:root.dark .menu-popover button.danger-text:focus-visible svg,
+.dark .bookmark-card .bookmark-remove:hover svg,
+.dark .bookmark-card .bookmark-remove:focus-visible svg,
+.dark .bookmark-remove:hover svg,
+.dark .bookmark-remove:focus-visible svg,
+.dark .close-btn:hover svg,
+.dark .close-btn:focus-visible svg,
+.dark .close-btn:hover svg.lucide.lucide-x,
+.dark .close-btn:focus-visible svg.lucide.lucide-x,
+.dark button.danger-text:hover svg,
+.dark button.danger-text:focus-visible svg,
+.dark .menu-popover button.danger-text:hover svg,
+.dark .menu-popover button.danger-text:focus-visible svg {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+/* ==========================================================================
+   6. GLOBAL SELECTION COMPONENTS & POPULAR DROPDOWNS (RADIX STYLES)
+   ========================================================================== */
+
+.dropdown-trigger {
+  justify-content: space-between;
+  gap: 9px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 7px 10px;
+  background: var(--btn-dark);
+  color: var(--color-white);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: var(--card-shadow) !important;
+  transition: var(--transition);
+}
+
+.dropdown-trigger:not(:disabled):hover {
+  background: var(--btn-hover-dark);
+  color: var(--color-white);
+  box-shadow: var(--card-shadow);
+}
+
+.dark .dropdown-trigger {
+  background: var(--soft);
+  color: var(--text);
+}
+
+.dark .dropdown-trigger:not(:disabled):hover {
+  background: var(--extra-soft);
+  color: var(--text);
+}
+
+.dropdown-trigger>span:first-child {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dropdown-chevron {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: inherit;
+}
+
+.dark .dropdown-chevron {
+  color: var(--muted);
+}
+
+.dropdown-trigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.dropdown-trigger:focus-visible,
+.dropdown-trigger[data-state='open'] {
+  border-color: var(--line-focus) !important;
+  outline: none;
+}
+
+/* Proportional Sizing Layer for Special Form Icons */
+.dropdown-trigger .dropdown-chevron svg,
+.dropdown-chevron svg,
+.dropdown-check svg,
+.dropdown-scroll svg {
+  width: calc(var(--font-size-button, 15px) * 0.933) !important;
+  height: calc(var(--font-size-button, 15px) * 0.933) !important;
+}
+
+/* Dropdown Flyout Overlays */
+.dropdown-content {
+  z-index: 110;
+  min-width: var(--radix-select-trigger-width);
+  max-width: min(420px, calc(100vw - 20px));
+  max-height: min(320px, var(--radix-select-content-available-height));
+  background: var(--surface);
+  color: var(--text);
+  border: 0 !important;
+  border-radius: 7px;
+  box-shadow: var(--floating-shadow);
+  overflow: hidden;
+  transform-origin: var(--radix-select-content-transform-origin);
+  animation: dropdown-in 0.12s ease-out;
+}
+
+.dropdown-viewport {
+  padding: 5px;
+  max-height: 300px;
+  overscroll-behavior: contain;
+}
+
+.dropdown-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: calc(var(--font-size-button, 15px) * 2.1) !important;
+  padding: 8px 31px 8px 10px;
+  border-radius: 5px;
+  line-height: 1.4;
+  cursor: pointer;
+  user-select: none;
+  outline: none;
+  overflow-wrap: anywhere;
+}
+
+.dropdown-item[data-highlighted] {
+  background: var(--extra-soft);
+  color: var(--text);
+  outline: none;
+}
+
+.dropdown-item[data-state='checked'] {
+  font-weight: 400;
+}
+
+.dropdown-item[data-disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.dropdown-check {
+  position: absolute;
+  right: 10px;
+  display: flex;
+  color: var(--text);
+}
+
+.dropdown-scroll {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  background: var(--surface);
+  color: var(--muted);
+}
+
+@keyframes dropdown-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Dropdown Context-Specific Adjustments */
+.settings-panel label>.dropdown-trigger {
+  max-width: 200px;
+}
+
+.import-choice>.dropdown-trigger {
+  max-width: 65%;
+}
+
+.import-options .dropdown-trigger {
+  width: 100%;
+}
+
+/* Standard Controls Structure (Select/Inputs) */
+select,
+input[type='number'] {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 16px;
+  max-width: 100%;
+  min-height: 35px;
+}
+
+select {
+  outline: none !important;
+  box-shadow: none !important;
+  transition:
+    border-color 0.35s ease,
+    border-width 0.35s ease,
+    padding 0.35s ease;
+}
+
+select:hover {
+  border-color: var(--muted);
+}
+
+select:focus,
+select:focus-visible,
+select:active {
+  outline: none !important;
+  box-shadow: none !important;
+  border-color: var(--accent);
+  border-width: 2px;
+  padding: 6px 8px;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+  width: 17px;
+  height: 17px;
+}
+
+/* ==========================================================================
+   7. LIBRARY MODULE: HEADERS, GENERAL LAYOUTS & FOOTERS
+   ========================================================================== */
+
+.header-wrap {
+  width: 100%;
+  margin: 0 auto;
+  background: var(--surface);
+  display: flex;
+  float: none;
+  text-align: center;
+  align-items: center;
+  justify-content: space-around;
+  box-shadow: var(--card-shadow);
+}
+
 .library-header {
   border-bottom: 1px solid rgb(255 255 255 / 0%);
   background: var(--surface);
@@ -478,6 +975,15 @@ a.secondary.no-bookmark-browse-btn {
   gap: 2px;
 }
 
+.header-actions .icon-button {
+  background: transparent;
+  transition: var(--transition);
+}
+
+.header-actions .icon-button:hover {
+  background: var(--extra-soft);
+}
+
 .button-row {
   margin: 16px 0;
   flex-wrap: wrap;
@@ -506,6 +1012,15 @@ a.secondary.no-bookmark-browse-btn {
   margin-bottom: 31px;
 }
 
+.page-heading.library-page-heading {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  flex-wrap: wrap;
+}
+
 .eyebrow {
   font-size: 16px;
   letter-spacing: 1.8px;
@@ -520,7 +1035,19 @@ a.secondary.no-bookmark-browse-btn {
   font-size: 16px;
 }
 
-/* Upload Zone */
+.library-footer {
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  margin-top: auto;
+  padding: 22px 0 27px;
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   8. COMPONENT: UPLOAD CONTROLLER DRAG-ZONE
+   ========================================================================== */
+
 .upload-zone {
   color: var(--text);
   min-height: 350px !important;
@@ -586,6 +1113,7 @@ a.secondary.no-bookmark-browse-btn {
   font-size: 16px;
 }
 
+/* Browser Specific Action Components for Uploader */
 .browse-button,
 .upload-zone .browse-button,
 .upload-zone:hover .browse-button:not(:hover) {
@@ -684,7 +1212,77 @@ a.secondary.no-bookmark-browse-btn {
   padding: 10px 15px;
 }
 
-/* Shelf Toolbar & Collection */
+/* Upload Visibility Toggle Layouts */
+.upload-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  cursor: pointer;
+  background: var(--btn-light-blue);
+  color: var(--color-white);
+  padding: 8px 12px;
+  border-radius: 7px;
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+  font-family: inherit;
+  font-weight: bold;
+  font-size: var(--font-size-button, var(--font-size-ui, 15px));
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.upload-toggle-btn:hover:not(:disabled) {
+  background: var(--btn-hover-dark);
+}
+
+.dark .upload-toggle-btn {
+  background: var(--soft);
+  color: var(--color-white);
+}
+
+.dark .upload-toggle-btn:hover:not(:disabled) {
+  background: var(--extra-soft);
+}
+
+.upload-toggle-btn.is-open {
+  background: #c82828;
+  color: var(--color-white, #ffffff);
+}
+
+.upload-toggle-btn.is-open:hover:not(:disabled) {
+  background: #a81f1f;
+}
+
+.dark .upload-toggle-btn.is-open {
+  background: #8f2424;
+  color: var(--color-white, #ffffff);
+}
+
+.dark .upload-toggle-btn.is-open:hover:not(:disabled) {
+  background: #ab2e2e;
+}
+
+.upload-toggle-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.upload-toggle-btn svg {
+  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
+  flex-shrink: 0;
+}
+
+.reduced .upload-toggle-btn {
+  transition: none;
+}
+
+/* ==========================================================================
+   9. COMPONENT: SHELF TOOLBARS & GRID MANAGEMENT
+   ========================================================================== */
+
 .collection-heading {
   display: flex;
   flex-direction: column;
@@ -754,15 +1352,6 @@ a.secondary.no-bookmark-browse-btn {
   margin-top: 3px;
 }
 
-.library-footer {
-  border-top: 1px solid var(--line);
-  display: flex;
-  justify-content: space-between;
-  margin-top: auto;
-  padding: 22px 0 27px;
-  color: var(--muted);
-}
-
 .manga-grid,
 .bookmark-grid,
 .bookmarks-page-content,
@@ -770,436 +1359,10 @@ a.secondary.no-bookmark-browse-btn {
   margin-bottom: 49px;
 }
 
-.library-main.bookmarks-empty {
-  padding-top: 0;
-}
+/* ==========================================================================
+   10. COMPONENT: MANGA MEDIA CARD GRID MODULE
+   ========================================================================== */
 
-.library-main.bookmarks-empty .page-heading {
-  display: none !important;
-}
-
-.library-main.bookmarks-empty .empty-shelf,
-.bookmarks-page-content .empty-shelf {
-  flex: 1;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-}
-
-.library-main.bookmarks-empty .library-footer {
-  margin-top: 0;
-}
-
-.bookmarks-page-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  width: 100%;
-}
-
-/* Bookmarks Section & Cards */
-.bookmark-section {
-  margin: 40px 0;
-}
-
-.bookmark-section-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 18px;
-}
-
-.bookmark-section-heading h2 {
-  font-size: 27px;
-}
-
-.bookmark-navigation {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.bookmark-navigation>a {
-  margin-right: 9px;
-  background: var(--btn-dark);
-  color: var(--color-white);
-  padding: 8px 12px;
-  border-radius: 7px;
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  font-weight: bold;
-}
-
-.bookmark-navigation>a:hover {
-  background: var(--btn-hover-dark);
-}
-
-.dark .bookmark-navigation>a {
-  background: var(--soft);
-}
-
-.dark .bookmark-navigation>a:hover {
-  background: var(--extra-soft);
-}
-
-.bookmark-navigation svg {
-  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
-}
-
-.dark .bookmark-navigation button.icon-button {
-  background: var(--soft);
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-}
-
-.dark .bookmark-navigation button.icon-button:hover {
-  background: var(--extra-soft);
-}
-
-.bookmark-track {
-  display: flex;
-  gap: 18px;
-  overflow-x: auto;
-  padding: 6px 3px 16px;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  scrollbar-color: var(--line-hover) transparent;
-  cursor: grab;
-  -ms-overflow-style: none;
-}
-
-.bookmark-track::-webkit-scrollbar {
-  display: none;
-}
-
-.bookmark-track:active {
-  cursor: grabbing;
-}
-
-.bookmark-track:focus-visible {
-  outline: 2px solid var(--line-focus);
-  outline-offset: 4px;
-  border-radius: 9px;
-}
-
-.bookmark-track .bookmark-card {
-  flex: 0 0 156px;
-}
-
-.bookmark-card {
-  position: relative;
-  min-width: 0;
-  background: var(--surface);
-  border-radius: 9px;
-  box-shadow: var(--card-shadow);
-  transition: box-shadow 180ms ease;
-}
-
-.bookmark-card:hover {
-  box-shadow: var(--card-hover-shadow);
-}
-
-.bookmark-open {
-  display: block;
-  border-radius: inherit;
-  overflow: hidden;
-  user-select: none;
-}
-
-.bookmark-thumbnail {
-  aspect-ratio: 3/4;
-  width: 100%;
-  background: var(--soft);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-  overflow: hidden;
-}
-
-.bookmark-thumbnail img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.bookmark-caption {
-  padding: 12px;
-}
-
-.bookmark-caption h3 {
-  font-family: var(--font-display);
-  font-size: 18px !important;
-  font-weight: 400;
-  line-height: 1.4;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bookmark-caption p {
-  font-size: 16px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bookmark-caption-bottom {
-  font-size: 14px;
-  color: var(--muted);
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 15px;
-  gap: 8px;
-}
-
-.bookmark-caption-bottom p {
-  font-size: 14px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin: 0;
-}
-
-.bookmark-page-number {
-  font-size: var(--font-size-ui, 15px);
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.bookmark-card .bookmark-remove {
-  position: absolute;
-  top: 7px;
-  right: 7px;
-  background: var(--surface);
-  --control-size: 32px;
-  opacity: 0;
-  pointer-events: none;
-}
-
-.bookmark-card:hover .bookmark-remove,
-.bookmark-card:focus-within .bookmark-remove {
-  opacity: 0.94;
-  pointer-events: auto;
-}
-
-.bookmark-card .bookmark-remove:hover {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  .bookmark-card .bookmark-remove {
-    opacity: 0.94;
-    pointer-events: auto;
-  }
-}
-
-.bookmarks-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  margin-bottom: 28px;
-}
-
-.bookmark-tabs {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: #f1f2f5;
-  border: none;
-  padding: 4px;
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
-}
-
-:root.dark .bookmark-tabs {
-  background: var(--soft);
-  box-shadow: var(--card-shadow) !important;
-}
-
-.bookmark-tab-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px !important;
-  border: 1px solid transparent !important;
-  border-radius: 7px;
-  background: transparent !important;
-  color: #6b7280;
-  font-family: var(--font-ui);
-  font-size: var(--font-size-ui, 14px);
-  font-weight: 500;
-  cursor: pointer;
-  line-height: 1.2;
-  box-shadow: none !important;
-  transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease;
-}
-
-:root.dark .bookmark-tab-button {
-  color: #8f96a3;
-}
-
-.bookmark-tab-button:hover {
-  color: var(--text);
-  background: rgba(0, 0, 0, 0.04) !important;
-}
-
-:root.dark .bookmark-tab-button:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.04) !important;
-}
-
-.bookmark-tab-button[aria-selected='true'] {
-  background: #ffffff !important;
-  border-color: rgba(0, 0, 0, 0.06) !important;
-  color: #111827 !important;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
-}
-
-:root.dark .bookmark-tab-button[aria-selected='true'] {
-  background: var(--extra-soft) !important;
-  border: none;
-  color: #ffffff !important;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
-}
-
-.bookmark-tab-count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.2;
-  font-variant-numeric: tabular-nums;
-  padding: 2px 6px;
-  border-radius: 5px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  background: rgba(0, 0, 0, 0.03);
-  color: #6b7280;
-}
-
-:root.dark .bookmark-tab-count {
-  border-color: rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.03);
-  color: #8f96a3;
-}
-
-.bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
-  border-color: rgba(0, 0, 0, 0.14);
-  background: rgba(0, 0, 0, 0.05);
-  color: #111827 !important;
-}
-
-:root.dark .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(0, 0, 0, 0.3);
-  color: #ffffff !important;
-}
-
-.bookmark-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
-  gap: 24px 18px;
-}
-
-/* When No Manga Show Upload Else Hide */
-.page-heading.library-page-heading {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-  flex-wrap: wrap;
-}
-
-.upload-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 0;
-  cursor: pointer;
-  background: var(--btn-light-blue);
-  color: var(--color-white);
-  padding: 8px 12px;
-  border-radius: 7px;
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  font-family: inherit;
-  font-weight: bold;
-  font-size: var(--font-size-button, var(--font-size-ui, 15px));
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.upload-toggle-btn:hover:not(:disabled) {
-  background: var(--btn-hover-dark);
-}
-
-.dark .upload-toggle-btn {
-  background: var(--soft);
-  color: var(--color-white);
-}
-
-.dark .upload-toggle-btn:hover:not(:disabled) {
-  background: var(--extra-soft);
-}
-
-.upload-toggle-btn.is-open {
-  background: #c82828;
-  color: var(--color-white, #ffffff);
-}
-
-.upload-toggle-btn.is-open:hover:not(:disabled) {
-  background: #a81f1f;
-}
-
-.dark .upload-toggle-btn.is-open {
-  background: #8f2424;
-  color: var(--color-white, #ffffff);
-}
-
-.dark .upload-toggle-btn.is-open:hover:not(:disabled) {
-  background: #ab2e2e;
-}
-
-.upload-toggle-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.upload-toggle-btn svg {
-  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  flex-shrink: 0;
-}
-
-.reduced .upload-toggle-btn {
-  transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .upload-toggle-btn {
-    transition: none;
-  }
-}
-
-/* Manga Grid & Cards */
 .manga-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1238,6 +1401,7 @@ a.secondary.no-bookmark-browse-btn {
   cursor: pointer;
 }
 
+/* Manga Thumbnails Base Layer */
 .cover {
   width: 69px;
   height: 94px;
@@ -1337,6 +1501,7 @@ a.secondary.no-bookmark-browse-btn {
   font-variant-numeric: tabular-nums;
 }
 
+/* Internal Progress Indicators */
 .reading-progress {
   height: 4px;
   background: var(--soft);
@@ -1371,6 +1536,7 @@ a.secondary.no-bookmark-browse-btn {
   margin-top: 10px;
 }
 
+/* Calendar Date Badges */
 .manga-card-date-badge {
   position: relative;
   display: inline-flex;
@@ -1404,49 +1570,31 @@ a.secondary.no-bookmark-browse-btn {
   font-variant-numeric: tabular-nums;
 }
 
-.space-tooltip {
-  position: absolute;
-  z-index: 50;
-  padding: 6px 10px;
-  line-height: 1.35;
-  white-space: nowrap;
-  color: var(--text);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
-  pointer-events: none;
-  animation: tooltipFadeIn 0.15s ease;
+/* Svg Control Sizing Layers inside Manga Module */
+.manga-card-calendar-icon,
+.manga-card-date-badge svg {
+  width: calc(var(--font-size-ui, 15px) * 1.05) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.05) !important;
+  flex-shrink: 0;
 }
 
-@keyframes tooltipFadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(2px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.manga-bookmark-btn svg,
+.menu-popover button svg {
+  width: calc(var(--font-size-ui, 15px) * 1.08) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.08) !important;
+  flex-shrink: 0;
 }
 
-.space-tooltip.tooltip-top {
-  bottom: calc(100% + 6px);
+.manga-info-btn svg,
+.card-menu summary svg,
+.manga-card-bottom .card-menu summary svg,
+summary.card-menu-trigger svg {
+  width: calc(var(--font-size-ui, 15px) * 1.15) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.15) !important;
+  flex-shrink: 0;
 }
 
-.space-tooltip.tooltip-bottom {
-  top: calc(100% + 6px);
-}
-
-.space-tooltip.tooltip-align-left {
-  left: 0;
-}
-
-.space-tooltip.tooltip-align-right {
-  right: 0;
-}
-
+/* Bookmark Buttons Management inside Cards */
 .manga-bookmark-btn {
   display: inline-flex;
   align-items: center;
@@ -1522,7 +1670,10 @@ a.secondary.no-bookmark-browse-btn {
   text-decoration: underline;
 }
 
-/* Card & Popover Menus */
+/* ==========================================================================
+   11. COMPONENT: CARD MENU TRIPPLE-DOT & POPOVERS OVERLAYS
+   ========================================================================== */
+
 .card-menu {
   position: relative;
   display: inline-flex;
@@ -1585,6 +1736,7 @@ a.secondary.no-bookmark-browse-btn {
   background: var(--soft);
 }
 
+/* Menu Popover Overlays Architecture */
 .menu-popover {
   position: absolute;
   right: 0;
@@ -1630,114 +1782,1182 @@ a.secondary.no-bookmark-browse-btn {
   background: var(--soft);
 }
 
-/* Delete, Close, and Danger Button States */
-.danger-text {
-  color: #b64545 !important;
+/* Tooltips Context Mechanics */
+.space-tooltip {
+  position: absolute;
+  z-index: 50;
+  padding: 6px 10px;
+  line-height: 1.35;
+  white-space: nowrap;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+  animation: tooltipFadeIn 0.15s ease;
 }
 
-.dark .danger-text {
-  color: #ff9d9d !important;
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-.bookmark-card .bookmark-remove,
-.bookmark-remove,
-.close-btn,
-button.danger-text,
-.menu-popover button.danger-text,
-.danger-text {
+.space-tooltip.tooltip-top {
+  bottom: calc(100% + 6px);
+}
+
+.space-tooltip.tooltip-bottom {
+  top: calc(100% + 6px);
+}
+
+.space-tooltip.tooltip-align-left {
+  left: 0;
+}
+
+.space-tooltip.tooltip-align-right {
+  right: 0;
+}
+
+/* ==========================================================================
+   12. MODULE: BOOKMARKS AREA, FILTERS & HORIZONTAL SCROLL TRACKS
+   ========================================================================== */
+
+.bookmark-section {
+  margin: 40px 0;
+}
+
+.bookmark-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.bookmark-section-heading h2 {
+  font-size: 27px;
+}
+
+/* Bookmark Navigational Anchors Layout */
+.bookmark-navigation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bookmark-navigation>a {
+  margin-right: 9px;
+  background: var(--btn-dark);
+  color: var(--color-white);
+  padding: 8px 12px;
+  border-radius: 7px;
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+  font-weight: bold;
+}
+
+.bookmark-navigation>a:hover {
+  background: var(--btn-hover-dark);
+}
+
+.dark .bookmark-navigation>a {
+  background: var(--soft);
+}
+
+.dark .bookmark-navigation>a:hover {
+  background: var(--extra-soft);
+}
+
+.bookmark-navigation svg {
+  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
+  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
+}
+
+.dark .bookmark-navigation button.icon-button {
+  background: var(--soft);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+}
+
+.dark .bookmark-navigation button.icon-button:hover {
+  background: var(--extra-soft);
+}
+
+/* Horizontal Track Modules */
+.bookmark-track {
+  display: flex;
+  gap: 18px;
+  overflow-x: auto;
+  padding: 6px 3px 16px;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  scrollbar-color: var(--line-hover) transparent;
+  cursor: grab;
+  -ms-overflow-style: none;
+}
+
+.bookmark-track::-webkit-scrollbar {
+  display: none;
+}
+
+.bookmark-track:active {
+  cursor: grabbing;
+}
+
+.bookmark-track:focus-visible {
+  outline: 2px solid var(--line-focus);
+  outline-offset: 4px;
+  border-radius: 9px;
+}
+
+.bookmark-track .bookmark-card {
+  flex: 0 0 156px;
+}
+
+/* Bookmarks Cards Grid Systems */
+.bookmark-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  gap: 24px 18px;
+}
+
+.bookmark-card {
+  position: relative;
+  min-width: 0;
+  background: var(--surface);
+  border-radius: 9px;
+  box-shadow: var(--card-shadow);
+  transition: box-shadow 180ms ease;
+}
+
+.bookmark-card:hover {
+  box-shadow: var(--card-hover-shadow);
+}
+
+.bookmark-open {
+  display: block;
+  border-radius: inherit;
+  overflow: hidden;
+  user-select: none;
+}
+
+.bookmark-thumbnail {
+  aspect-ratio: 3/4;
+  width: 100%;
+  background: var(--soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  overflow: hidden;
+}
+
+.bookmark-thumbnail img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.bookmark-caption {
+  padding: 12px;
+}
+
+.bookmark-caption h3 {
+  font-family: var(--font-display);
+  font-size: 18px !important;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-caption p {
+  font-size: 16px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-caption-bottom {
+  font-size: 14px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 15px;
+  gap: 8px;
+}
+
+.bookmark-caption-bottom p {
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin: 0;
+}
+
+.bookmark-page-number {
+  font-size: var(--font-size-ui, 15px);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Floating Actions Inside Cards */
+.bookmark-card .bookmark-remove {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  background: var(--surface);
+  --control-size: 32px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bookmark-card:hover .bookmark-remove,
+.bookmark-card:focus-within .bookmark-remove {
+  opacity: 0.94;
+  pointer-events: auto;
+}
+
+.bookmark-card .bookmark-remove:hover {
+  opacity: 1;
+}
+
+/* Bookmark Toolbar & Segmentation Tabs Filter */
+.bookmarks-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 28px;
+}
+
+.bookmark-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f1f2f5;
+  border: none;
+  padding: 4px;
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+:root.dark .bookmark-tabs {
+  background: var(--soft);
+  box-shadow: var(--card-shadow) !important;
+}
+
+.bookmark-tab-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px !important;
+  border: 1px solid transparent !important;
+  border-radius: 7px;
+  background: transparent !important;
+  color: #6b7280;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-ui, 14px);
+  font-weight: 500;
+  cursor: pointer;
+  line-height: 1.2;
+  box-shadow: none !important;
   transition:
-    opacity 160ms ease,
     background-color 160ms ease,
-    border-color 160ms ease,
     color 160ms ease,
+    border-color 160ms ease,
     box-shadow 160ms ease;
 }
 
-.bookmark-card .bookmark-remove:hover,
-.bookmark-card .bookmark-remove:focus-visible,
-.bookmark-remove:hover,
-.bookmark-remove:focus-visible,
-.close-btn:hover,
-.close-btn:focus-visible,
-button.danger-text:hover,
-button.danger-text:focus-visible,
-.menu-popover button.danger-text:hover,
-.menu-popover button.danger-text:focus-visible {
-  background: #dc2626 !important;
-  border-color: #991b1b !important;
+:root.dark .bookmark-tab-button {
+  color: #8f96a3;
+}
+
+.bookmark-tab-button:hover {
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.04) !important;
+}
+
+:root.dark .bookmark-tab-button:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.bookmark-tab-button[aria-selected='true'] {
+  background: #ffffff !important;
+  border-color: rgba(0, 0, 0, 0.06) !important;
+  color: #111827 !important;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+:root.dark .bookmark-tab-button[aria-selected='true'] {
+  background: var(--extra-soft) !important;
+  border: none;
+  color: #ffffff !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* Quantitative Counters Inside Tabs Layout */
+.bookmark-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  background: rgba(0, 0, 0, 0.03);
+  color: #6b7280;
+}
+
+:root.dark .bookmark-tab-count {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: #8f96a3;
+}
+
+.bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
+  border-color: rgba(0, 0, 0, 0.14);
+  background: rgba(0, 0, 0, 0.05);
+  color: #111827 !important;
+}
+
+:root.dark .bookmark-tab-button[aria-selected='true'] .bookmark-tab-count {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(0, 0, 0, 0.3);
   color: #ffffff !important;
 }
 
-.bookmark-card .bookmark-remove:hover svg,
-.bookmark-card .bookmark-remove:focus-visible svg,
-.bookmark-remove:hover svg,
-.bookmark-remove:focus-visible svg,
-.close-btn:hover svg,
-.close-btn:focus-visible svg,
-.close-btn:hover svg.lucide.lucide-x,
-.close-btn:focus-visible svg.lucide.lucide-x,
-button.danger-text:hover svg,
-button.danger-text:focus-visible svg,
-.menu-popover button.danger-text:hover svg,
-.menu-popover button.danger-text:focus-visible svg {
-  color: #ffffff !important;
-  stroke: #ffffff !important;
+/* Bookmark Screen Empty States Mechanics */
+.library-main.bookmarks-empty {
+  padding-top: 0;
 }
 
-:root.dark .bookmark-card .bookmark-remove:hover,
-:root.dark .bookmark-card .bookmark-remove:focus-visible,
-:root.dark .bookmark-remove:hover,
-:root.dark .bookmark-remove:focus-visible,
-:root.dark .close-btn:hover,
-:root.dark .close-btn:focus-visible,
-:root.dark button.danger-text:hover,
-:root.dark button.danger-text:focus-visible,
-:root.dark .menu-popover button.danger-text:hover,
-:root.dark .menu-popover button.danger-text:focus-visible,
-.dark .bookmark-card .bookmark-remove:hover,
-.dark .bookmark-card .bookmark-remove:focus-visible,
-.dark .bookmark-remove:hover,
-.dark .bookmark-remove:focus-visible,
-.dark .close-btn:hover,
-.dark .close-btn:focus-visible,
-.dark button.danger-text:hover,
-.dark button.danger-text:focus-visible,
-.dark .menu-popover button.danger-text:hover,
-.dark .menu-popover button.danger-text:focus-visible {
-  background: #b91c1c !important;
-  border-color: #7f1d1d !important;
-  color: #ffffff !important;
+.library-main.bookmarks-empty .page-heading {
+  display: none !important;
 }
 
-:root.dark .bookmark-card .bookmark-remove:hover svg,
-:root.dark .bookmark-card .bookmark-remove:focus-visible svg,
-:root.dark .bookmark-remove:hover svg,
-:root.dark .bookmark-remove:focus-visible svg,
-:root.dark .close-btn:hover svg,
-:root.dark .close-btn:focus-visible svg,
-:root.dark .close-btn:hover svg.lucide.lucide-x,
-:root.dark .close-btn:focus-visible svg.lucide.lucide-x,
-:root.dark button.danger-text:hover svg,
-:root.dark button.danger-text:focus-visible svg,
-:root.dark .menu-popover button.danger-text:hover svg,
-:root.dark .menu-popover button.danger-text:focus-visible svg,
-.dark .bookmark-card .bookmark-remove:hover svg,
-.dark .bookmark-card .bookmark-remove:focus-visible svg,
-.dark .bookmark-remove:hover svg,
-.dark .bookmark-remove:focus-visible svg,
-.dark .close-btn:hover svg,
-.dark .close-btn:focus-visible svg,
-.dark .close-btn:hover svg.lucide.lucide-x,
-.dark .close-btn:focus-visible svg.lucide.lucide-x,
-.dark button.danger-text:hover svg,
-.dark button.danger-text:focus-visible svg,
-.dark .menu-popover button.danger-text:hover svg,
-.dark .menu-popover button.danger-text:focus-visible svg {
-  color: #ffffff !important;
-  stroke: #ffffff !important;
+.library-main.bookmarks-empty .empty-shelf,
+.bookmarks-page-content .empty-shelf {
+  flex: 1;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
 }
 
-/* Dialogs, Modals & Settings */
+.library-main.bookmarks-empty .library-footer {
+  margin-top: 0;
+}
+
+.bookmarks-page-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+}
+
+/* ==========================================================================
+   13. MODULE: MANGA INTERNAL OVERVIEW & CHAPTER DETAILS SELECTION
+   ========================================================================== */
+
+.manga-details {
+  max-width: 1110px;
+  margin: 0 auto;
+  padding: 40px 20px 40px;
+  width: 100%;
+}
+
+.manga-details-nav,
+.chapter-list-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 28px;
+}
+
+.manga-overview {
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 40px;
+  align-items: center;
+  margin-bottom: 48px;
+}
+
+.btn.continue-reading {
+  display: inline-block;
+  margin-top: 24px;
+  background-color: #2563eb;
+  color: var(--color-white);
+  box-shadow: var(--card-shadow);
+  transition: var(--transition);
+  padding: 10px 12px;
+  border-radius: var(--control-radius);
+}
+
+.btn.continue-reading:hover {
+  background-color: var(--btn-hover-light);
+}
+
+.text-semibold {
+  font-weight: 500;
+}
+
+.manga-overview .cover {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--control-radius);
+  overflow: hidden;
+}
+
+.manga-overview h1 {
+  font-size: clamp(28px, 4vw, 48px);
+  overflow-wrap: anywhere;
+  line-height: 1.15;
+  margin: 0 0 24px;
+}
+
+/* Quantitative Totals Definition */
+.manga-totals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  padding-block: 20px;
+  border-block: 1px solid var(--line);
+}
+
+.manga-totals dt,
+.chapter-card span,
+.chapter-card small {
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.manga-totals dd {
+  margin: 8px 0 0;
+  font-size: 24px;
+}
+
+.manga-current {
+  margin: 24px 0;
+}
+
+.chapter-list-heading label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Grid layout rules for internal chapters items */
+.chapter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.chapter-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+  background: var(--surface);
+  border: none !important;
+  border-radius: var(--control-radius);
+  box-shadow: var(--card-shadow);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition:
+    box-shadow 0.3s ease-in-out,
+    background-color 0.3s ease-in-out;
+}
+
+.chapter-card:hover,
+.chapter-card[aria-current] {
+  border-color: var(--text);
+}
+
+/* Contextual Search Form for Chapter Navigation */
+.chapter-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 340px);
+  min-width: 0;
+  padding: 0 12px;
+  border: none !important;
+  border-radius: var(--control-radius);
+  background: var(--soft);
+  color: var(--muted);
+  box-shadow: var(--card-shadow);
+  transition:
+    box-shadow 0.3s ease-in-out,
+    background-color 0.3s ease-in-out;
+}
+
+.chapter-search:focus-within {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+}
+
+.chapter-search input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 10px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  outline: none;
+  box-shadow: none;
+}
+
+.chapter-search svg {
+  flex-shrink: 0;
+}
+
+/* ==========================================================================
+   14. READER CORE LAYER: PAGES VIEWPORTS & CANVAS ENGINES
+   ========================================================================== */
+
+.reader {
+  min-height: 100dvh;
+  background: var(--soft);
+}
+
+.reader-content {
+  width: calc(100% * max(1, var(--zoom, 1)));
+  min-height: 100dvh;
+  touch-action: pan-x pan-y pinch-zoom;
+}
+
+/* Reader Page Base Architectural Layer */
+.reader-page {
+  position: relative;
+  margin: 0 auto;
+  padding: 0;
+  display: block;
+  width: min(100%,
+      calc(var(--reading-width) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
+  overflow: hidden;
+  background: var(--surface);
+  contain: layout paint;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 1000px;
+}
+
+/* Adaptive Sizing Modes across the Viewports */
+.layout-width .reader-page {
+  width: min(100%, calc(100vw * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
+}
+
+.layout-auto .reader-page {
+  width: min(100%, calc(920px * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
+}
+
+.layout-height .reader-page,
+.reader-single.layout-auto .reader-page {
+  width: min(100%,
+      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
+}
+
+.reader-page img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+/* Interstitial Loading/Error Indicators inside Pages */
+.page-number-placeholder {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.page-retry {
+  position: absolute;
+  left: 15%;
+  top: 50%;
+  width: 70%;
+  font-size: 16px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  padding: 20px;
+  border-radius: 7px;
+}
+
+/* Single Mode Positioning Layer */
+.reader-single .reader-content {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100dvh;
+}
+
+/* Two-Page Spread Layout Mechanics */
+.spread-content {
+  gap: 0;
+  flex-direction: row;
+  align-items: center !important;
+}
+
+.spread-content.rtl-spread {
+  flex-direction: row-reverse;
+}
+
+.spread-content .reader-page {
+  margin: 0;
+  width: min(50%, calc(50vw * var(--zoom, 1)), calc(100dvh * var(--page-ratio) * var(--zoom, 1)));
+  flex-shrink: 0;
+}
+
+/* Boundary Screens & Gate Managers */
+.chapter-end {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 15;
+  border: 0 !important;
+  background: var(--surface);
+  padding: 25px;
+  border-radius: 7px;
+  box-shadow: var(--floating-shadow);
+  max-width: calc(100vw - 30px);
+  width: max-content;
+}
+
+.chapter-end .button-row {
+  margin-bottom: 0;
+}
+
+.reader-error {
+  position: fixed;
+  z-index: 22;
+  top: 65px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 12px 17px;
+  font-size: 16px;
+  max-width: 90vw;
+  box-shadow: none;
+}
+
+.reader-error button {
+  text-decoration: underline;
+  background: transparent;
+  border: 0;
+}
+
+.loading-screen,
+.reader-gate {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px;
+}
+
+.reader-gate h1 {
+  font-size: 38px;
+}
+
+.reader-gate p {
+  max-width: 460px;
+  color: var(--muted);
+}
+
+/* Index Tracking Layers */
+.index-count {
+  font-size: 32px;
+  font-weight: 400;
+  margin: 14px 0;
+}
+
+/* ==========================================================================
+   15. READER UI BARS LAYER: HEADERS, CONTROLS & RANGE SLIDERS
+   ========================================================================== */
+
+.reader-bar {
+  position: fixed;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: color-mix(in srgb, var(--surface) 96%, transparent);
+  backdrop-filter: blur(10px);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+  font-size: 16px;
+}
+
+.reader-top {
+  top: 0;
+  padding: max(7px, env(safe-area-inset-top)) 14px 7px;
+  border-bottom: 1px solid var(--line);
+  min-height: 55px;
+}
+
+.reader-title {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-right: auto;
+}
+
+.reader-controls {
+  display: flex;
+  gap: 7px;
+}
+
+.reader-top>select {
+  max-width: 220px;
+}
+
+.reader-bottom {
+  bottom: 0;
+  padding: 7px 20px max(7px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  justify-content: space-between;
+  min-height: 54px;
+  flex-wrap: wrap;
+}
+
+/* State Visibility Classes */
+.bar-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.reader-top.bar-hidden {
+  transform: translateY(-100%);
+}
+
+.reader-bottom.bar-hidden {
+  transform: translateY(100%);
+}
+
+.reader-bar:focus-within,
+.reader-bar:has(details[open]),
+.reader-bar:has(.dropdown-trigger[data-state='open']) {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.chapter-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.active {
+  background: var(--accent);
+  color: var(--surface);
+  border-color: var(--accent);
+}
+
+/* Structural Grid Architectures inside Organized Reader Bars */
+.reader-top.organized-bar,
+.reader-bottom.organized-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 18px;
+  flex-wrap: nowrap;
+  padding-left: 20px;
+  padding-right: 20px;
+  min-height: 56px;
+}
+
+.reader-bottom.organized-bar {
+  grid-template-columns: minmax(215px, 1fr) minmax(130px, 360px) minmax(215px, 1fr);
+}
+
+.organized-bar .bar-left,
+.organized-bar .bar-center,
+.organized-bar .bar-right {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 6px;
+}
+
+.organized-bar .bar-left {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.organized-bar .bar-center {
+  justify-self: center;
+}
+
+.organized-bar .bar-right {
+  justify-self: end;
+  justify-content: flex-end;
+  max-width: 100%;
+}
+
+.organized-bar .header-identity {
+  gap: 10px;
+  overflow: hidden;
+}
+
+.organized-bar .reader-title {
+  max-width: none;
+  min-width: 0;
+  width: auto;
+  margin: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Selection Sizing Adjustments layer inside Organized Bars */
+.organized-bar .header-selectors {
+  gap: 7px;
+  max-width: 100%;
+}
+
+.header-selectors select,
+.header-selectors .dropdown-trigger {
+  height: var(--control-size);
+  min-height: var(--control-size);
+  padding: 6px 8px;
+  flex-shrink: 0;
+  font-size: 16px;
+}
+
+.header-selectors select:focus,
+.header-selectors select:focus-visible {
+  padding: 5px 7px;
+}
+
+.header-selectors .chapter-select {
+  width: clamp(115px, 15vw, 200px);
+}
+
+.header-selectors .fit-select {
+  width: 119px;
+}
+
+.header-selectors .size-select {
+  width: 96px;
+}
+
+.header-selectors .mode-select {
+  width: 103px;
+}
+
+.organized-bar .header-actions {
+  gap: 5px;
+}
+
+.chapter-navigation,
+.organized-bar .chapter-navigation {
+  gap: 5px !important;
+}
+
+.organized-bar .chapter-navigation .chapter-select {
+  width: 135px;
+  max-width: 150px;
+  height: var(--control-size);
+  min-height: var(--control-size);
+  padding: 6px 8px;
+  font-size: 16px;
+  flex-shrink: 1;
+}
+
+/* Page Control Sliders Management */
+.page-progress-control {
+  width: 100%;
+  gap: 12px !important;
+}
+
+.current-page-input {
+  width: 43px !important;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+  padding: 5px 2px !important;
+  min-height: 30px !important;
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+.current-page-input::-webkit-inner-spin-button,
+.current-page-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.current-page-input:hover,
+.current-page-input:focus {
+  border-color: var(--line) !important;
+}
+
+.total-page-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 25px;
+  text-align: right;
+}
+
+/* Range Input Component System Custom Reset */
+.page-progress-slider {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 1;
+  min-width: 30px;
+  width: 100%;
+  height: 4px;
+  border: 0;
+  border-radius: 7px;
+  margin: 0;
+  box-shadow: none;
+  background: linear-gradient(to right,
+      var(--accent) 0 var(--progress-fill),
+      var(--line) var(--progress-fill) 100%);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.page-progress-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.page-progress-slider::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  border-radius: 7px;
+  box-shadow: none;
+}
+
+.page-progress-slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 7px;
+}
+
+.reading-actions {
+  gap: 3px !important;
+}
+
+.control-divider {
+  height: 18px;
+  width: 1px;
+  background: var(--line);
+  margin: 0 5px;
+  flex-shrink: 0;
+}
+
+.completion-button {
+  color: var(--muted);
+}
+
+.completion-button.completed,
+.playback-button.active,
+.completion-button.completed:hover,
+.playback-button.active:hover {
+  background: var(--soft);
+  color: var(--text);
+}
+
+/* Contextual Popovers Overlay Inside Bars System */
+.bar-popover {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.bar-popover>summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+}
+
+.bar-popover>summary::-webkit-details-marker {
+  display: none;
+}
+
+.zoom-trigger {
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+
+/* Svg Scaling Adjustment layer specifically inside Zoom Triggers */
+.zoom-trigger svg,
+.bar-popover.zoom-menu>summary svg {
+  width: calc(var(--font-size-button, 15px) * 0.8) !important;
+  height: calc(var(--font-size-button, 15px) * 0.8) !important;
+}
+
+.zoom-trigger:hover,
+.bar-popover[open]>summary {
+  background: var(--soft);
+  border-color: var(--line);
+}
+
+.bar-popover-panel {
+  position: absolute;
+  bottom: calc(100% + 14px);
+  right: 0;
+  width: 278px;
+  background: var(--surface);
+  border: 0 !important;
+  border-radius: 7px;
+  padding: 18px;
+  box-shadow: var(--floating-shadow);
+  white-space: normal;
+  max-height: calc(100dvh - 145px);
+  overflow: auto;
+}
+
+.bar-popover-panel h3 {
+  margin-bottom: 15px;
+}
+
+.bar-popover-panel label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.bar-popover-panel label select,
+.bar-popover-panel label>.dropdown-trigger {
+  max-width: 135px;
+}
+
+.bar-popover-panel input[type='number'] {
+  width: 80px;
+}
+
+.zoom-adjustment {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 5px 0 15px;
+}
+
+.zoom-adjustment input {
+  accent-color: var(--accent);
+  min-width: 0;
+  width: 100%;
+  flex: 1;
+}
+
+.popover-menu-actions {
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 16px;
+}
+
+.popover-menu-actions button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 0;
+  padding: 10px 4px;
+  font-size: 16px;
+  width: 100%;
+  text-align: left;
+  border-radius: 4px;
+  margin: 2px 0;
+  box-shadow: none;
+}
+
+.popover-menu-actions button:hover {
+  background: var(--soft);
+}
+
+.popover-page-buttons {
+  border-top: 1px solid var(--line);
+  margin-top: 7px;
+  padding-top: 7px;
+}
+
+/* Edge Progress Engine Layer */
+.edge-progress {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 35;
+  background: var(--line);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.edge-progress>span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--text);
+  opacity: 0.55;
+  transform: scaleX(0);
+  transform-origin: left;
+}
+
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(:has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
+  opacity: 1;
+}
+
+/* ==========================================================================
+   16. DIALOGS MODULE: OVERLAYS, MODALS MODULARS & SHORTCUT TABLES
+   ========================================================================== */
+
 .dialog-overlay {
   position: fixed;
   inset: 0;
@@ -1757,6 +2977,7 @@ button.danger-text:focus-visible svg,
   font-size: 29px;
 }
 
+/* Panel Framework Architectures (Settings Modular Layout) */
 .settings-panel {
   position: fixed;
   right: 0;
@@ -1801,47 +3022,6 @@ button.danger-text:focus-visible svg,
   margin: 10px 0;
 }
 
-select,
-input[type='number'] {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 7px 9px;
-  font-size: 16px;
-  max-width: 100%;
-  min-height: 35px;
-}
-
-select {
-  outline: none !important;
-  box-shadow: none !important;
-  transition:
-    border-color 0.35s ease,
-    border-width 0.35s ease,
-    padding 0.35s ease;
-}
-
-select:hover {
-  border-color: var(--muted);
-}
-
-select:focus,
-select:focus-visible,
-select:active {
-  outline: none !important;
-  box-shadow: none !important;
-  border-color: var(--accent);
-  border-width: 2px;
-  padding: 6px 8px;
-}
-
-input[type='checkbox'] {
-  accent-color: var(--accent);
-  width: 17px;
-  height: 17px;
-}
-
 .settings-panel input[type='number'] {
   width: 100px;
 }
@@ -1850,6 +3030,7 @@ input[type='checkbox'] {
   max-width: 185px;
 }
 
+/* Tabbed System Implementations Inside Modals Panels */
 .tabbed-modal.settings-panel {
   inset: auto;
   left: 50%;
@@ -1895,9 +3076,7 @@ input[type='checkbox'] {
   padding: 9px 12px;
   font-size: 16px;
   color: var(--muted);
-  transition:
-    color 0.35s,
-    border-color 0.35s;
+  transition: color 0.35s, border-color 0.35s;
 }
 
 .settings-tabs button[aria-selected='true'] {
@@ -1932,6 +3111,7 @@ input[type='checkbox'] {
   padding: 23px 0;
 }
 
+/* Storage Metric Graphs Framework */
 .storage-stats {
   margin: 0;
   border: 1px solid var(--line);
@@ -1983,6 +3163,7 @@ input[type='checkbox'] {
   background: var(--soft);
 }
 
+/* Modals Core Specific Dimensional Width Layers */
 .shortcuts-modal {
   position: fixed;
   z-index: 51;
@@ -2053,6 +3234,7 @@ input[type='checkbox'] {
   gap: 12px;
 }
 
+/* Keyboard System Keys/Shortcuts Data Tables */
 .shortcuts-table {
   border-collapse: collapse;
   width: 100%;
@@ -2083,20 +3265,112 @@ input[type='checkbox'] {
   margin-top: 19px;
 }
 
-kbd {
-  font-family: inherit;
+/* ==========================================================================
+   17. SYSTEM SPECIFIC UTILITIES: TOASTS, TIMERS, BANNERS & KEYFRAMES
+   ========================================================================== */
+
+/* Notification Flyout Toast Controllers */
+.toast {
+  position: fixed;
+  bottom: 23px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px 10px 16px;
+  border: 0 !important;
+  border-radius: 7px;
+  max-width: calc(100vw - 30px);
+  box-shadow: var(--floating-shadow);
   font-size: 16px;
-  border: 1px solid var(--line);
-  border-bottom-width: 2px;
-  background: var(--soft);
-  border-radius: 4px;
-  padding: 2px 5px;
-  white-space: nowrap;
-  display: inline-block;
+}
+
+.toast button {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  display: flex;
+  padding: 4px;
+}
+
+.toast .close-btn {
+  margin-left: auto;
+}
+
+/* Updates Floating Modular Banners Layer */
+.update-banner {
+  position: fixed;
+  z-index: 40;
+  left: 50%;
+  bottom: 110px;
+  transform: translateX(-50%);
+  background: var(--surface);
+  border: 0 !important;
+  box-shadow: var(--floating-shadow);
+  border-radius: 7px;
+  padding: 13px 18px;
+  width: min(430px, calc(100vw - 30px));
+  max-height: calc(100dvh - 140px);
+  overflow: auto;
+  font-size: 16px;
+}
+
+.update-banner button {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  margin-left: 6px;
+  padding: 6px 10px;
+  text-decoration: none;
+}
+
+.update-banner button:disabled {
+  cursor: wait;
+  text-decoration: none;
+}
+
+.update-banner span {
+  display: block;
+  color: var(--muted);
+  font-size: 16px;
+  margin-top: 6px;
+}
+
+.update-help {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 16px;
+}
+
+.update-help summary {
+  cursor: pointer;
+  color: var(--text);
+}
+
+.update-help p {
+  margin-top: 9px;
   line-height: 1.5;
 }
 
-/* Import & Examples */
+/* Animation Loading Spinner Engine */
+.spin {
+  animation: spin 1.1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   18. CONTEXT Choice SYSTEM: DATA DICTIONARIES, IMPORT CHOICES & LOGS
+   ========================================================================== */
+
 .example-tabs {
   padding: 0;
   margin: 0 -3px;
@@ -2130,6 +3404,7 @@ kbd {
   color: var(--muted);
 }
 
+/* Hierarchical Tree Folders Previews */
 .folder-tree {
   list-style: none;
   border-left: 1px solid var(--line);
@@ -2161,6 +3436,7 @@ kbd {
   margin: 18px 0;
 }
 
+/* Choices Custom Select Interfaces */
 .import-choice,
 .import-preview>label {
   display: flex;
@@ -2195,9 +3471,7 @@ kbd {
   background: var(--surface);
   color: var(--text);
   font-size: 16px;
-  transition:
-    border-color 0.35s ease,
-    background-color 0.35s ease;
+  transition: border-color 0.35s ease, background-color 0.35s ease;
 }
 
 .import-options {
@@ -2241,6 +3515,7 @@ kbd {
   padding: 5px 0;
 }
 
+/* Warning Logs Components */
 .match-warning {
   font-size: 16px;
   display: flex;
@@ -2281,6 +3556,7 @@ kbd {
   margin-top: 4px;
 }
 
+/* Data Import Success State Overlays Modals */
 .import-success-modal {
   width: min(650px, calc(100vw - 32px));
   padding: 28px;
@@ -2381,1173 +3657,10 @@ kbd {
   cursor: pointer;
 }
 
-/* Toast & Update Banner */
-.toast {
-  position: fixed;
-  bottom: 23px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: var(--surface);
-  color: var(--text);
-  padding: 10px 12px 10px 16px;
-  border: 0 !important;
-  border-radius: 7px;
-  max-width: calc(100vw - 30px);
-  box-shadow: var(--floating-shadow);
-  font-size: 16px;
-}
+/* ==========================================================================
+   19. RESPONSIVE IMPLEMENTATION MATRIX: DEVICE SPECIFIC BREAKPOINTS
+   ========================================================================== */
 
-.toast button {
-  background: transparent;
-  border: 0;
-  color: inherit;
-  display: flex;
-  padding: 4px;
-}
-
-.toast .close-btn {
-  margin-left: auto;
-}
-
-.update-banner {
-  position: fixed;
-  z-index: 40;
-  left: 50%;
-  bottom: 110px;
-  transform: translateX(-50%);
-  background: var(--surface);
-  border: 0 !important;
-  box-shadow: var(--floating-shadow);
-  border-radius: 7px;
-  padding: 13px 18px;
-  width: min(430px, calc(100vw - 30px));
-  max-height: calc(100dvh - 140px);
-  overflow: auto;
-  font-size: 16px;
-}
-
-.update-banner button {
-  background: transparent;
-  border: 0;
-  color: var(--accent);
-  margin-left: 6px;
-  padding: 6px 10px;
-  text-decoration: none;
-}
-
-.update-banner button:disabled {
-  cursor: wait;
-  text-decoration: none;
-}
-
-.update-banner span {
-  display: block;
-  color: var(--muted);
-  font-size: 16px;
-  margin-top: 6px;
-}
-
-.update-help {
-  margin-top: 10px;
-  color: var(--muted);
-  font-size: 16px;
-}
-
-.update-help summary {
-  cursor: pointer;
-  color: var(--text);
-}
-
-.update-help p {
-  margin-top: 9px;
-  line-height: 1.5;
-}
-
-.spin {
-  animation: spin 1.1s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-.index-count {
-  font-size: 32px;
-  font-weight: 400;
-  margin: 14px 0;
-}
-
-.loading-screen,
-.reader-gate {
-  min-height: 100dvh;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 30px;
-}
-
-.reader-gate h1 {
-  font-size: 38px;
-}
-
-.reader-gate p {
-  max-width: 460px;
-  color: var(--muted);
-}
-
-/* Reader & Pages */
-.reader {
-  min-height: 100dvh;
-  background: var(--soft);
-}
-
-.reader-content {
-  width: calc(100% * max(1, var(--zoom, 1)));
-  min-height: 100dvh;
-  touch-action: pan-x pan-y pinch-zoom;
-}
-
-.reader-page {
-  position: relative;
-  margin: 0 auto;
-  padding: 0;
-  display: block;
-  width: min(100%,
-      calc(var(--reading-width) * var(--zoom, 1)),
-      calc(var(--native-width) * var(--zoom, 1)));
-  overflow: hidden;
-  background: var(--surface);
-  contain: layout paint;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 1000px;
-}
-
-.layout-width .reader-page {
-  width: min(100%, calc(100vw * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
-}
-
-.layout-auto .reader-page {
-  width: min(100%, calc(920px * var(--zoom, 1)), calc(var(--native-width) * var(--zoom, 1)));
-}
-
-.layout-height .reader-page,
-.reader-single.layout-auto .reader-page {
-  width: min(100%,
-      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
-      calc(var(--native-width) * var(--zoom, 1)));
-}
-
-.reader-page img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  display: block;
-  object-fit: contain;
-}
-
-.page-number-placeholder {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  color: var(--muted);
-  font-size: 16px;
-}
-
-.page-retry {
-  position: absolute;
-  left: 15%;
-  top: 50%;
-  width: 70%;
-  font-size: 16px;
-  background: var(--soft);
-  border: 1px solid var(--line);
-  padding: 20px;
-  border-radius: 7px;
-}
-
-.reader-single .reader-content {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100dvh;
-}
-
-.spread-content {
-  gap: 0;
-  flex-direction: row;
-  align-items: center !important;
-}
-
-.spread-content.rtl-spread {
-  flex-direction: row-reverse;
-}
-
-.spread-content .reader-page {
-  margin: 0;
-  width: min(50%, calc(50vw * var(--zoom, 1)), calc(100dvh * var(--page-ratio) * var(--zoom, 1)));
-  flex-shrink: 0;
-}
-
-.chapter-end {
-  position: fixed;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 15;
-  border: 0 !important;
-  background: var(--surface);
-  padding: 25px;
-  border-radius: 7px;
-  box-shadow: var(--floating-shadow);
-  max-width: calc(100vw - 30px);
-  width: max-content;
-}
-
-.chapter-end .button-row {
-  margin-bottom: 0;
-}
-
-.reader-error {
-  position: fixed;
-  z-index: 22;
-  top: 65px;
-  left: 50%;
-  transform: translateX(-50%);
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 12px 17px;
-  font-size: 16px;
-  max-width: 90vw;
-  box-shadow: none;
-}
-
-.reader-error button {
-  text-decoration: underline;
-  background: transparent;
-  border: 0;
-}
-
-@media (prefers-reduced-motion: reduce) {
-
-  *,
-  *::before,
-  *::after {
-    scroll-behavior: auto !important;
-    transition: none !important;
-    animation: none !important;
-  }
-}
-
-/* Reader Bars */
-.reader-bar {
-  position: fixed;
-  z-index: 20;
-  left: 0;
-  right: 0;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  backdrop-filter: blur(10px);
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
-  font-size: 16px;
-}
-
-.reader-top {
-  top: 0;
-  padding: max(7px, env(safe-area-inset-top)) 14px 7px;
-  border-bottom: 1px solid var(--line);
-  min-height: 55px;
-}
-
-.reader-title {
-  max-width: 240px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  margin-right: auto;
-}
-
-.reader-controls {
-  display: flex;
-  gap: 7px;
-}
-
-.reader-top>select {
-  max-width: 220px;
-}
-
-.reader-bottom {
-  bottom: 0;
-  padding: 7px 20px max(7px, env(safe-area-inset-bottom));
-  border-top: 1px solid var(--line);
-  justify-content: space-between;
-  min-height: 54px;
-  flex-wrap: wrap;
-}
-
-.bar-hidden {
-  opacity: 0;
-  pointer-events: none;
-}
-
-.reader-top.bar-hidden {
-  transform: translateY(-100%);
-}
-
-.reader-bottom.bar-hidden {
-  transform: translateY(100%);
-}
-
-.reader-bar:focus-within,
-.reader-bar:has(details[open]),
-.reader-bar:has(.dropdown-trigger[data-state='open']) {
-  opacity: 1;
-  pointer-events: auto;
-  transform: none;
-}
-
-.chapter-nav {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.active {
-  background: var(--accent);
-  color: var(--surface);
-  border-color: var(--accent);
-}
-
-.reader-top.organized-bar,
-.reader-bottom.organized-bar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  gap: 18px;
-  flex-wrap: nowrap;
-  padding-left: 20px;
-  padding-right: 20px;
-  min-height: 56px;
-}
-
-.reader-bottom.organized-bar {
-  grid-template-columns: minmax(215px, 1fr) minmax(130px, 360px) minmax(215px, 1fr);
-}
-
-.organized-bar .bar-left,
-.organized-bar .bar-center,
-.organized-bar .bar-right {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 6px;
-}
-
-.organized-bar .bar-left {
-  justify-self: start;
-  max-width: 100%;
-}
-
-.organized-bar .bar-center {
-  justify-self: center;
-}
-
-.organized-bar .bar-right {
-  justify-self: end;
-  justify-content: flex-end;
-  max-width: 100%;
-}
-
-.organized-bar .header-identity {
-  gap: 10px;
-  overflow: hidden;
-}
-
-.organized-bar .reader-title {
-  max-width: none;
-  min-width: 0;
-  width: auto;
-  margin: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.organized-bar .header-selectors {
-  gap: 7px;
-  max-width: 100%;
-}
-
-.header-selectors select,
-.header-selectors .dropdown-trigger {
-  height: var(--control-size);
-  min-height: var(--control-size);
-  padding: 6px 8px;
-  flex-shrink: 0;
-  font-size: 16px;
-}
-
-.header-selectors select:focus,
-.header-selectors select:focus-visible {
-  padding: 5px 7px;
-}
-
-.header-selectors .chapter-select {
-  width: clamp(115px, 15vw, 200px);
-}
-
-.header-selectors .fit-select {
-  width: 119px;
-}
-
-.header-selectors .size-select {
-  width: 96px;
-}
-
-.header-selectors .mode-select {
-  width: 103px;
-}
-
-.organized-bar .header-actions {
-  gap: 5px;
-}
-
-.chapter-navigation,
-.organized-bar .chapter-navigation {
-  gap: 5px !important;
-}
-
-.organized-bar .chapter-navigation .chapter-select {
-  width: 135px;
-  max-width: 150px;
-  height: var(--control-size);
-  min-height: var(--control-size);
-  padding: 6px 8px;
-  font-size: 16px;
-  flex-shrink: 1;
-}
-
-.page-progress-control {
-  width: 100%;
-  gap: 12px !important;
-}
-
-.current-page-input {
-  width: 43px !important;
-  min-width: 0;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-  appearance: textfield;
-  padding: 5px 2px !important;
-  min-height: 30px !important;
-  background: transparent !important;
-  border-color: transparent !important;
-}
-
-.current-page-input::-webkit-inner-spin-button,
-.current-page-input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-
-.current-page-input:hover,
-.current-page-input:focus {
-  border-color: var(--line) !important;
-}
-
-.total-page-count {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  min-width: 25px;
-  text-align: right;
-}
-
-.page-progress-slider {
-  appearance: none;
-  -webkit-appearance: none;
-  flex: 1;
-  min-width: 30px;
-  width: 100%;
-  height: 4px;
-  border: 0;
-  border-radius: 7px;
-  margin: 0;
-  box-shadow: none;
-  background: linear-gradient(to right,
-      var(--accent) 0 var(--progress-fill),
-      var(--line) var(--progress-fill) 100%);
-  cursor: pointer;
-  touch-action: none;
-}
-
-.page-progress-slider::-webkit-slider-thumb {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 12px;
-  height: 12px;
-  background: var(--accent);
-  border: 2px solid var(--surface);
-  border-radius: 7px;
-  box-shadow: none;
-}
-
-.page-progress-slider::-moz-range-thumb {
-  width: 9px;
-  height: 9px;
-  background: var(--accent);
-  border: 2px solid var(--surface);
-  border-radius: 7px;
-  box-shadow: none;
-}
-
-.page-progress-slider:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 7px;
-}
-
-.reading-actions {
-  gap: 3px !important;
-}
-
-.control-divider {
-  height: 18px;
-  width: 1px;
-  background: var(--line);
-  margin: 0 5px;
-  flex-shrink: 0;
-}
-
-.completion-button {
-  color: var(--muted);
-}
-
-.completion-button.completed,
-.playback-button.active,
-.completion-button.completed:hover,
-.playback-button.active:hover {
-  background: var(--soft);
-  color: var(--text);
-}
-
-.bar-popover {
-  position: relative;
-  flex-shrink: 0;
-}
-
-.bar-popover>summary {
-  list-style: none;
-  cursor: pointer;
-  user-select: none;
-}
-
-.bar-popover>summary::-webkit-details-marker {
-  display: none;
-}
-
-.zoom-trigger {
-  min-width: 62px;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid transparent;
-  border-radius: 6px;
-}
-
-.zoom-trigger:hover,
-.bar-popover[open]>summary {
-  background: var(--soft);
-  border-color: var(--line);
-}
-
-.bar-popover-panel {
-  position: absolute;
-  bottom: calc(100% + 14px);
-  right: 0;
-  width: 278px;
-  background: var(--surface);
-  border: 0 !important;
-  border-radius: 7px;
-  padding: 18px;
-  box-shadow: var(--floating-shadow);
-  white-space: normal;
-  max-height: calc(100dvh - 145px);
-  overflow: auto;
-}
-
-.bar-popover-panel h3 {
-  margin-bottom: 15px;
-}
-
-.bar-popover-panel label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 12px 0;
-}
-
-.bar-popover-panel label select,
-.bar-popover-panel label>.dropdown-trigger {
-  max-width: 135px;
-}
-
-.bar-popover-panel input[type='number'] {
-  width: 80px;
-}
-
-.zoom-adjustment {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin: 5px 0 15px;
-}
-
-.zoom-adjustment input {
-  accent-color: var(--accent);
-  min-width: 0;
-  width: 100%;
-  flex: 1;
-}
-
-.popover-menu-actions {
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
-  margin-top: 16px;
-}
-
-.popover-menu-actions button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: 0;
-  padding: 10px 4px;
-  font-size: 16px;
-  width: 100%;
-  text-align: left;
-  border-radius: 4px;
-  margin: 2px 0;
-  box-shadow: none;
-}
-
-.popover-menu-actions button:hover {
-  background: var(--soft);
-}
-
-.popover-page-buttons {
-  border-top: 1px solid var(--line);
-  margin-top: 7px;
-  padding-top: 7px;
-}
-
-.edge-progress {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  z-index: 35;
-  background: var(--line);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 180ms ease;
-}
-
-.edge-progress>span {
-  display: block;
-  width: 100%;
-  height: 100%;
-  background: var(--text);
-  opacity: 0.55;
-  transform: scaleX(0);
-  transform-origin: left;
-}
-
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
-  opacity: 1;
-}
-
-/* Dropdowns */
-.dropdown-trigger {
-  justify-content: space-between;
-  gap: 9px;
-  min-width: 0;
-  max-width: 100%;
-  padding: 7px 10px;
-  background: var(--btn-dark);
-  color: var(--color-white);
-  cursor: pointer;
-  text-align: left;
-  box-shadow: var(--card-shadow) !important;
-  transition: var(--transition);
-}
-
-.dropdown-trigger:not(:disabled):hover {
-  background: var(--btn-hover-dark);
-  color: var(--color-white);
-  box-shadow: var(--card-shadow);
-}
-
-.dark .dropdown-trigger {
-  background: var(--soft);
-  color: var(--text);
-}
-
-.dark .dropdown-trigger:not(:disabled):hover {
-  background: var(--extra-soft);
-  color: var(--text);
-}
-
-.dropdown-trigger>span:first-child {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dropdown-chevron {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  color: inherit;
-}
-
-.dark .dropdown-chevron {
-  color: var(--muted);
-}
-
-.dropdown-trigger:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-.dropdown-content {
-  z-index: 110;
-  min-width: var(--radix-select-trigger-width);
-  max-width: min(420px, calc(100vw - 20px));
-  max-height: min(320px, var(--radix-select-content-available-height));
-  background: var(--surface);
-  color: var(--text);
-  border: 0 !important;
-  border-radius: 7px;
-  box-shadow: var(--floating-shadow);
-  overflow: hidden;
-  transform-origin: var(--radix-select-content-transform-origin);
-  animation: dropdown-in 0.12s ease-out;
-}
-
-.dropdown-viewport {
-  padding: 5px;
-  max-height: 300px;
-  overscroll-behavior: contain;
-}
-
-.dropdown-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  min-height: calc(var(--font-size-button, 15px) * 2.1) !important;
-  padding: 8px 31px 8px 10px;
-  border-radius: 5px;
-  line-height: 1.4;
-  cursor: pointer;
-  user-select: none;
-  outline: none;
-  overflow-wrap: anywhere;
-}
-
-.dropdown-item[data-highlighted] {
-  background: var(--extra-soft);
-  color: var(--text);
-  outline: none;
-}
-
-.dropdown-item[data-state='checked'] {
-  font-weight: 400;
-}
-
-.dropdown-item[data-disabled] {
-  opacity: 0.4;
-  pointer-events: none;
-}
-
-.dropdown-check {
-  position: absolute;
-  right: 10px;
-  display: flex;
-  color: var(--text);
-}
-
-.dropdown-scroll {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 22px;
-  background: var(--surface);
-  color: var(--muted);
-}
-
-.settings-panel label>.dropdown-trigger {
-  max-width: 200px;
-}
-
-.import-choice>.dropdown-trigger {
-  max-width: 65%;
-}
-
-.import-options .dropdown-trigger {
-  width: 100%;
-}
-
-@keyframes dropdown-in {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* Manga Details & Chapter List */
-.manga-details {
-  max-width: 1110px;
-  margin: 0 auto;
-  padding: 40px 20px 40px;
-  width: 100%;
-}
-
-.manga-details-nav,
-.chapter-list-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 28px;
-}
-
-.manga-overview {
-  display: grid;
-  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
-  gap: 40px;
-  align-items: center;
-  margin-bottom: 48px;
-}
-
-.btn.continue-reading {
-  display: inline-block;
-  margin-top: 24px;
-  background-color: #2563eb;
-  color: var(--color-white);
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  padding: 10px 12px;
-  border-radius: var(--control-radius);
-}
-
-.btn.continue-reading:hover {
-  background-color: var(--btn-hover-light);
-}
-
-.text-semibold {
-  font-weight: 500;
-}
-
-.manga-overview .cover {
-  width: 100%;
-  height: auto;
-  aspect-ratio: 2 / 3;
-  border-radius: var(--control-radius);
-  overflow: hidden;
-}
-
-.manga-overview h1 {
-  font-size: clamp(28px, 4vw, 48px);
-  overflow-wrap: anywhere;
-  line-height: 1.15;
-  margin: 0 0 24px;
-}
-
-.manga-totals {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 20px;
-  padding-block: 20px;
-  border-block: 1px solid var(--line);
-}
-
-.manga-totals dt,
-.chapter-card span,
-.chapter-card small {
-  color: var(--muted);
-  font-size: 16px;
-}
-
-.manga-totals dd {
-  margin: 8px 0 0;
-  font-size: 24px;
-}
-
-.manga-current {
-  margin: 24px 0;
-}
-
-.chapter-list-heading label {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.chapter-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.chapter-card {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 20px;
-  background: var(--surface);
-  border: none !important;
-  border-radius: var(--control-radius);
-  box-shadow: var(--card-shadow);
-  text-decoration: none;
-  overflow-wrap: anywhere;
-  transition:
-    box-shadow 0.3s ease-in-out,
-    background-color 0.3s ease-in-out;
-}
-
-.chapter-card:hover,
-.chapter-card[aria-current] {
-  border-color: var(--text);
-}
-
-.chapter-search {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: min(100%, 340px);
-  min-width: 0;
-  padding: 0 12px;
-  border: none !important;
-  border-radius: var(--control-radius);
-  background: var(--soft);
-  color: var(--muted);
-  box-shadow: var(--card-shadow);
-  transition:
-    box-shadow 0.3s ease-in-out,
-    background-color 0.3s ease-in-out;
-}
-
-.chapter-search:focus-within {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
-}
-
-.chapter-search input {
-  width: 100%;
-  min-width: 0;
-  min-height: 44px;
-  padding: 10px 0;
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  outline: none;
-  box-shadow: none;
-}
-
-.chapter-search svg {
-  flex-shrink: 0;
-}
-
-/* Typography Hierarchy & Proportional Icon Scaling */
-.modal-heading .dialog-heading h2,
-.settings-panel h3,
-.settings-tab-body section h3,
-.reader-title,
-.organized-bar .reader-title,
-.bar-popover-panel h3,
-.manga-info h3,
-.bookmark-card h3 {
-  font-size: var(--font-size-title, 15px) !important;
-}
-
-body,
-input,
-select,
-textarea,
-.settings-panel,
-.tabbed-modal.settings-panel,
-.modal-heading>p,
-.settings-tab-body section p,
-.settings-tab-body label,
-.settings-tab-body select,
-.settings-tab-body input,
-.reader-bar,
-.reader-top,
-.reader-bottom,
-.reader-bottom .current-page-input,
-.reader-bottom .total-page-count,
-.reader-top select,
-.reader-bottom select,
-.header-selectors select,
-.bar-popover-panel,
-.bar-popover-panel label,
-.library-footer,
-.library-footer span,
-.library-footer a,
-.bookmark-navigation,
-.bookmark-navigation>a,
-.bookmark-navigation button,
-.bookmark-tabs,
-.bookmark-tab-button,
-.bookmarks-toolbar,
-.shelf-sort,
-.shelf-sort>span,
-.shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort>span,
-.manga-card-date-badge,
-.manga-card-date,
-.space-tooltip,
-.manga-bookmark-btn,
-.manga-info-btn,
-.relink-needed-btn,
-.manga-card-bottom .card-menu summary,
-summary.card-menu-trigger,
-.card-menu summary,
-.menu-popover,
-.menu-popover button {
-  font-size: var(--font-size-ui, 15px) !important;
-}
-
-.manga-card-calendar-icon,
-.manga-card-date-badge svg {
-  width: calc(var(--font-size-ui, 15px) * 1.05) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.05) !important;
-  flex-shrink: 0;
-}
-
-.manga-bookmark-btn svg,
-.menu-popover button svg {
-  width: calc(var(--font-size-ui, 15px) * 1.08) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.08) !important;
-  flex-shrink: 0;
-}
-
-.manga-info-btn svg,
-.card-menu summary svg,
-.manga-card-bottom .card-menu summary svg,
-summary.card-menu-trigger svg {
-  width: calc(var(--font-size-ui, 15px) * 1.15) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.15) !important;
-  flex-shrink: 0;
-}
-
-label,
-.label,
-.settings-tab-body label,
-.settings-panel label,
-.bar-popover-panel label {
-  font-family: var(--font-ui);
-  font-weight: 700;
-}
-
-option,
-.dropdown-item,
-select,
-label select,
-label input,
-label textarea,
-label .dropdown-trigger {
-  font-family: var(--font-ui);
-  font-weight: 400;
-}
-
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
-.dropdown-trigger,
-.dropdown-trigger span,
-.shelf-sort .dropdown-trigger,
-.shelf-sort .dropdown-trigger span,
-.shelf-sort.bookmark-sort .dropdown-trigger,
-.shelf-sort.bookmark-sort .dropdown-trigger span,
-.dropdown-content,
-.dropdown-item,
-.dropdown-item span,
-option,
-select,
-.chapter-select,
-.zoom-trigger,
-.bar-popover>summary,
-summary.icon-button:not(.card-menu-trigger),
-.icon-button,
-a.icon-button,
-a.primary,
-a.secondary,
-.primary,
-.secondary,
-.browse-button,
-.support-button,
-.settings-tabs button,
-.bar-popover-panel button,
-.reader-bottom .zoom-trigger,
-.organized-bar .chapter-navigation .chapter-select {
-  font-size: var(--font-size-button, 15px) !important;
-  font-weight: 500 !important;
-  text-transform: capitalize;
-}
-
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) svg,
-.dropdown-trigger svg,
-.dropdown-chevron svg,
-.dropdown-check svg,
-.dropdown-scroll svg,
-.zoom-trigger svg,
-.bar-popover>summary svg,
-.icon-button svg,
-summary.icon-button:not(.card-menu-trigger) svg,
-a.icon-button svg,
-a.primary svg,
-a.secondary svg,
-.primary svg,
-.secondary svg,
-.browse-button svg,
-.support-button svg {
-  width: calc(var(--font-size-button, 15px) * 1.15) !important;
-  height: calc(var(--font-size-button, 15px) * 1.15) !important;
-}
-
-.dropdown-trigger .dropdown-chevron svg,
-.dropdown-chevron svg,
-.dropdown-check svg,
-.dropdown-scroll svg {
-  width: calc(var(--font-size-button, 15px) * 0.933) !important;
-  height: calc(var(--font-size-button, 15px) * 0.933) !important;
-}
-
-.zoom-trigger svg,
-.bar-popover.zoom-menu>summary svg {
-  width: calc(var(--font-size-button, 15px) * 0.8) !important;
-  height: calc(var(--font-size-button, 15px) * 0.8) !important;
-}
-
-/* Responsive Breakpoints */
 @media (max-width: 1180px) {
   .library-main {
     margin: 0 36px;
@@ -4139,8 +4252,31 @@ a.secondary svg,
   }
 }
 
+/* Precise Coarse Pointer Sizing Modification Override */
 @media (pointer: coarse) and (min-width: 400px) {
   :root {
     --control-size: 44px;
+  }
+}
+
+/* ==========================================================================
+   20. ACCESSIBILITY RULES & PREFERS REDUCED MOTION TRANSFORMS
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+@media (hover: none) {
+  .bookmark-card .bookmark-remove {
+    opacity: 0.94;
+    pointer-events: auto;
   }
 }
