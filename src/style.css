@@ -10,7 +10,9 @@
   font-size: var(--font-size-ui, 15px);
 
   /* Font Family Definitions */
-  --font-ui: 'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui:
+    'WantedSans', 'Satoshi', 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
   --font-display: 'Instrument Serif', Georgia, serif;
   font-family: var(--font-ui);
 
@@ -55,9 +57,7 @@
 
   /* Animation / Global Transition Mechanics */
   --transition:
-    background-color 300ms ease-in-out,
-    border-color 300ms ease-in-out,
-    color 300ms ease-in-out,
+    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
     box-shadow 300ms ease-in-out;
 }
 
@@ -92,6 +92,7 @@
 
   /* Dark Mode Button Mechanics Mapping */
   --btn-light: #26262a;
+  --btn-hover-dark: #56565a;
   --btn-hover-light: #56565a;
   --color-white: #ffffff;
 
@@ -102,9 +103,7 @@
   --shadow: var(--card-shadow);
 
   --transition:
-    background-color 300ms ease-in-out,
-    border-color 300ms ease-in-out,
-    color 300ms ease-in-out,
+    background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out,
     box-shadow 300ms ease-in-out;
 }
 
@@ -2298,6 +2297,10 @@ summary.card-menu-trigger svg {
 }
 
 /* Contextual Search Form for Chapter Navigation */
+.chapter-search * {
+  color: #fff !important
+}
+
 .chapter-search {
   display: flex;
   align-items: center;
@@ -2307,7 +2310,7 @@ summary.card-menu-trigger svg {
   padding: 0 12px;
   border: none !important;
   border-radius: var(--control-radius);
-  background: var(--soft);
+  background: var(--btn-light);
   color: var(--muted);
   box-shadow: var(--card-shadow);
   transition:
@@ -2315,10 +2318,12 @@ summary.card-menu-trigger svg {
     background-color 0.3s ease-in-out;
 }
 
+.chapter-search:hover,
 .chapter-search:focus-within {
-  outline: 2px solid var(--text);
-  outline-offset: 2px;
+  background: var(--btn-hover-dark);
 }
+
+
 
 .chapter-search input {
   width: 100%;
@@ -2950,7 +2955,7 @@ summary.card-menu-trigger svg {
   transform-origin: left;
 }
 
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(:has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
   opacity: 1;
 }
 
@@ -3076,7 +3081,9 @@ summary.card-menu-trigger svg {
   padding: 9px 12px;
   font-size: 16px;
   color: var(--muted);
-  transition: color 0.35s, border-color 0.35s;
+  transition:
+    color 0.35s,
+    border-color 0.35s;
 }
 
 .settings-tabs button[aria-selected='true'] {
@@ -3471,7 +3478,9 @@ summary.card-menu-trigger svg {
   background: var(--surface);
   color: var(--text);
   font-size: 16px;
-  transition: border-color 0.35s ease, background-color 0.35s ease;
+  transition:
+    border-color 0.35s ease,
+    background-color 0.35s ease;
 }
 
 .import-options {
