@@ -86,6 +86,9 @@ pub fn run() {
             db::export_library_backup,
             db::restore_library_backup,
             commands::indexing::index_title,
+            commands::diagnostics::record_diagnostic,
+            commands::diagnostics::get_diagnostics,
+            commands::diagnostics::clear_diagnostics,
         ])
         .on_window_event(|window, event| {
             match event {

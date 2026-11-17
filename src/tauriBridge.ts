@@ -381,6 +381,27 @@ export interface TauriCommands {
   };
   get_storage_stats: { args: Record<string, never>; return: StorageStats };
   save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
+  record_diagnostic: {
+    args: { entry: DiagnosticInputPayload };
+    return: DiagnosticRecordPayload | null;
+  };
+  get_diagnostics: { args: Record<string, never>; return: DiagnosticRecordPayload[] };
+  clear_diagnostics: { args: Record<string, never>; return: void };
+}
+
+export interface DiagnosticInputPayload {
+  operation: 'import' | 'cover' | 'background' | 'storage' | 'update' | 'reader';
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  code?: string;
+  safeIdentifier?: string;
+  retryable?: boolean;
+  durationMs?: number;
+}
+
+export interface DiagnosticRecordPayload extends DiagnosticInputPayload {
+  id: string;
+  timestamp: number;
 }
 
 export async function invokeCommand<K extends keyof TauriCommands>(
@@ -487,6 +508,9 @@ export interface DesktopAPI {
   installUpdate?(): Promise<void>;
   getStorageStats?(): Promise<StorageStats>;
   saveFileDialog?(defaultName: string, content: string): Promise<boolean>;
+  recordDiagnostic?(entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null>;
+  getDiagnostics?(): Promise<DiagnosticRecordPayload[]>;
+  clearDiagnostics?(): Promise<void>;
 }
 
 export interface DesktopUpdateInfo {
@@ -1264,6 +1288,28 @@ export class TauriDesktopBridge implements DesktopAPI {
   async saveFileDialog(defaultName: string, content: string): Promise<boolean> {
     return invokeCommand('save_file_dialog', { defaultName, content });
   }
+
+  async recordDiagnostic(entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null> {
+    try {
+      return await invokeCommand('record_diagnostic', { entry });
+    } catch {
+      return null;
+    }
+  }
+
+  async getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
+    try {
+      return await invokeCommand('get_diagnostics');
+    } catch {
+      return [];
+    }
+  }
+
+  async clearDiagnostics(): Promise<void> {
+    try {
+      await invokeCommand('clear_diagnostics');
+    } catch { }
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -1487,6 +1533,16 @@ class WebDesktopBridge implements DesktopAPI {
   async saveFileDialog(_defaultName: string, _content: string): Promise<boolean> {
     return false;
   }
+
+  async recordDiagnostic(_entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null> {
+    return null;
+  }
+
+  async getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
+    return [];
+  }
+
+  async clearDiagnostics(): Promise<void> { }
 }
 
 export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();

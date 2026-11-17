@@ -16,7 +16,6 @@ import {
 } from './data';
 import { type ImportPlan } from './ImportDialogs';
 import { desktopAPI } from './tauriBridge';
-import { recordDiagnostic } from './diagnostics';
 
 export type ImportState =
   | { status: 'idle' }
@@ -156,7 +155,7 @@ export function useImport({
           setState(isAbort ? { status: 'idle' } : { status: 'failed', message: msg });
           onNotify(msg);
           if (!isAbort) {
-            recordDiagnostic({
+            void desktopAPI.recordDiagnostic?.({
               operation: 'import',
               level: 'warn',
               code: (e as any)?.name,
@@ -223,7 +222,7 @@ export function useImport({
             const msg = errorMessage(e);
             issues.push({ path: plan.source.title, reason: msg });
             retry.push(plan);
-            recordDiagnostic({
+            void desktopAPI.recordDiagnostic?.({
               operation: 'import',
               level: 'error',
               code: (e as any)?.name,
@@ -251,7 +250,7 @@ export function useImport({
           setState(isAbort ? { status: 'idle' } : { status: 'failed', message: msg });
           onNotify(msg);
           if (!isAbort) {
-            recordDiagnostic({
+            void desktopAPI.recordDiagnostic?.({
               operation: 'import',
               level: 'error',
               code: (e as any)?.name,

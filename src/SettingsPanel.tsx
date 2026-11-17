@@ -5,7 +5,6 @@ import { X, Download, Upload, RefreshCw } from 'lucide-react';
 import { useApp } from './App';
 import { APP_VERSION } from './updates';
 import { limits, assertAtMost, withinTime } from './limits';
-import { getDiagnostics } from './diagnostics';
 import { desktopAPI, type StorageStats } from './tauriBridge';
 import {
   defaults,
@@ -654,7 +653,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     <button
                       className="secondary"
                       onClick={async () => {
-                        const logs = getDiagnostics();
+                        const logs = (await desktopAPI.getDiagnostics?.()) ?? [];
                         if (!logs.length) {
                           notify('No diagnostic entries recorded.');
                           return;
