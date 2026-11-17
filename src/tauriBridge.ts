@@ -421,6 +421,16 @@ export interface TauriCommands {
     };
     return: PrepareChapterDto;
   };
+
+  preview_chapters: {
+    args: { paths: string[] };
+    return: Array<{ name: string; pageCount: number }>;
+  };
+  schedule_background: { args: { mangaId: string }; return: boolean };
+  stop_background: { args: { mangaId: string }; return: void };
+  stop_all_background: { args: Record<string, never>; return: void };
+  resume_background: { args: Record<string, never>; return: number };
+
   get_storage_stats: { args: Record<string, never>; return: StorageStats };
   save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
   record_diagnostic: {
@@ -575,6 +585,13 @@ export interface DesktopAPI {
     onProgress?: (progress: IndexScanProgress) => void,
     signal?: AbortSignal,
   ): Promise<PrepareChapterDto>;
+
+  previewChapters?(paths: string[]): Promise<Array<{ name: string; pageCount: number }>>;
+  scheduleBackground?(mangaId: string): Promise<boolean>;
+  stopBackground?(mangaId: string): Promise<void>;
+  stopAllBackground?(): Promise<void>;
+  resumeBackground?(): Promise<number>;
+
   convertFileSrc?(filePath: string, protocol?: string): string;
   getPageImageUrl?(options: PageImageResourceOptions): string;
   getCoverImageUrl?(mangaId: string, version?: string | number, size?: number): string;
@@ -1355,6 +1372,40 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
+  async previewChapters(
+    paths: string[],
+  ): Promise<Array<{ name: string; pageCount: number }>> {
+    return await invokeCommand('preview_chapters', { paths });
+  }
+
+  async scheduleBackground(mangaId: string): Promise<boolean> {
+    try {
+      return await invokeCommand('schedule_background', { mangaId });
+    } catch {
+      return false;
+    }
+  }
+
+  async stopBackground(mangaId: string): Promise<void> {
+    try {
+      await invokeCommand('stop_background', { mangaId });
+    } catch { }
+  }
+
+  async stopAllBackground(): Promise<void> {
+    try {
+      await invokeCommand('stop_all_background');
+    } catch { }
+  }
+
+  async resumeBackground(): Promise<number> {
+    try {
+      return await invokeCommand('resume_background');
+    } catch {
+      return 0;
+    }
+  }
+
   convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
     if (typeof tauriConvertFileSrc === 'function' && isTauri) {
       try {
@@ -1851,4 +1902,69 @@ export async function validateBackupAsync(
   }
   const { validateBackup: validateBackupSync } = await import('./web/validation');
   return validateBackupSync(value);
+}
+import {
+  stopBackground as webStopBackground,
+  stopAllBackground as webStopAllBackground,
+  scheduleBackground as webScheduleBackground,
+  resumeBackground as webResumeBackground,
+} from './web/importScan';
+
+export {
+  DesktopHandle,
+  naturalOrder,
+  naturalSortPaths,
+  ignored,
+  clearSessionDimensions,
+  fromDesktopFolder,
+  fromFiles,
+  fromHandle,
+  droppedSources,
+  splitSource,
+  chapterGroups,
+  chapterPreviews,
+  indexSource,
+  prepareChapter,
+  scanImage,
+  discardScan,
+  warmSources,
+  type Issue,
+  type ScanState,
+  type ScanOptions,
+  type PrepareChapterOptions,
+  type ChapterPreview,
+  type Source,
+} from './web/importScan';
+
+export function stopBackground(id: string): void {
+  if (desktopAPI.isDesktop && desktopAPI.stopBackground) {
+    void desktopAPI.stopBackground(id);
+    return;
+  }
+  webStopBackground(id);
+}
+
+export function stopAllBackground(): void {
+  if (desktopAPI.isDesktop && desktopAPI.stopAllBackground) {
+    void desktopAPI.stopAllBackground();
+    return;
+  }
+  webStopAllBackground();
+}
+
+export function scheduleBackground(manga: Manga): void {
+  if (desktopAPI.isDesktop && desktopAPI.scheduleBackground) {
+    if (!manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))) return;
+    void desktopAPI.scheduleBackground(manga.id);
+    return;
+  }
+  webScheduleBackground(manga);
+}
+
+export async function resumeBackground(): Promise<void> {
+  if (desktopAPI.isDesktop && desktopAPI.resumeBackground) {
+    await desktopAPI.resumeBackground();
+    return;
+  }
+  await webResumeBackground();
 }

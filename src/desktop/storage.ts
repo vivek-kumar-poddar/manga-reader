@@ -43,6 +43,11 @@ syncChannel?.addEventListener('message', () => {
   clearDirHandleCache();
 });
 
+onMangaDelete((id) => {
+  if (id) void desktopAPI.stopBackground?.(id);
+  else void desktopAPI.stopAllBackground?.();
+});
+
 export const summary = (m: Manga): Summary => {
   const { chapters, cover: _cover, ...rest } = m;
 

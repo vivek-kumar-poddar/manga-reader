@@ -119,4 +119,4 @@ export {
   type PrepareChapterOptions,
   type ChapterPreview,
   type Source,
-} from './desktop/importScan';
+} from './tauriBridge';

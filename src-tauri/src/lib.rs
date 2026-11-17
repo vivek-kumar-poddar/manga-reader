@@ -94,6 +94,11 @@ pub fn run() {
             db::restore_library_backup,
             commands::indexing::index_title,
             commands::indexing::prepare_chapter,
+            commands::indexing::preview_chapters,
+            commands::indexing::schedule_background,
+            commands::indexing::stop_background,
+            commands::indexing::stop_all_background,
+            commands::indexing::resume_background,
             commands::diagnostics::record_diagnostic,
             commands::diagnostics::get_diagnostics,
             commands::diagnostics::clear_diagnostics,
@@ -150,6 +155,8 @@ pub fn run() {
             app.manage(commands::fs::DiscoveryState::default());
             app.manage(config_state);
             app.manage(commands::diagnostics::DiagnosticsState::default());
+
+            app.manage(commands::indexing::BackgroundQueueState::default());
 
             // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)
             let db_path = handle

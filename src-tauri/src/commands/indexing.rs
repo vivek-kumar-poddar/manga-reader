@@ -1,7 +1,9 @@
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
@@ -132,6 +134,331 @@ pub struct TitleDto {
     pub cover_path: Option<String>,
     pub issues: Vec<ScanIssue>,
     pub reused: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChapterPreviewDto {
+    pub name: String,
+    pub page_count: usize,
+}
+
+pub const MAX_QUEUED_JOBS: usize = 64;
+
+#[derive(Default)]
+pub struct BackgroundQueueState {
+    queue: Mutex<VecDeque<String>>,
+    cancelled: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    running: AtomicBool,
+}
+
+impl BackgroundQueueState {
+    pub fn stop(&self, id: &str) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.retain(|item| item != id);
+        }
+        if let Ok(mut c) = self.cancelled.lock() {
+            if let Some(flag) = c.remove(id) {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    pub fn stop_all(&self) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.clear();
+        }
+        if let Ok(mut c) = self.cancelled.lock() {
+            for (_, flag) in c.drain() {
+                flag.store(true, Ordering::Relaxed);
+            }
+        }
+    }
+
+    pub fn enqueue(&self, id: String) -> bool {
+        let mut q = match self.queue.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        let mut c = match self.cancelled.lock() {
+            Ok(g) => g,
+            Err(_) => return false,
+        };
+        if c.contains_key(&id) || q.contains(&id) || c.len() >= MAX_QUEUED_JOBS {
+            return false;
+        }
+        c.insert(id.clone(), Arc::new(AtomicBool::new(false)));
+        q.push_back(id);
+        true
+    }
+
+    fn pop_next(&self) -> Option<(String, Arc<AtomicBool>)> {
+        let mut q = self.queue.lock().ok()?;
+        let id = q.pop_front()?;
+        let c = self.cancelled.lock().ok()?;
+        let flag = c.get(&id)?.clone();
+        Some((id, flag))
+    }
+
+    fn finish_job(&self, id: &str, flag: &Arc<AtomicBool>) {
+        if let Ok(mut c) = self.cancelled.lock() {
+            if let Some(existing) = c.get(id) {
+                if Arc::ptr_eq(existing, flag) {
+                    c.remove(id);
+                }
+            }
+        }
+    }
+
+    fn has_pending(&self) -> bool {
+        self.queue.lock().map(|q| !q.is_empty()).unwrap_or(false)
+    }
+}
+
+pub fn compute_chapter_previews(paths: &[String]) -> Vec<ChapterPreviewDto> {
+    let mut groups: BTreeMap<String, usize> = BTreeMap::new();
+    let mut order: Vec<String> = Vec::new();
+    let total = paths.len();
+
+    for path in paths {
+        let parts: Vec<&str> = path.split('/').collect();
+        if parts.len() == 1 && total > 1 {
+            let lower = path.to_ascii_lowercase();
+            if lower.starts_with("thumbnail.") || lower.starts_with("cover.") {
+                continue;
+            }
+        }
+        let name = if parts.len() == 1 {
+            "Root pages".to_string()
+        } else {
+            parts[..parts.len() - 1].join(" / ")
+        };
+        if !groups.contains_key(&name) {
+            order.push(name.clone());
+        }
+        *groups.entry(name).or_insert(0) += 1;
+    }
+
+    order
+        .into_iter()
+        .filter_map(|name| {
+            groups
+                .remove(&name)
+                .map(|page_count| ChapterPreviewDto { name, page_count })
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn preview_chapters(paths: Vec<String>) -> Vec<ChapterPreviewDto> {
+    compute_chapter_previews(&paths)
+}
+
+fn spawn_background_drain(app: AppHandle) {
+    let bg_state = match app.try_state::<BackgroundQueueState>() {
+        Some(s) => s,
+        None => return,
+    };
+
+    if bg_state
+        .running
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let next_job = {
+                let state = app_clone.state::<BackgroundQueueState>();
+                state.pop_next()
+            };
+
+            let (manga_id, cancel_flag) = match next_job {
+                Some(job) => job,
+                None => break,
+            };
+
+            process_background_manga(&app_clone, &manga_id, &cancel_flag).await;
+
+            {
+                let state = app_clone.state::<BackgroundQueueState>();
+                state.finish_job(&manga_id, &cancel_flag);
+            }
+        }
+
+        let has_more = {
+            let state = app_clone.state::<BackgroundQueueState>();
+            state.running.store(false, Ordering::SeqCst);
+            state.has_pending()
+        };
+
+        if has_more {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            spawn_background_drain(app_clone);
+        }
+    });
+}
+
+async fn process_background_manga(app: &AppHandle, manga_id: &str, cancel_flag: &Arc<AtomicBool>) {
+    let db_state = match app.try_state::<crate::db::DbState>() {
+        Some(s) => s,
+        None => return,
+    };
+
+    let id_str = manga_id.to_string();
+    let initial = match db_state
+        .read(move |conn| crate::db::get_manga(conn, &id_str))
+        .await
+    {
+        Ok(Some(m)) => m,
+        _ => return,
+    };
+
+    let mut expected_updated_at = initial.updated_at;
+    let mut expected_revision = initial.revision;
+    let chapter_count = initial.chapters.len();
+
+    for i in 0..chapter_count {
+        if cancel_flag.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let has_pending = initial
+            .chapters
+            .get(i)
+            .map(|c| {
+                c.pages.iter().any(|p| {
+                    p.dimensions_pending.unwrap_or(false) || p.width == 0 || p.height == 0
+                })
+            })
+            .unwrap_or(false);
+
+        if !has_pending {
+            continue;
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if cancel_flag.load(Ordering::Relaxed) {
+            break;
+        }
+
+        let id_check = manga_id.to_string();
+        let stored = match db_state
+            .read(move |conn| crate::db::get_manga(conn, &id_check))
+            .await
+        {
+            Ok(Some(m)) => m,
+            _ => break,
+        };
+
+        if (stored.updated_at - expected_updated_at).abs() > 0.001
+            || stored.revision != expected_revision
+        {
+            break;
+        }
+
+        let local_path_str = match stored.local_path.as_ref() {
+            Some(lp) if !lp.trim().is_empty() => lp.trim().to_string(),
+            _ => break,
+        };
+
+        let root_path = match dunce::canonicalize(Path::new(&local_path_str)) {
+            Ok(p) if p.is_dir() => p,
+            _ => break,
+        };
+
+        let allowed = app.state::<AllowedRoots>();
+        if !allowed.is_allowed(&root_path) {
+            break;
+        }
+
+        match prepare_chapter_core(app, manga_id, i, None, None, Some(cancel_flag.clone())).await {
+            Ok(dto) => {
+                expected_updated_at = dto.updated_at;
+                expected_revision = Some(dto.revision);
+                if !dto.issues.is_empty() && dto.pages.iter().any(|p| p.dimensions_pending) {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn schedule_background(app: AppHandle, manga_id: String) -> Result<bool, String> {
+    let trimmed = manga_id.trim().to_string();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    let bg_state = app.state::<BackgroundQueueState>();
+    let enqueued = bg_state.enqueue(trimmed);
+    if enqueued {
+        spawn_background_drain(app.clone());
+    }
+    Ok(enqueued)
+}
+
+#[tauri::command]
+pub async fn stop_background(app: AppHandle, manga_id: String) -> Result<(), String> {
+    let bg_state = app.state::<BackgroundQueueState>();
+    bg_state.stop(manga_id.trim());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_all_background(app: AppHandle) -> Result<(), String> {
+    let bg_state = app.state::<BackgroundQueueState>();
+    bg_state.stop_all();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_background(app: AppHandle) -> Result<usize, String> {
+    let db_state = match app.try_state::<crate::db::DbState>() {
+        Some(s) => s,
+        None => return Ok(0),
+    };
+
+    let summaries = db_state
+        .read(crate::db::list_library)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut scheduled = 0;
+    for summary in summaries {
+        let id = summary.id.clone();
+        if let Ok(Some(m)) = db_state.read(move |conn| crate::db::get_manga(conn, &id)).await {
+            let has_pending = m.chapters.iter().any(|c| {
+                c.pages
+                    .iter()
+                    .any(|p| p.dimensions_pending.unwrap_or(false) || p.width == 0 || p.height == 0)
+            });
+            if !has_pending {
+                continue;
+            }
+            if let Some(ref lp) = m.local_path {
+                if let Ok(canonical) = dunce::canonicalize(Path::new(lp.trim())) {
+                    let allowed = app.state::<AllowedRoots>();
+                    if canonical.is_dir() && allowed.is_allowed(&canonical) {
+                        let bg_state = app.state::<BackgroundQueueState>();
+                        if bg_state.enqueue(m.id) {
+                            scheduled += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if scheduled > 0 {
+        spawn_background_drain(app);
+    }
+
+    Ok(scheduled)
 }
 
 fn is_combining_mark(c: char) -> bool {
@@ -467,6 +794,17 @@ pub async fn index_title(
     let sort_mode = opts.sort.unwrap_or_else(|| "natural".to_string());
     let warm_count = opts.warm_chapters.unwrap_or(5);
 
+    if let Some(ref tid) = opts.target_id {
+        if let Some(bg) = app.try_state::<BackgroundQueueState>() {
+            bg.stop(tid);
+        }
+    }
+    if let Some(ref prev) = opts.previous {
+        if let Some(bg) = app.try_state::<BackgroundQueueState>() {
+            bg.stop(&prev.id);
+        }
+    }
+
     let scan_mgr = app.state::<crate::commands::fs::ScanManager>();
     let handle = opts.job_id.as_deref().map(|id| scan_mgr.register(id));
     let cancel_flag = handle.as_ref().map(|h| std::sync::Arc::clone(&h.flag));
@@ -520,6 +858,9 @@ pub async fn index_title(
             })
             .await
             {
+                if let Some(bg) = app.try_state::<BackgroundQueueState>() {
+                    bg.stop(&prev_rec.id);
+                }
                 previous_manga = Some(manga_record_to_previous_dto(prev_rec));
             }
         }
@@ -1043,17 +1384,15 @@ pub async fn index_title(
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
     let base_slug = generate_slug(&title_name);
-    let preserve_prev_slug = previous_manga
-        .as_ref()
-        .and_then(|prev| {
-            if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
-                || opts.title.is_none()
-            {
-                prev.slug.clone()
-            } else {
-                None
-            }
-        });
+    let preserve_prev_slug = previous_manga.as_ref().and_then(|prev| {
+        if opts.title.as_deref().map(|t| t.trim()) == Some(prev.title.as_str())
+            || opts.title.is_none()
+        {
+            prev.slug.clone()
+        } else {
+            None
+        }
+    });
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1193,7 +1532,6 @@ pub async fn index_title(
     })
 }
 
-// --- ADD THIS CODE ---
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PrepareChapterDto {
@@ -1204,16 +1542,16 @@ pub struct PrepareChapterDto {
     pub issues: Vec<ScanIssue>,
 }
 
-#[tauri::command]
-pub async fn prepare_chapter(
-    app: AppHandle,
-    manga_id: String,
+pub async fn prepare_chapter_core(
+    app: &AppHandle,
+    manga_id: &str,
     chapter_index: usize,
-    job_id: Option<String>,
-    on_progress: tauri::ipc::Channel<ScanProgress>,
+    job_id: Option<&str>,
+    on_progress: Option<&tauri::ipc::Channel<ScanProgress>>,
+    external_cancel: Option<Arc<AtomicBool>>,
 ) -> Result<PrepareChapterDto, String> {
     let scan_mgr = app.state::<crate::commands::fs::ScanManager>();
-    let handle = job_id.as_deref().map(|id| scan_mgr.register(id));
+    let handle = job_id.map(|id| scan_mgr.register(id));
 
     struct JobGuard<'a> {
         mgr: &'a crate::commands::fs::ScanManager,
@@ -1228,25 +1566,32 @@ pub async fn prepare_chapter(
     }
     let _guard = JobGuard {
         mgr: &scan_mgr,
-        id: job_id.as_deref(),
+        id: job_id,
     };
 
-    let check_cancelled = |handle: Option<&crate::commands::fs::ScanHandle>| -> Result<(), String> {
+    let check_cancelled = |handle: Option<&crate::commands::fs::ScanHandle>,
+                           ext: Option<&Arc<AtomicBool>>|
+     -> Result<(), String> {
         if let Some(h) = handle {
             if h.flag.load(std::sync::atomic::Ordering::Relaxed) || *h.receiver.borrow() {
+                return Err("Indexing cancelled".to_string());
+            }
+        }
+        if let Some(flag) = ext {
+            if flag.load(Ordering::Relaxed) {
                 return Err("Indexing cancelled".to_string());
             }
         }
         Ok(())
     };
 
-    check_cancelled(handle.as_ref())?;
+    check_cancelled(handle.as_ref(), external_cancel.as_ref())?;
 
     let db_state = app
         .try_state::<crate::db::DbState>()
         .ok_or_else(|| "Database state not initialized".to_string())?;
 
-    let id_clone = manga_id.clone();
+    let id_clone = manga_id.to_string();
     let mut manga = db_state
         .read(move |conn| crate::db::get_manga(conn, &id_clone))
         .await
@@ -1295,7 +1640,7 @@ pub async fn prepare_chapter(
     if total_pending > 0 {
         let mut done = 0;
         for chunk in pending_items.chunks(SCAN_BATCH_SIZE) {
-            check_cancelled(handle.as_ref())?;
+            check_cancelled(handle.as_ref(), external_cancel.as_ref())?;
 
             let chunk_vec = chunk.to_vec();
             let base = root_path.clone();
@@ -1359,18 +1704,20 @@ pub async fn prepare_chapter(
                 }
             }
 
-            let _ = on_progress.send(ScanProgress {
-                phase: "index".to_string(),
-                done,
-                total: total_pending,
-                title: title_name.clone(),
-            });
+            if let Some(ch) = on_progress {
+                let _ = ch.send(ScanProgress {
+                    phase: "index".to_string(),
+                    done,
+                    total: total_pending,
+                    title: title_name.clone(),
+                });
+            }
 
             tokio::task::yield_now().await;
         }
     }
 
-    check_cancelled(handle.as_ref())?;
+    check_cancelled(handle.as_ref(), external_cancel.as_ref())?;
 
     if updated {
         let now = SystemTime::now()
@@ -1410,6 +1757,25 @@ pub async fn prepare_chapter(
     })
 }
 
+#[tauri::command]
+pub async fn prepare_chapter(
+    app: AppHandle,
+    manga_id: String,
+    chapter_index: usize,
+    job_id: Option<String>,
+    on_progress: tauri::ipc::Channel<ScanProgress>,
+) -> Result<PrepareChapterDto, String> {
+    prepare_chapter_core(
+        &app,
+        &manga_id,
+        chapter_index,
+        job_id.as_deref(),
+        Some(&on_progress),
+        None,
+    )
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1427,6 +1793,30 @@ mod tests {
         assert_eq!(generate_slug("index.html"), "manga");
         // Verify combining marks (e.g. Devanagari vowel signs) are preserved without hyphen splitting
         assert_eq!(generate_slug("हिंदी मंगा"), "हिंदी-मंगा");
+    }
+
+    #[test]
+    fn test_compute_chapter_previews() {
+        let paths = vec![
+            "cover.jpg".to_string(),
+            "Chapter 1/01.jpg".to_string(),
+            "Chapter 1/02.jpg".to_string(),
+            "Chapter 2/01.jpg".to_string(),
+        ];
+        let previews = compute_chapter_previews(&paths);
+        assert_eq!(
+            previews,
+            vec![
+                ChapterPreviewDto {
+                    name: "Chapter 1".into(),
+                    page_count: 2
+                },
+                ChapterPreviewDto {
+                    name: "Chapter 2".into(),
+                    page_count: 1
+                },
+            ]
+        );
     }
 
     #[test]

@@ -118,4 +118,4 @@ export {
   type PrepareChapterOptions,
   type ChapterPreview,
   type Source,
-} from './importScan';
+} from './tauriBridge';
