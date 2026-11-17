@@ -8,19 +8,16 @@ import {
   assertImageDimensions,
   withinTime,
 } from '../limits';
-import { dimensions, imageFile } from '../images';
+import { imageFile } from '../images';
 import {
   desktopAPI,
   type FolderEntry,
-  type PageHeader,
   type LibraryDiscovery,
 } from '../tauriBridge';
 import {
   type SourceFile,
-  saveManga,
   getManga,
   listLibrary,
-  fileFor,
   access,
   errorMessage,
   onMangaDelete,
@@ -402,32 +399,6 @@ export function chapterPreviews(source: Source): ChapterPreview[] {
   return Array.from(groups.entries(), ([name, pageCount]) => ({ name, pageCount }));
 }
 
-export async function pooled<T>(
-  items: T[],
-  limitOrFn: number | ((item: T) => Promise<void>),
-  fnOrSignal?: ((item: T) => Promise<void>) | AbortSignal,
-  signal?: AbortSignal,
-): Promise<void> {
-  const limit = typeof limitOrFn === 'number' ? limitOrFn : 4;
-  const fn =
-    typeof limitOrFn === 'function' ? limitOrFn : (fnOrSignal as (item: T) => Promise<void>);
-  const sig = fnOrSignal instanceof AbortSignal ? fnOrSignal : signal;
-
-  if (items.length === 0) return;
-  const poolLimit = Math.max(1, Math.min(limit, items.length));
-  let next = 0;
-
-  const workers = Array.from({ length: poolLimit }, async () => {
-    while (next < items.length) {
-      if (sig?.aborted) throw new DOMException('Operation cancelled', 'AbortError');
-      const idx = next++;
-      await fn(items[idx]);
-    }
-  });
-
-  await Promise.all(workers);
-}
-
 export async function indexSource(
   source: Source,
   options: ScanOptions = {},
@@ -534,111 +505,59 @@ export async function prepareChapter(
   const ch = manga.chapters[chapterIndex];
   if (!ch) return [];
 
-  const pages = ch.pages.map((p) => ({ ...p }));
-  const unmeasured = pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
-  if (!unmeasured.length) return [];
+  const hasPending = ch.pages.some((p) => p.dimensionsPending || !p.width || !p.height);
+  if (!hasPending) return [];
 
-  const issues: Issue[] = [];
-  let updated = false;
+  if (!desktopAPI.prepareChapter) {
+    throw new Error('Desktop chapter preparation requires native prepareChapter');
+  }
 
-  if (desktopAPI.prepareChapterHeaders) {
-    const paths = unmeasured.map((p) => p.path).filter((p): p is string => Boolean(p));
-    if (paths.length > 0) {
-      try {
-        alive(options.signal);
-        const headers = await desktopAPI.prepareChapterHeaders(paths, manga.id);
-        alive(options.signal);
-        const headerMap = new Map<string, PageHeader>();
-        for (const h of headers) {
-          headerMap.set(h.path, h);
-        }
-        let done = 0;
-        for (const p of unmeasured) {
-          const found = p.path ? headerMap.get(p.path) : undefined;
-          if (found && found.width > 0 && found.height > 0) {
-            assertImageDimensions(found.width, found.height);
-            p.width = found.width;
-            p.height = found.height;
-            p.size = found.size;
-            p.modified = found.modified;
-            p.dimensionsPending = false;
-            updated = true;
-            done++;
-            options.update?.({
-              phase: 'index',
-              done,
-              total: unmeasured.length,
-              title: manga.title,
-            });
-          }
-        }
-      } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') throw err;
-        console.warn('Native prepareChapterHeaders failed:', err);
+  const dto = await desktopAPI.prepareChapter(
+    manga.id,
+    chapterIndex,
+    (progress) => {
+      alive(options.signal);
+      options.update?.({
+        phase: 'index',
+        done: progress.done,
+        total: progress.total,
+        title: manga.title,
+      });
+    },
+    options.signal,
+  );
+
+  alive(options.signal);
+
+  if (dto.pages.length > 0) {
+    for (const p of dto.pages) {
+      if (!p.dimensionsPending && p.width > 0 && p.height > 0) {
+        assertImageDimensions(p.width, p.height);
       }
     }
+    manga.chapters[chapterIndex] = {
+      ...ch,
+      pages: dto.pages.map((p) => ({
+        name: p.name,
+        path: p.path,
+        width: p.width,
+        height: p.height,
+        size: p.size,
+        modified: p.modified,
+        dimensionsPending: p.dimensionsPending,
+      })),
+    };
   }
 
-  const stillPending = pages.filter((p) => p.dimensionsPending || !p.width || !p.height);
-  if (stillPending.length > 0) {
-    let done = unmeasured.length - stillPending.length;
-    await pooled(
-      stillPending,
-      async (p) => {
-        alive(options.signal);
-        try {
-          if (desktopAPI.getImageDimensions && manga.localPath && p.path) {
-            const sep = manga.localPath.includes('\\') ? '\\' : '/';
-            const absPath =
-              manga.localPath.replace(/[\\/]+$/, '') + sep + p.path.split('/').join(sep);
-            const dim = await desktopAPI.getImageDimensions(absPath);
-            if (dim && dim.width > 0 && dim.height > 0) {
-              assertImageDimensions(dim.width, dim.height);
-              p.width = dim.width;
-              p.height = dim.height;
-              p.dimensionsPending = false;
-              updated = true;
-              return;
-            }
-          }
-          const file = await fileFor(manga, p);
-          alive(options.signal);
-          if (!file.size) throw new Error('Empty file.');
-          const size = await dimensions(file, options.signal);
-          assertImageDimensions(size.width, size.height);
-          p.width = size.width;
-          p.height = size.height;
-          p.size = file.size;
-          p.modified = file.lastModified;
-          p.dimensionsPending = false;
-          updated = true;
-        } catch (err) {
-          alive(options.signal);
-          issues.push({
-            path: p.path || p.name,
-            reason: errorMessage(err),
-          });
-        } finally {
-          done++;
-          options.update?.({
-            phase: 'index',
-            done,
-            total: unmeasured.length,
-            title: manga.title,
-          });
-        }
-      },
-      options.signal,
-    );
+  if (dto.updated) {
+    manga.updatedAt = dto.updatedAt;
+    manga.revision = dto.revision;
+    invalidateSummaryCache();
+    clearDirHandleCache(manga.id);
+    broadcastSync({ type: 'library', id: manga.id });
   }
 
-  if (updated) {
-    alive(options.signal);
-    manga.chapters[chapterIndex] = { ...ch, pages };
-    await saveManga(manga);
-  }
-
-  return issues;
+  return dto.issues;
 }
 
 interface BackgroundJob {

@@ -1193,6 +1193,223 @@ pub async fn index_title(
     })
 }
 
+// --- ADD THIS CODE ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrepareChapterDto {
+    pub pages: Vec<PageDto>,
+    pub updated: bool,
+    pub updated_at: f64,
+    pub revision: u64,
+    pub issues: Vec<ScanIssue>,
+}
+
+#[tauri::command]
+pub async fn prepare_chapter(
+    app: AppHandle,
+    manga_id: String,
+    chapter_index: usize,
+    job_id: Option<String>,
+    on_progress: tauri::ipc::Channel<ScanProgress>,
+) -> Result<PrepareChapterDto, String> {
+    let scan_mgr = app.state::<crate::commands::fs::ScanManager>();
+    let handle = job_id.as_deref().map(|id| scan_mgr.register(id));
+
+    struct JobGuard<'a> {
+        mgr: &'a crate::commands::fs::ScanManager,
+        id: Option<&'a str>,
+    }
+    impl<'a> Drop for JobGuard<'a> {
+        fn drop(&mut self) {
+            if let Some(id) = self.id {
+                self.mgr.unregister(id);
+            }
+        }
+    }
+    let _guard = JobGuard {
+        mgr: &scan_mgr,
+        id: job_id.as_deref(),
+    };
+
+    let check_cancelled = |handle: Option<&crate::commands::fs::ScanHandle>| -> Result<(), String> {
+        if let Some(h) = handle {
+            if h.flag.load(std::sync::atomic::Ordering::Relaxed) || *h.receiver.borrow() {
+                return Err("Indexing cancelled".to_string());
+            }
+        }
+        Ok(())
+    };
+
+    check_cancelled(handle.as_ref())?;
+
+    let db_state = app
+        .try_state::<crate::db::DbState>()
+        .ok_or_else(|| "Database state not initialized".to_string())?;
+
+    let id_clone = manga_id.clone();
+    let mut manga = db_state
+        .read(move |conn| crate::db::get_manga(conn, &id_clone))
+        .await
+        .map_err(|e| format!("Failed to read manga: {e}"))?
+        .ok_or_else(|| format!("Manga '{manga_id}' not found"))?;
+
+    let local_path_str = manga
+        .local_path
+        .clone()
+        .ok_or_else(|| "Desktop manga is missing localPath".to_string())?;
+
+    let root_path = dunce::canonicalize(Path::new(local_path_str.trim()))
+        .map_err(|e| format!("Failed to resolve manga root path: {e}"))?;
+
+    let allowed = app.state::<AllowedRoots>();
+    if !allowed.is_allowed(&root_path) {
+        return Err(format!(
+            "Path '{}' is not under an allowed library root",
+            root_path.display()
+        ));
+    }
+
+    if chapter_index >= manga.chapters.len() {
+        return Ok(PrepareChapterDto {
+            pages: Vec::new(),
+            updated: false,
+            updated_at: manga.updated_at,
+            revision: manga.revision.unwrap_or(1),
+            issues: Vec::new(),
+        });
+    }
+
+    let title_name = manga.title.clone();
+    let pending_items: Vec<(usize, String)> = manga.chapters[chapter_index]
+        .pages
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.dimensions_pending.unwrap_or(false) || p.width == 0 || p.height == 0)
+        .map(|(idx, p)| (idx, p.path.clone()))
+        .collect();
+
+    let total_pending = pending_items.len();
+    let mut issues = Vec::new();
+    let mut updated = false;
+
+    if total_pending > 0 {
+        let mut done = 0;
+        for chunk in pending_items.chunks(SCAN_BATCH_SIZE) {
+            check_cancelled(handle.as_ref())?;
+
+            let chunk_vec = chunk.to_vec();
+            let base = root_path.clone();
+            let batch_results: Vec<(usize, String, Result<(u32, u32, u64, f64), String>)> =
+                tauri::async_runtime::spawn_blocking(move || {
+                    chunk_vec
+                        .into_par_iter()
+                        .map(|(idx, rel_path)| {
+                            let resolved = match crate::commands::fs::resolve_relative_path(
+                                &base, &rel_path,
+                            ) {
+                                Ok(p) => p,
+                                Err(e) => return (idx, rel_path, Err(e.to_string())),
+                            };
+                            let meta = match std::fs::metadata(&resolved) {
+                                Ok(m) if m.is_file() && m.len() > 0 => m,
+                                Ok(_) => return (idx, rel_path, Err("Empty file.".to_string())),
+                                Err(e) => return (idx, rel_path, Err(e.to_string())),
+                            };
+                            let modified = meta
+                                .modified()
+                                .ok()
+                                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                                .map(|d| d.as_millis() as f64)
+                                .unwrap_or(0.0);
+                            match parse_image_dimensions(&resolved) {
+                                (Some(w), Some(h)) if w > 0 && h > 0 => {
+                                    (idx, rel_path, Ok((w, h, meta.len(), modified)))
+                                }
+                                _ => (
+                                    idx,
+                                    rel_path,
+                                    Err("Corrupt image or unreadable header.".to_string()),
+                                ),
+                            }
+                        })
+                        .collect()
+                })
+                .await
+                .map_err(|e| format!("Prepare task join error: {e}"))?;
+
+            for (idx, rel_path, res) in batch_results {
+                done += 1;
+                match res {
+                    Ok((w, h, size, modified)) => {
+                        if let Some(page) = manga.chapters[chapter_index].pages.get_mut(idx) {
+                            page.width = w;
+                            page.height = h;
+                            page.size = Some(size);
+                            page.modified = Some(modified);
+                            page.dimensions_pending = Some(false);
+                            updated = true;
+                        }
+                    }
+                    Err(reason) => {
+                        issues.push(ScanIssue {
+                            path: rel_path,
+                            reason,
+                        });
+                    }
+                }
+            }
+
+            let _ = on_progress.send(ScanProgress {
+                phase: "index".to_string(),
+                done,
+                total: total_pending,
+                title: title_name.clone(),
+            });
+
+            tokio::task::yield_now().await;
+        }
+    }
+
+    check_cancelled(handle.as_ref())?;
+
+    if updated {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as f64;
+        manga.updated_at = now;
+        manga.revision = Some(manga.revision.unwrap_or(1) + 1);
+
+        let manga_to_save = manga.clone();
+        db_state
+            .write(move |conn| crate::db::save_manga(conn, &manga_to_save))
+            .await
+            .map_err(|e| format!("Failed to save prepared chapter: {e}"))?;
+    }
+
+    let pages = manga.chapters[chapter_index]
+        .pages
+        .iter()
+        .map(|p| PageDto {
+            name: p.name.clone(),
+            path: p.path.clone(),
+            width: p.width,
+            height: p.height,
+            size: p.size,
+            modified: p.modified,
+            dimensions_pending: p.dimensions_pending.unwrap_or(false),
+        })
+        .collect();
+
+    Ok(PrepareChapterDto {
+        pages,
+        updated,
+        updated_at: manga.updated_at,
+        revision: manga.revision.unwrap_or(1),
+        issues,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

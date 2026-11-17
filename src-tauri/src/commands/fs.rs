@@ -64,17 +64,6 @@ pub struct FolderEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PageHeader {
-    pub path: String,
-    pub width: u32,
-    pub height: u32,
-    pub size: u64,
-    pub modified: f64,
-    pub checksum: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct DiscoveredPage {
     pub name: String,
     pub relative_path: String,
@@ -479,104 +468,6 @@ pub async fn check_access(
 
     let allowed = app.state::<AllowedRoots>();
     Ok(allowed.is_allowed(&canonical))
-}
-
-#[tauri::command]
-pub async fn prepare_chapter_headers(
-    app: AppHandle,
-    paths: Vec<String>,
-    manga_id: Option<String>,
-) -> Result<Vec<PageHeader>, FsError> {
-    let allowed_set = {
-        let allowed = app.state::<AllowedRoots>();
-        allowed.get_active_roots()
-    };
-
-    let base_dir: Option<PathBuf> = if let Some(ref id) = manga_id {
-        if let Some(db) = app.try_state::<crate::db::DbState>() {
-            db.get_local_path(id).await.map(PathBuf::from)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    // Parallel extraction with Rayon off main thread
-    let results: Vec<PageHeader> = tauri::async_runtime::spawn_blocking(move || {
-        paths
-            .into_par_iter()
-            .filter_map(|p_str| {
-                let trimmed = p_str.trim();
-                let path = Path::new(trimmed);
-
-                let resolved = if path.is_relative() {
-                    if let Some(ref base) = base_dir {
-                        resolve_relative_path(base, trimmed).ok()?
-                    } else {
-                        dunce::canonicalize(path).ok()?
-                    }
-                } else {
-                    dunce::canonicalize(path).ok()?
-                };
-
-                if allowed_set.is_empty() || !allowed_set.iter().any(|r| resolved.starts_with(r)) {
-                    return None;
-                }
-                let ext = resolved.extension()?.to_str()?.to_lowercase();
-                if !ALLOWED_IMAGE_EXTENSIONS.contains(&ext.as_str()) {
-                    return None;
-                }
-                let metadata = std::fs::metadata(&resolved).ok()?;
-                if !metadata.is_file() || metadata.len() > MAX_FILE_READ_BYTES {
-                    return None;
-                }
-                let (width, height) = match parse_image_dimensions(&resolved) {
-                    (Some(w), Some(h)) => (w, h),
-                    _ => return None,
-                };
-
-                let modified = metadata
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as f64)
-                    .unwrap_or(0.0);
-
-                // Lightweight checksum: FNV-1a of size + modified + first 512 bytes
-                let mut hash: u64 = 0xcbf29ce484222325;
-                let size = metadata.len();
-                for b in size.to_le_bytes() {
-                    hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
-                }
-                for b in (modified as u64).to_le_bytes() {
-                    hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
-                }
-                if let Ok(mut f) = File::open(&resolved) {
-                    let mut sample = [0u8; 512];
-                    if let Ok(n) = f.read(&mut sample) {
-                        for &b in &sample[..n] {
-                            hash = (hash ^ (b as u64)).wrapping_mul(0x100000001b3);
-                        }
-                    }
-                }
-                let checksum = Some(format!("{:016x}", hash));
-
-                Some(PageHeader {
-                    path: p_str,
-                    width,
-                    height,
-                    size,
-                    modified,
-                    checksum,
-                })
-            })
-            .collect()
-    })
-    .await
-    .map_err(|e| FsError::Io(e.to_string()))?;
-
-    Ok(results)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

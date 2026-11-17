@@ -42,7 +42,6 @@ pub fn run() {
             commands::fs::get_image_dimensions,
             commands::fs::cancel_scan,
             commands::fs::natural_sort_paths,
-            commands::fs::prepare_chapter_headers,
             commands::fs::discover_library,
             commands::fs::is_same_path,
             commands::fs::resolve_manga_path,
@@ -86,6 +85,7 @@ pub fn run() {
             db::export_library_backup,
             db::restore_library_backup,
             commands::indexing::index_title,
+            commands::indexing::prepare_chapter,
             commands::diagnostics::record_diagnostic,
             commands::diagnostics::get_diagnostics,
             commands::diagnostics::clear_diagnostics,
@@ -137,6 +137,7 @@ pub fn run() {
             app.manage(commands::fs::ScanManager::default());
             app.manage(commands::fs::DiscoveryState::default());
             app.manage(config_state);
+            app.manage(commands::diagnostics::DiagnosticsState::default());
 
             // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)
             let db_path = handle

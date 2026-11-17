@@ -11,15 +11,6 @@ export interface FolderEntry {
   height?: number | null;
 }
 
-export interface PageHeader {
-  path: string;
-  width: number;
-  height: number;
-  size: number;
-  modified: number;
-  checksum?: string;
-}
-
 export interface DiscoveredPage {
   name: string;
   relativePath: string;
@@ -113,6 +104,22 @@ export interface IndexTitleDto {
   coverPath?: string;
   issues: Array<{ path: string; reason: string }>;
   reused: number;
+}
+
+export interface PrepareChapterDto {
+  pages: Array<{
+    name: string;
+    path: string;
+    width: number;
+    height: number;
+    size?: number;
+    modified?: number;
+    dimensionsPending: boolean;
+  }>;
+  updated: boolean;
+  updatedAt: number;
+  revision: number;
+  issues: Array<{ path: string; reason: string }>;
 }
 
 export interface IndexTitleOptions {
@@ -275,10 +282,6 @@ export interface TauriCommands {
   get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
   cancel_scan: { args: { scanId: string }; return: boolean };
   natural_sort_paths: { args: { paths: string[] }; return: string[] };
-  prepare_chapter_headers: {
-    args: { paths: string[]; mangaId?: string };
-    return: PageHeader[];
-  };
   resolve_manga_path: {
     args: { mangaId?: string; relativePath: string; localPath?: string };
     return: string;
@@ -379,6 +382,15 @@ export interface TauriCommands {
     };
     return: IndexTitleDto;
   };
+  prepare_chapter: {
+    args: {
+      mangaId: string;
+      chapterIndex: number;
+      jobId?: string;
+      onProgress?: unknown;
+    };
+    return: PrepareChapterDto;
+  };
   get_storage_stats: { args: Record<string, never>; return: StorageStats };
   save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
   record_diagnostic: {
@@ -428,7 +440,6 @@ export interface DesktopAPI {
     options?: ListFolderOptions,
   ): Promise<LibraryDiscovery | null>;
   naturalSortPaths?(paths: string[]): Promise<string[]>;
-  prepareChapterHeaders?(paths: string[], mangaId?: string): Promise<PageHeader[]>;
   resolvePath?(mangaId?: string, relativePath?: string, localPath?: string): Promise<string>;
   checkAccess?(mangaId?: string, localPath?: string): Promise<boolean>;
   revokeRoot?(rootPath: string): Promise<boolean>;
@@ -500,6 +511,12 @@ export interface DesktopAPI {
     options?: IndexTitleOptions,
     onProgress?: (progress: IndexScanProgress) => void,
   ): Promise<IndexTitleDto>;
+  prepareChapter?(
+    mangaId: string,
+    chapterIndex: number,
+    onProgress?: (progress: IndexScanProgress) => void,
+    signal?: AbortSignal,
+  ): Promise<PrepareChapterDto>;
   convertFileSrc?(filePath: string, protocol?: string): string;
   getPageImageUrl?(options: PageImageResourceOptions): string;
   getCoverImageUrl?(mangaId: string, version?: string | number, size?: number): string;
@@ -650,15 +667,6 @@ export class TauriDesktopBridge implements DesktopAPI {
     } catch (err) {
       console.warn('Tauri naturalSortPaths failed:', parseFsError(err) ?? err);
       return paths;
-    }
-  }
-
-  async prepareChapterHeaders(paths: string[], mangaId?: string): Promise<PageHeader[]> {
-    try {
-      return await invokeCommand('prepare_chapter_headers', { paths, mangaId });
-    } catch (err) {
-      console.warn('Tauri prepareChapterHeaders failed:', parseFsError(err) ?? err);
-      return [];
     }
   }
 
@@ -1172,6 +1180,60 @@ export class TauriDesktopBridge implements DesktopAPI {
     }
   }
 
+  async prepareChapter(
+    mangaId: string,
+    chapterIndex: number,
+    onProgress?: (progress: IndexScanProgress) => void,
+    signal?: AbortSignal,
+  ): Promise<PrepareChapterDto> {
+    const channel = new Channel<IndexScanProgress>();
+    const jobId = signal ? `prep-${Math.random().toString(36).slice(2)}` : undefined;
+
+    let abortHandler: (() => void) | undefined;
+    if (signal && jobId) {
+      if (signal.aborted) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      abortHandler = () => {
+        void this.cancelScan?.(jobId);
+      };
+      signal.addEventListener('abort', abortHandler, { once: true });
+    }
+
+    if (onProgress) {
+      channel.onmessage = (progress) => {
+        if (signal?.aborted) {
+          if (jobId) void this.cancelScan?.(jobId);
+          return;
+        }
+        onProgress(progress);
+      };
+    }
+
+    try {
+      return await invokeCommand('prepare_chapter', {
+        mangaId,
+        chapterIndex,
+        jobId,
+        onProgress: channel,
+      });
+    } catch (err) {
+      const fsErr = parseFsError(err);
+      if (
+        fsErr?.code === 'Cancelled' ||
+        (typeof err === 'string' && err.includes('Indexing cancelled')) ||
+        (err instanceof Error && err.message.includes('Indexing cancelled'))
+      ) {
+        throw new DOMException('The operation was aborted', 'AbortError');
+      }
+      throw err;
+    } finally {
+      if (abortHandler && signal) {
+        signal.removeEventListener('abort', abortHandler);
+      }
+    }
+  }
+
   convertFileSrc(filePath: string, protocol = 'mangaimg'): string {
     if (typeof tauriConvertFileSrc === 'function' && isTauri) {
       try {
@@ -1334,10 +1396,6 @@ class WebDesktopBridge implements DesktopAPI {
 
   async naturalSortPaths(paths: string[]): Promise<string[]> {
     return paths;
-  }
-
-  async prepareChapterHeaders(): Promise<PageHeader[]> {
-    return [];
   }
 
   async resolvePath(_mangaId?: string, relativePath = '', localPath?: string): Promise<string> {
@@ -1506,6 +1564,10 @@ class WebDesktopBridge implements DesktopAPI {
 
   async indexTitle(): Promise<IndexTitleDto> {
     throw new Error('indexTitle is only available in desktop environment.');
+  }
+
+  async prepareChapter(): Promise<PrepareChapterDto> {
+    throw new Error('prepareChapter is only available in desktop environment.');
   }
 
   convertFileSrc(filePath: string): string {

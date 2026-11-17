@@ -1201,58 +1201,44 @@ export async function prepareChapter(m: Manga, index: number, options: PrepareCh
     return [];
   }
 
-  if (desktopAPI.isDesktop && desktopAPI.prepareChapterHeaders && m.localPath) {
-    const sep = m.localPath.includes('\\') ? '\\' : '/';
-    const cleanRoot = m.localPath.replace(/[\\/]+$/, '');
-    const pathMap = new Map<string, Page>();
-    const absPaths: string[] = [];
-    for (const page of pending) {
-      const absPath = cleanRoot + sep + page.path.split('/').join(sep);
-      pathMap.set(absPath, page);
-      pathMap.set(page.path, page);
-      absPaths.push(absPath);
+  if (desktopAPI.isDesktop && desktopAPI.prepareChapter) {
+    const dto = await desktopAPI.prepareChapter(
+      m.id,
+      index,
+      (prog) => {
+        alive(options.signal);
+        options.update?.({
+          phase: 'index',
+          done: prog.done,
+          total: prog.total,
+          title: chapter.name,
+        });
+      },
+      options.signal,
+    );
+    alive(options.signal);
+    if (dto.pages.length > 0) {
+      m.chapters[index] = {
+        ...chapter,
+        pages: dto.pages.map((p) => ({
+          name: p.name,
+          path: p.path,
+          width: p.width,
+          height: p.height,
+          size: p.size,
+          modified: p.modified,
+          dimensionsPending: p.dimensionsPending,
+        })),
+      };
     }
-    try {
-      const headers = await desktopAPI.prepareChapterHeaders(absPaths, m.id);
-      for (const h of headers) {
-        const page = pathMap.get(h.path);
-        if (page && h.width > 0 && h.height > 0) {
-          assertImageDimensions(h.width, h.height);
-          page.width = h.width;
-          page.height = h.height;
-          page.size = h.size;
-          page.modified = h.modified;
-          page.dimensionsPending = false;
-          sessionDimensions.set(`${m.id}:${page.path}`, { width: h.width, height: h.height });
-        }
-      }
-    } catch {
-      // Fall through to per-page resolution
+    if (dto.updated) {
+      m.updatedAt = dto.updatedAt;
+      m.revision = dto.revision;
     }
+    return dto.issues;
   }
 
-  const remainingPending = pages.filter((p) => p.dimensionsPending);
-  if (!remainingPending.length) {
-    alive(options.signal);
-    m.chapters[index] = { ...chapter, pages };
-    if (desktopAPI.isDesktop) {
-      await saveManga(m);
-    } else if (database) {
-      const tx = database.transaction('manga', 'readwrite');
-      const stored = (await tx.store.get(m.id)) as unknown as Manga | undefined;
-      if (
-        stored &&
-        stored.updatedAt === m.updatedAt &&
-        (m.revision === undefined || stored.revision === m.revision) &&
-        stored.chapters[index]?.name === chapter.name
-      ) {
-        stored.chapters[index].pages = pages;
-        await tx.store.put(stored as unknown as Omit<Manga, 'cover'>);
-      }
-      await tx.done;
-    }
-    return [];
-  }
+  const remainingPending = pending;
 
   const issues: Issue[] = [];
   let done = 0;
