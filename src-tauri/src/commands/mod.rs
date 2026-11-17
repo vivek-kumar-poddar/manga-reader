@@ -2,6 +2,7 @@ pub mod cache;
 pub mod config;
 pub mod diagnostics;
 pub mod fs;
+pub mod geometry;
 pub mod image;
 pub mod image_dimensions;
 pub mod indexing;

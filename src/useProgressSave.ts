@@ -6,7 +6,7 @@ import {
   type RefObject,
 } from 'react';
 import type { Manga, Position, Settings } from './model';
-import type { PageOffset } from './readerGeometry';
+import type { PageOffset } from './model';
 import type { PageStore } from './Reader';
 import { saveProgress, errorMessage, type SaveProgressResult } from './data';
 

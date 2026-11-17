@@ -12,13 +12,9 @@ import {
   memo,
   type CSSProperties,
 } from 'react';
-import {
-  computeOffsets,
-  getWindowRange,
-  VIRTUALIZATION_THRESHOLD,
-  type PageOffset,
-  type WindowRange,
-} from './readerGeometry';
+import type { PageOffset, WindowRange } from './model';
+import { desktopAPI } from './tauriBridge';
+const VIRTUALIZATION_THRESHOLD = 8;
 import { Link, useParams, useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Home,
@@ -311,11 +307,11 @@ function ReaderView({ manga }: { manga: Manga }) {
           if (issues.length)
             setFailure(
               `${issues.length} page(s) could not be prepared. ` +
-              issues
-                .slice(0, 3)
-                .map((issue) => `${issue.path}: ${issue.reason}`)
-                .join(' ') +
-              (issues.length > 3 ? ' More affected pages are marked below.' : ''),
+                issues
+                  .slice(0, 3)
+                  .map((issue) => `${issue.path}: ${issue.reason}`)
+                  .join(' ') +
+                (issues.length > 3 ? ' More affected pages are marked below.' : ''),
             );
           setPrepared(ci);
         }
@@ -333,9 +329,12 @@ function ReaderView({ manga }: { manga: Manga }) {
   const offsets = useRef<Offset[]>([]);
   const measuredHeights = useRef<Map<number, number>>(new Map());
   const lastWindowScrollY = useRef(0);
-  const [windowRange, setWindowRange] = useState<WindowRange>(() =>
-    getWindowRange(offsets.current, 0, typeof window !== 'undefined' ? window.innerHeight : 800),
-  );
+  const [windowRange, setWindowRange] = useState<WindowRange>(() => ({
+    startIndex: 0,
+    endIndex: Math.max(0, chapter.pages.length - 1),
+    topSpacer: 0,
+    bottomSpacer: 0,
+  }));
   const position = useRef<Position>({ page: 0, fraction: 0 });
   const pendingRestore = useRef<Position | undefined>(undefined);
   const pointer = useRef(-1);
@@ -435,17 +434,18 @@ function ReaderView({ manga }: { manga: Manga }) {
       return;
     }
     lastWindowScrollY.current = y;
-    const next = getWindowRange(offsets.current, y, h, 3);
-    setWindowRange((prev) => {
-      if (
-        prev.startIndex === next.startIndex &&
-        prev.endIndex === next.endIndex &&
-        Math.abs(prev.topSpacer - next.topSpacer) < 2 &&
-        Math.abs(prev.bottomSpacer - next.bottomSpacer) < 2
-      ) {
-        return prev;
-      }
-      return next;
+    void desktopAPI.getWindowRange(offsets.current, y, h, 3).then((next) => {
+      setWindowRange((prev) => {
+        if (
+          prev.startIndex === next.startIndex &&
+          prev.endIndex === next.endIndex &&
+          Math.abs(prev.topSpacer - next.topSpacer) < 2 &&
+          Math.abs(prev.bottomSpacer - next.bottomSpacer) < 2
+        ) {
+          return prev;
+        }
+        return next;
+      });
     });
   }
   function measure(recomputeOnly = false) {
@@ -463,17 +463,22 @@ function ReaderView({ manga }: { manga: Manga }) {
     }
     const containerWidth = content.current?.clientWidth || window.innerWidth;
     const viewportHeight = window.innerHeight;
-    offsets.current = computeOffsets(
-      chapter.pages,
-      {
-        containerWidth,
-        viewportHeight,
-        layout: latest.current.s.layout,
-        maxWidth: latest.current.s.maxWidth,
-        zoom: latest.current.zoom,
-      },
-      measuredHeights.current,
-    );
+    const measuredObj = Object.fromEntries(measuredHeights.current);
+    void desktopAPI
+      .computeOffsets(
+        chapter.pages,
+        {
+          containerWidth,
+          viewportHeight,
+          layout: latest.current.s.layout,
+          maxWidth: latest.current.s.maxWidth,
+          zoom: latest.current.zoom,
+        },
+        measuredObj,
+      )
+      .then((res) => {
+        offsets.current = res;
+      });
   }
   function restore(anchor: Position) {
     const index = Math.max(0, Math.min(offsets.current.length - 1, anchor.page));
@@ -573,7 +578,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     goChapter,
     goPage,
     step,
-    pause: () => { },
+    pause: () => {},
     updateWindow,
     measure,
   });
@@ -583,7 +588,7 @@ function ReaderView({ manga }: { manga: Manga }) {
     goChapter,
     goPage,
     step,
-    pause: () => { },
+    pause: () => {},
     updateWindow,
     measure,
   };
@@ -600,8 +605,8 @@ function ReaderView({ manga }: { manga: Manga }) {
     toggleBookmark: () => toggleBookmark(),
   });
 
-  const { playing, setPlaying, ended, setEnded, endHandled, playbackRevision, pause } =
-    useAutoplay({
+  const { playing, setPlaying, ended, setEnded, endHandled, playbackRevision, pause } = useAutoplay(
+    {
       allowed,
       ready,
       prepared,
@@ -619,7 +624,8 @@ function ReaderView({ manga }: { manga: Manga }) {
       actions,
       setBars,
       notify,
-    });
+    },
+  );
   actions.current.pause = pause;
   useLayoutEffect(() => {
     if (!allowed || prepared !== ci) {
@@ -950,7 +956,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         actions.current.measure(false);
         if (dimSaveTimer.current) clearTimeout(dimSaveTimer.current);
         dimSaveTimer.current = setTimeout(() => {
-          void saveManga(metadata.current).catch(() => { });
+          void saveManga(metadata.current).catch(() => {});
         }, 500);
       }
     },
@@ -1181,24 +1187,22 @@ function ReaderView({ manga }: { manga: Manga }) {
                 aria-hidden="true"
               />
             )}
-            {chapter.pages
-              .slice(windowRange.startIndex, windowRange.endIndex + 1)
-              .map((p, idx) => {
-                const actualIndex = windowRange.startIndex + idx;
-                return (
-                  <PageImage
-                    key={ci + '/' + p.path}
-                    m={manga}
-                    page={p}
-                    index={actualIndex}
-                    activePage={pageStore.getPage()}
-                    lowQuality={s.lowQuality}
-                    report={setFailure}
-                    retryPreparation={retryPreparation}
-                    onDimensionsResolved={onDimensionsResolved}
-                  />
-                );
-              })}
+            {chapter.pages.slice(windowRange.startIndex, windowRange.endIndex + 1).map((p, idx) => {
+              const actualIndex = windowRange.startIndex + idx;
+              return (
+                <PageImage
+                  key={ci + '/' + p.path}
+                  m={manga}
+                  page={p}
+                  index={actualIndex}
+                  activePage={pageStore.getPage()}
+                  lowQuality={s.lowQuality}
+                  report={setFailure}
+                  retryPreparation={retryPreparation}
+                  onDimensionsResolved={onDimensionsResolved}
+                />
+              );
+            })}
             {windowRange.bottomSpacer > 0 && (
               <div
                 className="reader-spacer reader-spacer-bottom"

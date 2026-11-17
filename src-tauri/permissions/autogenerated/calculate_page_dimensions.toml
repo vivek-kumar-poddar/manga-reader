@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-calculate-page-dimensions"
+description = "Enables the calculate_page_dimensions command without any pre-configured scope."
+commands.allow = ["calculate_page_dimensions"]
+
+[[permission]]
+identifier = "deny-calculate-page-dimensions"
+description = "Denies the calculate_page_dimensions command without any pre-configured scope."
+commands.deny = ["calculate_page_dimensions"]

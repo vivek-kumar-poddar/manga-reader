@@ -1,6 +1,15 @@
 import { invoke, Channel, convertFileSrc as tauriConvertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import type { Manga, Summary, Position, Settings } from './model';
+import type {
+  Manga,
+  Summary,
+  Position,
+  Settings,
+  Page,
+  PageOffset,
+  GeometryOptions,
+  WindowRange,
+} from './model';
 import { limits, assertImageDimensions, withinTime } from './limits';
 
 export interface FolderEntry {
@@ -230,9 +239,7 @@ export interface DbErrorPayload {
 }
 
 export type TauriErrorPayload =
-  | FsErrorPayload
-  | DbErrorPayload
-  | { code: 'Unknown'; message: string };
+  FsErrorPayload | DbErrorPayload | { code: 'Unknown'; message: string };
 
 export function parseFsError(err: unknown): FsErrorPayload | null {
   if (err && typeof err === 'object') {
@@ -409,6 +416,24 @@ export interface TauriCommands {
     args: { raw?: string };
     return: string | null;
   };
+  compute_offsets: {
+    args: {
+      pages: Array<{ width: number; height: number }>;
+      options: GeometryOptions;
+      measuredHeights?: Record<number, number>;
+    };
+    return: PageOffset[];
+  };
+  get_window_range: {
+    args: {
+      offsets: PageOffset[];
+      scrollY: number;
+      viewportHeight: number;
+      bufferScreenCount?: number;
+      threshold?: number;
+    };
+    return: WindowRange;
+  };
 }
 
 export interface DiagnosticInputPayload {
@@ -467,7 +492,11 @@ export interface DesktopAPI {
   getThumbnailUrl?(id: string, size?: number): Promise<string | null>;
   deleteThumbnail?(id: string): Promise<void>;
   clearThumbnails?(): Promise<void>;
-  generateThumbnail?(filePath: string, id: string, size?: number): Promise<CachedImageResult | null>;
+  generateThumbnail?(
+    filePath: string,
+    id: string,
+    size?: number,
+  ): Promise<CachedImageResult | null>;
   generateImageVariant?(
     filePath: string,
     maxWidth: number,
@@ -541,6 +570,18 @@ export interface DesktopAPI {
   getDiagnostics?(): Promise<DiagnosticRecordPayload[]>;
   clearDiagnostics?(): Promise<void>;
   sanitizeDiagnosticIdentifier?(raw?: string): Promise<string | undefined>;
+  computeOffsets(
+    pages: Array<Pick<Page, 'width' | 'height'>>,
+    options: GeometryOptions,
+    measuredHeights?: Record<number, number>,
+  ): Promise<PageOffset[]>;
+  getWindowRange(
+    offsets: PageOffset[],
+    scrollY: number,
+    viewportHeight: number,
+    bufferScreenCount?: number,
+    threshold?: number,
+  ): Promise<WindowRange>;
 }
 
 export interface DesktopUpdateInfo {
@@ -1427,6 +1468,34 @@ export class TauriDesktopBridge implements DesktopAPI {
       return undefined;
     }
   }
+
+  async computeOffsets(
+    pages: Array<Pick<Page, 'width' | 'height'>>,
+    options: GeometryOptions,
+    measuredHeights?: Record<number, number>,
+  ): Promise<PageOffset[]> {
+    return invokeCommand('compute_offsets', {
+      pages: pages.map((p) => ({ width: p.width, height: p.height })),
+      options,
+      measuredHeights,
+    });
+  }
+
+  async getWindowRange(
+    offsets: PageOffset[],
+    scrollY: number,
+    viewportHeight: number,
+    bufferScreenCount?: number,
+    threshold?: number,
+  ): Promise<WindowRange> {
+    return invokeCommand('get_window_range', {
+      offsets,
+      scrollY,
+      viewportHeight,
+      bufferScreenCount,
+      threshold,
+    });
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -1670,6 +1739,48 @@ class WebDesktopBridge implements DesktopAPI {
     if (!raw) return undefined;
     const parts = raw.replace(/\\/g, '/').split('/').filter(Boolean);
     return parts.length ? parts.slice(-2).join('/') : undefined;
+  }
+
+  async computeOffsets(
+    pages: Array<Pick<Page, 'width' | 'height'>>,
+    options: GeometryOptions,
+    measuredHeights?: Record<number, number>,
+  ): Promise<PageOffset[]> {
+    const offsets: PageOffset[] = [];
+    let currentTop = 0;
+    const safeZoom = Math.max(0.1, options.zoom || 1);
+    for (let i = 0; i < pages.length; i++) {
+      let height = measuredHeights?.[i];
+      if (height === undefined || height <= 0 || !Number.isFinite(height)) {
+        const p = pages[i];
+        const nativeWidth = Math.max(1, p.width) * safeZoom;
+        const aspect = Math.max(1, p.width) / Math.max(1, p.height);
+        const readingW =
+          options.maxWidth > 0 ? options.maxWidth * safeZoom : options.containerWidth;
+        const targetW = Math.max(
+          1,
+          Math.round(Math.min(options.containerWidth, readingW, nativeWidth)),
+        );
+        height = Math.max(1, Math.round(targetW / aspect));
+      }
+      const bottom = currentTop + height;
+      offsets.push({ page: i, top: currentTop, height, bottom });
+      currentTop = bottom;
+    }
+    return offsets;
+  }
+
+  async getWindowRange(
+    offsets: PageOffset[],
+    _scrollY: number,
+    _viewportHeight: number,
+  ): Promise<WindowRange> {
+    return {
+      startIndex: 0,
+      endIndex: Math.max(0, offsets.length - 1),
+      topSpacer: 0,
+      bottomSpacer: 0,
+    };
   }
 }
 

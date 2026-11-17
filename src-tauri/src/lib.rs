@@ -92,6 +92,9 @@ pub fn run() {
             commands::diagnostics::get_diagnostics,
             commands::diagnostics::clear_diagnostics,
             commands::diagnostics::sanitize_diagnostic_identifier,
+            commands::geometry::calculate_page_dimensions,
+            commands::geometry::compute_offsets,
+            commands::geometry::get_window_range,
         ])
         .on_window_event(|window, event| {
             match event {

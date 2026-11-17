@@ -12,6 +12,25 @@ export interface Page {
   size?: number;
   modified?: number;
 }
+export interface PageOffset {
+  page: number;
+  top: number;
+  height: number;
+  bottom: number;
+}
+export interface GeometryOptions {
+  containerWidth: number;
+  viewportHeight: number;
+  layout: Settings['layout'];
+  maxWidth: number;
+  zoom: number;
+}
+export interface WindowRange {
+  startIndex: number;
+  endIndex: number;
+  topSpacer: number;
+  bottomSpacer: number;
+}
 export interface Position {
   page: number;
   path?: string;

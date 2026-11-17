@@ -62,6 +62,9 @@
     "allow-restore-library-backup",
     "allow-index-title",
     "allow-get-storage-stats",
-    "allow-save-file-dialog"
+    "allow-save-file-dialog",
+    "allow-calculate-page-dimensions",
+    "allow-compute-offsets",
+    "allow-get-window-range"
   ]
 }

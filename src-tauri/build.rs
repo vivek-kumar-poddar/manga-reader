@@ -51,6 +51,9 @@ fn main() {
             "index_title",
             "get_storage_stats",
             "save_file_dialog",
+            "calculate_page_dimensions",
+            "compute_offsets",
+            "get_window_range",
         ]));
     tauri_build::try_build(attributes).expect("failed to run tauri-build");
 

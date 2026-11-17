@@ -7,7 +7,7 @@ import {
   type MutableRefObject,
 } from 'react';
 import type { Settings, Manga } from './model';
-import type { PageOffset } from './readerGeometry';
+import type { PageOffset } from './model';
 import { errorMessage, type SaveProgressResult } from './data';
 
 export interface UseAutoplayOptions {
