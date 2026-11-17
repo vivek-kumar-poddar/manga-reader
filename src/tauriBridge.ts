@@ -405,6 +405,10 @@ export interface TauriCommands {
   };
   get_diagnostics: { args: Record<string, never>; return: DiagnosticRecordPayload[] };
   clear_diagnostics: { args: Record<string, never>; return: void };
+  sanitize_diagnostic_identifier: {
+    args: { raw?: string };
+    return: string | null;
+  };
 }
 
 export interface DiagnosticInputPayload {
@@ -536,6 +540,7 @@ export interface DesktopAPI {
   recordDiagnostic?(entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null>;
   getDiagnostics?(): Promise<DiagnosticRecordPayload[]>;
   clearDiagnostics?(): Promise<void>;
+  sanitizeDiagnosticIdentifier?(raw?: string): Promise<string | undefined>;
 }
 
 export interface DesktopUpdateInfo {
@@ -1413,6 +1418,15 @@ export class TauriDesktopBridge implements DesktopAPI {
       await invokeCommand('clear_diagnostics');
     } catch { }
   }
+
+  async sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
+    try {
+      const res = await invokeCommand('sanitize_diagnostic_identifier', { raw });
+      return res ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
 }
 
 class WebDesktopBridge implements DesktopAPI {
@@ -1652,6 +1666,11 @@ class WebDesktopBridge implements DesktopAPI {
   }
 
   async clearDiagnostics(): Promise<void> { }
+  async sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
+    if (!raw) return undefined;
+    const parts = raw.replace(/\\/g, '/').split('/').filter(Boolean);
+    return parts.length ? parts.slice(-2).join('/') : undefined;
+  }
 }
 
 export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();

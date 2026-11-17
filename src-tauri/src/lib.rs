@@ -91,6 +91,7 @@ pub fn run() {
             commands::diagnostics::record_diagnostic,
             commands::diagnostics::get_diagnostics,
             commands::diagnostics::clear_diagnostics,
+            commands::diagnostics::sanitize_diagnostic_identifier,
         ])
         .on_window_event(|window, event| {
             match event {
