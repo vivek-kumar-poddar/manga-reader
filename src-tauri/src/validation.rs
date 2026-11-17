@@ -17,11 +17,11 @@ pub struct ValidatedPage {
     pub path: String,
     pub width: u32,
     pub height: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modified: Option<f64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dimensions_pending: Option<bool>,
 }
 
@@ -29,27 +29,27 @@ pub struct ValidatedPage {
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ValidatedPosition {
     pub page: u32,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     pub fraction: f64,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manga_bookmark: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ValidatedChapter {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub name: String,
     pub pages: Vec<ValidatedPage>,
     #[serde(default)]
     pub read: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub position: Option<ValidatedPosition>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bookmarks: Option<Vec<ValidatedPosition>>,
 }
 
@@ -58,7 +58,7 @@ pub struct ValidatedChapter {
 pub struct ValidatedManga {
     pub id: String,
     pub title: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slug: Option<String>,
     pub chapters: Vec<ValidatedChapter>,
     #[serde(default)]
@@ -69,17 +69,39 @@ pub struct ValidatedManga {
     pub updated_at: Option<f64>,
     #[serde(default)]
     pub revision: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_path: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handle: Option<serde_json::Value>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ValidatedSummary {
+    pub id: String,
+    pub title: String,
+    pub slug: String,
+    pub chapter_count: usize,
+    pub chapters_read: usize,
+    pub last_chapter: usize,
+    pub last_chapter_name: String,
+    pub has_progress: bool,
+    pub indexed_at: f64,
+    pub added_at: f64,
+    pub updated_at: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct ValidatedSettings {
     #[serde(default)]
@@ -137,6 +159,13 @@ pub const RESERVED_DOS_NAMES: &[&str] = &[
     "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
 ];
 
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as f64
+}
+
 pub fn validate_relative_path(path: &str) -> Result<String, String> {
     if path.starts_with(' ') || path.ends_with(' ') {
         return Err(format!(
@@ -152,13 +181,11 @@ pub fn validate_relative_path(path: &str) -> Result<String, String> {
             "Relative path length (characters) exceeds the limit of {LIMIT_PATH_CHARS}. Use a smaller selection."
         ));
     }
-    // Reject drive prefixes, alternate data streams, and URI schemes
     if trimmed.contains(':') {
         return Err(format!(
             "Path contains invalid colon or drive/stream prefix: \"{trimmed}\""
         ));
     }
-    // Reject rooted paths, backslashes, and UNC/device syntax
     if trimmed.starts_with('/') || trimmed.ends_with('/') {
         return Err(format!(
             "Path cannot start or end with a slash: \"{trimmed}\""
@@ -211,6 +238,58 @@ pub fn assert_image_dimensions(width: u32, height: u32) -> Result<(), String> {
         Some(a) if a <= 9_007_199_254_740_991 => Ok(()),
         _ => Err("Image area cannot be represented safely.".to_string()),
     }
+}
+
+pub fn matching_position_internal(
+    saved: &ValidatedPosition,
+    pages: &[ValidatedPage],
+    old_pages: &[ValidatedPage],
+) -> Option<ValidatedPosition> {
+    if pages.is_empty() {
+        return None;
+    }
+    let path = saved
+        .path
+        .clone()
+        .or_else(|| old_pages.get(saved.page as usize).map(|p| p.path.clone()));
+
+    let mut page_idx = path
+        .as_ref()
+        .and_then(|target| pages.iter().position(|p| &p.path == target));
+
+    if page_idx.is_none() {
+        if let Some(ref target) = path {
+            let leaf = target.rsplit('/').next().unwrap_or(target);
+            let matches: Vec<usize> = pages
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.name == leaf)
+                .map(|(i, _)| i)
+                .collect();
+            if matches.len() == 1 {
+                page_idx = Some(matches[0]);
+            }
+        }
+    }
+
+    let valid_index = page_idx.unwrap_or_else(|| (saved.page as usize).min(pages.len() - 1));
+    let fraction = if saved.fraction.is_finite() {
+        saved.fraction.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+
+    Some(ValidatedPosition {
+        page: valid_index as u32,
+        path: Some(pages[valid_index].path.clone()),
+        fraction,
+        manga_bookmark: if saved.manga_bookmark == Some(true) {
+            Some(true)
+        } else {
+            None
+        },
+        timestamp: saved.timestamp.filter(|t| t.is_finite()),
+    })
 }
 
 pub fn validate_page(
@@ -287,6 +366,15 @@ pub fn validate_chapter(
     }
     chapter.name = trimmed_name.to_string();
 
+    if let Some(ref id) = chapter.id {
+        let trimmed_id = id.trim();
+        chapter.id = if trimmed_id.is_empty() {
+            None
+        } else {
+            Some(trimmed_id.to_string())
+        };
+    }
+
     if chapter.pages.is_empty() {
         return Err(format!(
             "Chapter \"{}\" must contain at least one page.",
@@ -309,6 +397,9 @@ pub fn validate_chapter(
 
     if let Some(pos) = &mut chapter.position {
         validate_position(pos, page_count)?;
+        if let Some(matched) = matching_position_internal(pos, &chapter.pages, &[]) {
+            *pos = matched;
+        }
     }
 
     if let Some(bms) = &mut chapter.bookmarks {
@@ -322,14 +413,16 @@ pub fn validate_chapter(
         let mut valid_bms = Vec::new();
         for bm in bms.iter_mut() {
             if validate_position(bm, page_count).is_ok() {
-                let key = format!(
-                    "{}:{}:{}",
-                    bm.page,
-                    bm.path.as_deref().unwrap_or(""),
-                    bm.manga_bookmark.unwrap_or(false)
-                );
-                if seen_bms.insert(key) {
-                    valid_bms.push(bm.clone());
+                if let Some(matched) = matching_position_internal(bm, &chapter.pages, &[]) {
+                    let key = format!(
+                        "{}:{}:{}",
+                        matched.page,
+                        matched.path.as_deref().unwrap_or(""),
+                        matched.manga_bookmark.unwrap_or(false)
+                    );
+                    if seen_bms.insert(key) {
+                        valid_bms.push(matched);
+                    }
                 }
             }
         }
@@ -387,10 +480,7 @@ pub fn validate_manga(
     let last_chapter = manga.last_chapter.unwrap_or(0);
     manga.last_chapter = Some(last_chapter.min(chapter_count.saturating_sub(1)));
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as f64;
+    let now = now_ms();
 
     manga.added_at = Some(
         manga
@@ -404,6 +494,7 @@ pub fn validate_manga(
             .filter(|t| t.is_finite() && *t > 0.0)
             .unwrap_or(now),
     );
+    manga.revision = Some(manga.revision.unwrap_or(1));
 
     if let Some(sort) = &manga.sort {
         if sort != "name" && sort != "reverse" && sort != "natural" {
@@ -411,11 +502,119 @@ pub fn validate_manga(
         }
     }
 
+    if let Some(ref lp) = manga.local_path {
+        let trimmed_lp = lp.trim();
+        manga.local_path = if trimmed_lp.is_empty() {
+            None
+        } else {
+            Some(trimmed_lp.to_string())
+        };
+    }
+
     if manga.slug.as_ref().is_none_or(|s| s.trim().is_empty()) {
         manga.slug = Some(crate::commands::indexing::generate_slug(&manga.title));
+    } else if let Some(ref s) = manga.slug {
+        manga.slug = Some(s.trim().to_string());
     }
 
     Ok(total_pages)
+}
+
+pub fn parse_summary_internal(value: &serde_json::Value) -> Option<ValidatedSummary> {
+    let obj = value.as_object()?;
+    let id = obj.get("id")?.as_str()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let title = obj.get("title")?.as_str()?.trim();
+    if title.is_empty() {
+        return None;
+    }
+
+    let slug = obj
+        .get("slug")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| crate::commands::indexing::generate_slug(title));
+
+    let chapter_count = obj
+        .get("chapterCount")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+
+    let chapters_read = obj
+        .get("chaptersRead")
+        .and_then(|v| v.as_u64())
+        .map(|v| (v as usize).min(chapter_count))
+        .unwrap_or(0);
+
+    let last_chapter = obj
+        .get("lastChapter")
+        .and_then(|v| v.as_u64())
+        .map(|v| (v as usize).min(chapter_count.saturating_sub(1)))
+        .unwrap_or(0);
+
+    let last_chapter_name = obj
+        .get("lastChapterName")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let has_progress = obj
+        .get("hasProgress")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let now = now_ms();
+    let indexed_at = obj
+        .get("indexedAt")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(now);
+
+    let added_at = obj
+        .get("addedAt")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(now);
+
+    let updated_at = obj
+        .get("updatedAt")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(now);
+
+    let revision = obj.get("revision").and_then(|v| v.as_u64());
+
+    let local_path = obj
+        .get("localPath")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let sort = obj
+        .get("sort")
+        .and_then(|v| v.as_str())
+        .filter(|&s| s == "name" || s == "reverse" || s == "natural")
+        .map(|s| s.to_string());
+
+    Some(ValidatedSummary {
+        id: id.to_string(),
+        title: title.to_string(),
+        slug,
+        chapter_count,
+        chapters_read,
+        last_chapter,
+        last_chapter_name,
+        has_progress,
+        indexed_at,
+        added_at,
+        updated_at,
+        revision,
+        local_path,
+        sort,
+    })
 }
 
 pub fn normalize_settings(settings: &ValidatedSettings) -> serde_json::Value {
@@ -544,6 +743,9 @@ pub fn validate_backup_json(json_str: &str) -> Result<BackupPayload, String> {
     let mut total_backup_pages = 0;
 
     for manga in payload.manga.iter_mut() {
+        manga.local_path = None;
+        manga.handle = None;
+        manga.cover = None;
         let pages = validate_manga(manga, &mut seen_ids)?;
         total_backup_pages += pages;
         if total_backup_pages > LIMIT_BACKUP_PAGES {
@@ -554,6 +756,77 @@ pub fn validate_backup_json(json_str: &str) -> Result<BackupPayload, String> {
     }
 
     Ok(payload)
+}
+
+// ==============================================================================
+// Tauri Command Handlers for Validation
+// ==============================================================================
+
+#[tauri::command]
+pub fn validate_relative_path_cmd(path: String) -> Result<String, String> {
+    validate_relative_path(&path)
+}
+
+#[tauri::command]
+pub fn matching_position_cmd(
+    saved: Option<ValidatedPosition>,
+    pages: Option<Vec<ValidatedPage>>,
+    old_pages: Option<Vec<ValidatedPage>>,
+) -> Option<ValidatedPosition> {
+    let s = saved?;
+    let p = pages?;
+    matching_position_internal(&s, &p, old_pages.as_deref().unwrap_or(&[]))
+}
+
+#[tauri::command]
+pub fn parse_position_cmd(
+    mut value: ValidatedPosition,
+    pages: Option<Vec<ValidatedPage>>,
+    old_pages: Option<Vec<ValidatedPage>>,
+) -> Result<ValidatedPosition, String> {
+    if let Some(p) = &value.path {
+        value.path = Some(validate_relative_path(p)?);
+    }
+    if !value.fraction.is_finite() {
+        return Err("Position fraction must be a finite number.".to_string());
+    }
+    value.fraction = value.fraction.clamp(0.0, 1.0);
+    if let Some(ref page_list) = pages {
+        if !page_list.is_empty() {
+            if let Some(matched) =
+                matching_position_internal(&value, page_list, old_pages.as_deref().unwrap_or(&[]))
+            {
+                return Ok(matched);
+            }
+        }
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub fn parse_manga_cmd(
+    mut value: ValidatedManga,
+    preserve_hardware_pointers: Option<bool>,
+) -> Result<ValidatedManga, String> {
+    let mut seen = HashSet::new();
+    if !preserve_hardware_pointers.unwrap_or(true) {
+        value.local_path = None;
+        value.handle = None;
+        value.cover = None;
+    }
+    validate_manga(&mut value, &mut seen)?;
+    Ok(value)
+}
+
+#[tauri::command]
+pub fn parse_summary_cmd(value: serde_json::Value) -> Option<ValidatedSummary> {
+    parse_summary_internal(&value)
+}
+
+#[tauri::command]
+pub fn parse_settings_cmd(value: serde_json::Value) -> serde_json::Value {
+    let parsed: ValidatedSettings = serde_json::from_value(value).unwrap_or_default();
+    normalize_settings(&parsed)
 }
 
 #[cfg(test)]
@@ -571,7 +844,6 @@ mod tests {
         assert!(validate_relative_path("ch1/./01.jpg").is_err());
         assert!(validate_relative_path("ch1/../01.jpg").is_err());
         assert!(validate_relative_path("ch1/\001.jpg").is_err());
-        // Windows prefix and stream security
         assert!(validate_relative_path("C:/ch1/01.jpg").is_err());
         assert!(validate_relative_path("ch1/01.jpg:stream").is_err());
         assert!(validate_relative_path("//server/share/01.jpg").is_err());

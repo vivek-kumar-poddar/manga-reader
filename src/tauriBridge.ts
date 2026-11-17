@@ -378,6 +378,23 @@ export interface TauriCommands {
   sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
   sqlite_save_settings: { args: { settings: Settings }; return: void };
   validate_library_backup: { args: { backupJson: string }; return: unknown };
+
+  validate_relative_path_cmd: { args: { path: string }; return: string };
+  matching_position_cmd: {
+    args: { saved?: Position; pages?: Page[]; oldPages?: Page[] };
+    return: Position | null;
+  };
+  parse_position_cmd: {
+    args: { value: Position; pages?: Page[]; oldPages?: Page[] };
+    return: Position;
+  };
+  parse_manga_cmd: {
+    args: { value: unknown; preserveHardwarePointers?: boolean };
+    return: Manga;
+  };
+  parse_summary_cmd: { args: { value: unknown }; return: Summary | null };
+  parse_settings_cmd: { args: { value: unknown }; return: Settings };
+
   export_library_backup: { args: Record<string, never>; return: string };
   restore_library_backup: { args: { backupJson: string }; return: void };
   index_title: {
@@ -1169,6 +1186,23 @@ export class TauriDesktopBridge implements DesktopAPI {
     return await invokeCommand('validate_library_backup', { backupJson });
   }
 
+  async validateRelativePath(path: string): Promise<string> {
+    return await invokeCommand('validate_relative_path_cmd', { path });
+  }
+
+  async matchingPosition(
+    saved?: Position,
+    pages?: Page[],
+    oldPages?: Page[],
+  ): Promise<Position | undefined> {
+    const res = await invokeCommand('matching_position_cmd', { saved, pages, oldPages });
+    return res ?? undefined;
+  }
+
+  async parseSettings(value: unknown): Promise<Settings> {
+    return await invokeCommand('parse_settings_cmd', { value });
+  }
+
   async isSamePath(pathA: string, pathB: string): Promise<boolean> {
     try {
       return await invokeCommand('is_same_path', { pathA, pathB });
@@ -1785,3 +1819,36 @@ class WebDesktopBridge implements DesktopAPI {
 }
 
 export const desktopAPI: DesktopAPI = isTauri ? new TauriDesktopBridge() : new WebDesktopBridge();
+
+export {
+  ValidationError,
+  isRecord,
+  validateRelativePath,
+  matchingPosition,
+  parsePosition,
+  parsePage,
+  parseChapter,
+  parseManga,
+  parseSummary,
+  parseSettings,
+  validateBackup,
+} from './web/validation';
+
+export async function validateBackupAsync(
+  value: unknown,
+): Promise<{ manga: Manga[]; settings: Settings }> {
+  const jsonStr = typeof value === 'string' ? value : JSON.stringify(value);
+  if (desktopAPI.validateBackup) {
+    const validated = (await desktopAPI.validateBackup(jsonStr)) as {
+      manga: Manga[];
+      settings: Settings;
+    };
+    const { parseSettings: parseSettingsSync } = await import('./web/validation');
+    return {
+      manga: validated.manga || [],
+      settings: parseSettingsSync(validated.settings),
+    };
+  }
+  const { validateBackup: validateBackupSync } = await import('./web/validation');
+  return validateBackupSync(value);
+}

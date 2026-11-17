@@ -19,7 +19,8 @@ export {
   parseManga,
   parseSummary,
   validateRelativePath,
-} from './desktop/validation';
+  validateBackupAsync,
+} from './tauriBridge';
 
 export {
   db,
