@@ -59,6 +59,8 @@ pub fn run() {
             commands::cache::save_file_dialog,
             commands::image::generate_thumbnail,
             commands::image::generate_image_variant,
+            commands::image_dimensions::get_header_dimensions,
+            commands::image_dimensions::clear_dimension_cache,
             commands::config::get_app_config,
             commands::config::save_app_config,
             commands::config::set_window_preferences,

@@ -1,4 +1,4 @@
-import { headerDimensions } from './imageDimensions';
+import { desktopAPI } from './tauriBridge';
 import { limits, assertImageDimensions, withinTime } from './limits';
 
 export const imageFile = (f: Pick<File, 'name' | 'type'>): boolean =>
@@ -10,7 +10,7 @@ export async function dimensions(
   signal?: AbortSignal,
 ): Promise<{ width: number; height: number }> {
   signal?.throwIfAborted();
-  const header = await headerDimensions(f);
+  const header = await desktopAPI.getHeaderDimensions?.(f);
   signal?.throwIfAborted();
   if (header) return header;
 
@@ -61,7 +61,7 @@ export async function thumbnail(
   quality = 0.65,
 ): Promise<Blob | undefined> {
   signal?.throwIfAborted();
-  const size = await headerDimensions(file);
+  const size = await desktopAPI.getHeaderDimensions?.(file);
   signal?.throwIfAborted();
   if (
     size &&

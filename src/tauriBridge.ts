@@ -1,6 +1,7 @@
 import { invoke, Channel, convertFileSrc as tauriConvertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import type { Manga, Summary, Position, Settings } from './model';
+import { limits, assertImageDimensions, withinTime } from './limits';
 
 export interface FolderEntry {
   relativePath: string;
@@ -280,6 +281,11 @@ export interface TauriCommands {
   list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
   read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
   get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
+  get_header_dimensions: {
+    args: Uint8Array | ArrayBuffer | { cacheKey?: string; bytes: number[] };
+    return: { width: number; height: number } | null;
+  };
+  clear_dimension_cache: { args: Record<string, never>; return: void };
   cancel_scan: { args: { scanId: string }; return: boolean };
   natural_sort_paths: { args: { paths: string[] }; return: string[] };
   resolve_manga_path: {
@@ -448,6 +454,8 @@ export interface DesktopAPI {
   cancelScan?(scanId: string): Promise<boolean>;
   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
+  getHeaderDimensions?(file: File): Promise<{ width: number; height: number } | undefined>;
+  clearDimensionCache?(): Promise<void>;
   setProgressBar(progress: number): void;
   showMainWindow?(): Promise<boolean>;
   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
@@ -746,6 +754,39 @@ export class TauriDesktopBridge implements DesktopAPI {
       console.warn('Tauri getImageDimensions failed for', absolutePath, parseFsError(err) ?? err);
       return null;
     }
+  }
+
+  async getHeaderDimensions(file: File): Promise<{ width: number; height: number } | undefined> {
+    try {
+      const cacheKey = `${file.name}:${file.size}:${file.lastModified}`;
+      const buffer = await withinTime(
+        file.slice(0, limits.headerBytes).arrayBuffer(),
+        limits.ioTimeoutMs,
+        'Reading image header',
+      );
+      const res = await invoke<{ width: number; height: number } | null>(
+        'get_header_dimensions',
+        new Uint8Array(buffer),
+        {
+          headers: {
+            'x-cache-key': encodeURIComponent(cacheKey),
+          },
+        },
+      );
+      if (res && res.width > 0 && res.height > 0) {
+        assertImageDimensions(res.width, res.height);
+        return res;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async clearDimensionCache(): Promise<void> {
+    try {
+      await invokeCommand('clear_dimension_cache');
+    } catch { }
   }
 
   setProgressBar(progress: number): void {
@@ -1429,6 +1470,12 @@ class WebDesktopBridge implements DesktopAPI {
   async getImageDimensions(): Promise<{ width: number; height: number } | null> {
     return null;
   }
+
+  async getHeaderDimensions(): Promise<{ width: number; height: number } | undefined> {
+    return undefined;
+  }
+
+  async clearDimensionCache(): Promise<void> { }
 
   setProgressBar(): void { }
 
