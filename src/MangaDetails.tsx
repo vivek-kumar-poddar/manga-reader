@@ -95,10 +95,10 @@ export default function MangaDetails() {
             </span>
           </Link>
           <div className="header-actions">
-            <Link className="icon-button" to="/" aria-label="Home" title="Home">
+            <Link className="btn icon" to="/" aria-label="Home" title="Home">
               <Home size={19} />
             </Link>
-            <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
+            <Link className="btn icon" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
               <BookMarked size={19} />
             </Link>
             <ThemeButton />
@@ -110,14 +110,16 @@ export default function MangaDetails() {
       </div>
       <main className="manga-details">
         <nav className="manga-details-nav" aria-label="Manga navigation">
-          <Link to="/">← Library</Link>
+          <Link to="/" className="btn secondary">
+            ← Library
+          </Link>
         </nav>
         {loading ? (
           <p role="status">Loading manga…</p>
         ) : failure ? (
           <div role="alert">
             {failure}{' '}
-            <button className="secondary" onClick={() => setRetry((n) => n + 1)}>
+            <button className="btn secondary" onClick={() => setRetry((n) => n + 1)}>
               Retry
             </button>
           </div>
@@ -141,10 +143,11 @@ export default function MangaDetails() {
                     </dd>
                   </div>
                 </dl>
-                <Link className="btn continue-reading" to={mangaPath(manga)}>
+                <Link className="btn blue continue-reading" to={mangaPath(manga)}>
                   {hasProgress ? (
                     <>
-                      Continue from <span className="text-semibold">Ch. {manga.lastChapter + 1}</span>{' '}
+                      Continue from{' '}
+                      <span className="text-semibold">Ch. {manga.lastChapter + 1}</span>{' '}
                       <span className="text-semibold">Pg. {current.position!.page + 1}</span>
                     </>
                   ) : (

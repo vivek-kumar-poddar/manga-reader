@@ -201,7 +201,7 @@ export default function Reader({
           {indexingProgress[0]} / {indexingProgress[1] || '…'}
         </h1>
         <p>Updating your folder index. Saved reading progress is preserved.</p>
-        <button className="secondary" onClick={cancelImport}>
+        <button className="btn secondary" onClick={cancelImport}>
           Cancel import
         </button>
       </main>
@@ -218,7 +218,7 @@ export default function Reader({
       <main className="reader-gate">
         <BookOpen size={32} />
         <h1>This title isn’t in your library.</h1>
-        <Link className="primary button" to="/">
+        <Link className="btn primary" to="/">
           Back to library
         </Link>
       </main>
@@ -234,10 +234,10 @@ export default function Reader({
         <h1>No readable pages in this title</h1>
         <p>"{manga.title || 'Untitled'}" does not contain any readable chapter or page data.</p>
         <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
-          <Link className="primary button" to="/">
+          <Link className="btn primary" to="/">
             Back to library
           </Link>
-          <Link className="secondary button" to={mangaDetailsPath(manga)}>
+          <Link className="btn secondary" to={mangaDetailsPath(manga)}>
             Title details
           </Link>
         </div>
@@ -982,7 +982,7 @@ function ReaderView({ manga }: { manga: Manga }) {
             : 'This folder was added with temporary access. Choose the same folder again; your saved progress is kept. For remembered access, use Choose a folder in a browser that supports it.'}
         </p>
         <button
-          className="primary"
+          className="btn primary"
           onClick={() =>
             void access(manga, true)
               .then((ok) => (ok ? setAllowed(true) : pick(manga)))
@@ -1005,7 +1005,7 @@ function ReaderView({ manga }: { manga: Manga }) {
           {preparation.done} / {preparation.total} page sizes checked. This chapter is prepared once
           and saved on this device.
         </p>
-        <Link className="secondary" to="/">
+        <Link className="btn secondary" to="/">
           Back to library
         </Link>
       </main>
@@ -1069,7 +1069,7 @@ function ReaderView({ manga }: { manga: Manga }) {
       >
         <div className="bar-left header-identity">
           <Link
-            className="icon-button"
+            className="btn icon"
             to="/"
             aria-label="Home"
             title="Home"
@@ -1157,12 +1157,17 @@ function ReaderView({ manga }: { manga: Manga }) {
       </header>
       {failure && (
         <div className="reader-error" role="alert">
-          {failure} <button onClick={() => void pick(manga)}>Re-link</button>
+          {failure}{' '}
+          <button className="btn" onClick={() => void pick(manga)}>
+            Re-link
+          </button>
           {chapter.pages.some((p) => p.dimensionsPending) && (
-            <button onClick={retryPreparation}>Retry preparation</button>
+            <button className="btn" onClick={retryPreparation}>
+              Retry preparation
+            </button>
           )}
           <button
-            className="close-btn"
+            className="btn icon close-btn"
             aria-label="Dismiss reader error"
             onClick={() => setFailure('')}
           >
@@ -1234,14 +1239,14 @@ function ReaderView({ manga }: { manga: Manga }) {
           </h2>
           <div className="button-row">
             {ci < manga.chapters.length - 1 && (
-              <button className="primary" onClick={() => goChapter(ci + 1)}>
+              <button className="btn primary" onClick={() => goChapter(ci + 1)}>
                 Next chapter
               </button>
             )}
-            <button className="secondary" onClick={() => goChapter(ci, true)}>
+            <button className="btn secondary" onClick={() => goChapter(ci, true)}>
               Read again
             </button>
-            <Link className="secondary" to="/">
+            <Link className="btn secondary" to="/">
               Library
             </Link>
           </div>
@@ -1254,7 +1259,7 @@ function ReaderView({ manga }: { manga: Manga }) {
       >
         <div className="bar-left chapter-navigation" role="group" aria-label="Chapter navigation">
           <button
-            className="icon-button"
+            className="btn icon"
             disabled={ci === 0}
             aria-label="Previous chapter"
             title="Previous chapter"
@@ -1277,7 +1282,7 @@ function ReaderView({ manga }: { manga: Manga }) {
             ))}
           </Dropdown>
           <button
-            className="icon-button"
+            className="btn icon"
             disabled={ci === manga.chapters.length - 1}
             aria-label="Next chapter"
             title="Complete this chapter and open the next"
@@ -1293,7 +1298,7 @@ function ReaderView({ manga }: { manga: Manga }) {
         />
         <div className="bar-right reading-actions" role="group" aria-label="Reading controls">
           <button
-            className={'icon-button completion-button ' + (complete ? 'completed' : '')}
+            className={'btn icon completion-button ' + (complete ? 'completed' : '')}
             title={complete ? 'Chapter completed' : 'Mark chapter completed'}
             aria-label={complete ? 'Chapter completed' : 'Mark chapter completed'}
             aria-pressed={complete}
@@ -1310,7 +1315,7 @@ function ReaderView({ manga }: { manga: Manga }) {
               <h3>Image zoom</h3>
               <div className="zoom-adjustment">
                 <button
-                  className="icon-button"
+                  className="btn icon"
                   aria-label="Zoom out"
                   disabled={zoom <= 0.5}
                   onClick={() => changeZoom(zoom - 0.25)}
@@ -1327,7 +1332,7 @@ function ReaderView({ manga }: { manga: Manga }) {
                   onChange={(e) => changeZoom(Number(e.target.value) / 100)}
                 />
                 <button
-                  className="icon-button"
+                  className="btn icon"
                   aria-label="Zoom in"
                   disabled={zoom >= 3}
                   onClick={() => changeZoom(zoom + 0.25)}
@@ -1335,14 +1340,14 @@ function ReaderView({ manga }: { manga: Manga }) {
                   <Plus size={16} />
                 </button>
               </div>
-              <button className="secondary" onClick={() => changeZoom(1)}>
+              <button className="btn secondary" onClick={() => changeZoom(1)}>
                 Reset to 100%
               </button>
             </div>
           </details>
           <span className="control-divider" aria-hidden="true" />
           <button
-            className={'icon-button playback-button ' + (playing ? 'active' : '')}
+            className={'btn icon playback-button ' + (playing ? 'active' : '')}
             title={playing ? 'Pause autoplay' : 'Start autoplay'}
             aria-label={playing ? 'Pause autoplay' : 'Start autoplay'}
             aria-pressed={playing}
@@ -1356,7 +1361,7 @@ function ReaderView({ manga }: { manga: Manga }) {
           </button>
           <details className="bar-popover playback-menu" name="reader-controls">
             <summary
-              className="icon-button"
+              className="btn icon"
               aria-label="Autoplay and bookmark options"
               title="Autoplay and bookmarks"
             >
@@ -1436,11 +1441,12 @@ function ReaderView({ manga }: { manga: Manga }) {
                 </Dropdown>
               </label>
               <div className="popover-menu-actions">
-                <button onClick={toggleBookmark}>
+                <button className="btn" onClick={toggleBookmark}>
                   <Bookmark size={16} />
                   {bookmarked ? 'Remove this bookmark' : 'Bookmark this page'}
                 </button>
                 <button
+                  className="btn"
                   onClick={async () => {
                     capture();
                     await flush();
@@ -1451,10 +1457,14 @@ function ReaderView({ manga }: { manga: Manga }) {
                 </button>
                 {s.mode === 'single' && (
                   <div className="popover-page-buttons">
-                    <button disabled={groupIndex === 0} onClick={() => step(-1)}>
+                    <button className="btn" disabled={groupIndex === 0} onClick={() => step(-1)}>
                       <ChevronLeft size={16} /> Previous page
                     </button>
-                    <button disabled={groupIndex === groups.length - 1} onClick={() => step(1)}>
+                    <button
+                      className="btn"
+                      disabled={groupIndex === groups.length - 1}
+                      onClick={() => step(1)}
+                    >
                       Next page <ChevronRight size={16} />
                     </button>
                   </div>

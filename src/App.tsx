@@ -99,7 +99,7 @@ export function IconButton({
 }) {
   return (
     <button
-      className={'icon-button ' + className}
+      className={['btn icon', className].filter(Boolean).join(' ')}
       title={label}
       aria-label={label}
       onClick={onClick}
@@ -219,8 +219,7 @@ export const Cover = memo(function Cover({
           setUrl(coverUrl);
           return;
         }
-        desktopAPI
-          .getThumbnailUrl!(m.id, size)
+        desktopAPI.getThumbnailUrl!(m.id, size)
           .then((thumbUrl) => {
             if (!live) return;
             if (thumbUrl) {
@@ -415,17 +414,17 @@ function CardMenu({
       }}
     >
       {needsRelink && (
-        <button type="button" onClick={onRelink}>
+        <button type="button" className="btn" onClick={onRelink}>
           <FolderSync size={16} /> Re-link / re-index
         </button>
       )}
-      <button type="button" onClick={onMarkRead}>
+      <button type="button" className="btn" onClick={onMarkRead}>
         <Check size={16} /> Mark all read
       </button>
-      <button type="button" onClick={onMarkUnread}>
+      <button type="button" className="btn" onClick={onMarkUnread}>
         <BookOpen size={16} /> Mark all unread
       </button>
-      <button type="button" className="danger-text" onClick={onRemove}>
+      <button type="button" className="btn delete" onClick={onRemove}>
         <Trash2 size={16} /> Remove
       </button>
     </div>
@@ -767,7 +766,7 @@ function Library({
             </span>
           </Link>
           <div className="header-actions">
-            <Link className="icon-button" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
+            <Link className="btn icon" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
               <BookMarked size={19} />
             </Link>
             <ThemeButton />
@@ -786,7 +785,7 @@ function Library({
           {library.length > 0 && (
             <button
               type="button"
-              className={'upload-toggle-btn' + (uploadOpen ? ' is-open' : '')}
+              className={'btn blue' + (uploadOpen ? ' is-open' : '')}
               aria-expanded={showUploadZone}
               aria-controls={showUploadZone ? 'library-upload-zone' : undefined}
               disabled={busy}
@@ -838,7 +837,7 @@ function Library({
                   {scan.phase === 'index' ? 'Adding to your library…' : 'Preparing your manga…'}
                 </span>
                 <span className="subtle">{scan.title}</span>
-                <button className="secondary" onClick={cancel}>
+                <button className="btn secondary" onClick={cancel}>
                   Cancel import
                 </button>
               </>
@@ -849,10 +848,10 @@ function Library({
                 </h2>
                 <p>Drop manga folders here, or choose your files.</p>
                 <div className="upload-buttons">
-                  <button className="browse-button" onClick={() => void pick()}>
+                  <button className="btn blue" onClick={() => void pick()}>
                     Choose a folder <UploadIcon size={16} />
                   </button>
-                  <button className="secondary support-button" onClick={() => setSupported(true)}>
+                  <button className="btn secondary" onClick={() => setSupported(true)}>
                     <Info size={16} /> What’s supported
                   </button>
                 </div>
@@ -953,7 +952,8 @@ function Library({
                           <button
                             type="button"
                             className={
-                              'manga-bookmark-btn' + (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
+                              'btn icon manga-bookmark-btn' +
+                              (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
                             }
                             onClick={(e) => void toggleMangaBookmark(m, e)}
                             title={
@@ -975,7 +975,7 @@ function Library({
                         {needs.has(m.id) ? (
                           <button
                             type="button"
-                            className="relink-needed-btn"
+                            className="btn relink-needed-btn"
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
@@ -1000,7 +1000,7 @@ function Library({
                           </button>
                         ) : (
                           <Link
-                            className="manga-info-btn"
+                            className="btn icon manga-info-btn"
                             to={mangaDetailsPath(m)}
                             aria-label={'Info for ' + m.title}
                           >
@@ -1067,12 +1067,12 @@ function Library({
       >
         <div className="button-row">
           <button
-            className="secondary danger-text"
+            className="btn delete"
             onClick={() => void remove().catch((e) => notify(errorMessage(e)))}
           >
             Remove title
           </button>
-          <button className="secondary" onClick={() => setRemoveId(undefined)}>
+          <button className="btn secondary" onClick={() => setRemoveId(undefined)}>
             Cancel
           </button>
         </div>
@@ -1406,6 +1406,7 @@ export default function App() {
         <div className="update-banner" role="status">
           A new Reader version is ready.{' '}
           <button
+            className="btn"
             disabled={updating || busy}
             onClick={async () => {
               setUpdating(true);
@@ -1444,7 +1445,7 @@ export default function App() {
         <div className="toast" role="status">
           {notice}
           <button
-            className="close-btn"
+            className="btn icon close-btn"
             onClick={() => notify('')}
             aria-label="Dismiss notification"
           >

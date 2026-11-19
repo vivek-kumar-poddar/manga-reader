@@ -184,8 +184,7 @@ export function BookmarkShelf({
     function loadBookmarks() {
       const currentGen = ++loadGen;
       setLoading(true);
-      void desktopAPI
-        .getBookmarkCards!({ tab: 'all', sort: carousel ? 'newest' : sortBy })
+      void desktopAPI.getBookmarkCards!({ tab: 'all', sort: carousel ? 'newest' : sortBy })
         .then((res) => {
           if (!live || currentGen !== loadGen) return;
           const result = res.cards.map(cardToMark);
@@ -380,7 +379,7 @@ export function BookmarkShelf({
         <BookMarked size={28} />
         <p>No bookmarks yet.</p>
         <span>Bookmark a manga from your shelf or a page while reading to keep it here.</span>
-        <Link className="secondary no-bookmark-browse-btn" to="/">
+        <Link className="btn secondary no-bookmark-browse-btn" to="/">
           Browse your library
         </Link>
       </div>
@@ -418,17 +417,17 @@ export function BookmarkShelf({
           </div>
         </Link>
         <button
-          className="icon-button bookmark-remove"
+          className="btn delete icon bookmark-remove"
           disabled={removing === key(mark)}
           aria-label={
             isMangaBookmark
               ? 'Remove bookmark: ' + mark.manga.title + ' (Manga Bookmarked)'
               : 'Remove bookmark: ' +
-              mark.manga.title +
-              ', ' +
-              getChapterName(mark) +
-              ', page ' +
-              (mark.position.page + 1)
+                mark.manga.title +
+                ', ' +
+                getChapterName(mark) +
+                ', page ' +
+                (mark.position.page + 1)
           }
           title="Remove bookmark"
           onClick={() => {
@@ -459,7 +458,7 @@ export function BookmarkShelf({
     >
       <div className="button-row">
         <button
-          className="secondary danger-text"
+          className="btn delete"
           onClick={() => {
             if (confirmMark) {
               const target = confirmMark;
@@ -470,7 +469,7 @@ export function BookmarkShelf({
         >
           Remove bookmark
         </button>
-        <button className="secondary" onClick={() => setConfirmMark(null)}>
+        <button className="btn secondary" onClick={() => setConfirmMark(null)}>
           Cancel
         </button>
       </div>
@@ -484,9 +483,11 @@ export function BookmarkShelf({
           <div className="bookmark-section-heading">
             <h2>Your bookmarks</h2>
             <div className="bookmark-navigation">
-              <Link to="/bookmarks">View all</Link>
+              <Link to="/bookmarks" className="btn">
+                View all
+              </Link>
               <button
-                className="icon-button"
+                className="btn icon"
                 aria-label="Previous bookmarks"
                 disabled={edges.start}
                 onClick={() => move(-1)}
@@ -494,7 +495,7 @@ export function BookmarkShelf({
                 <ChevronLeft size={18} />
               </button>
               <button
-                className="icon-button"
+                className="btn icon"
                 aria-label="Next bookmarks"
                 disabled={edges.end}
                 onClick={() => move(1)}
@@ -580,7 +581,7 @@ export function BookmarkShelf({
               type="button"
               role="tab"
               aria-selected={tab === 'all'}
-              className="bookmark-tab-button"
+              className="btn bookmark-tab-button"
               onClick={() => setTab('all')}
             >
               <span>All</span>
@@ -590,7 +591,7 @@ export function BookmarkShelf({
               type="button"
               role="tab"
               aria-selected={tab === 'manga'}
-              className="bookmark-tab-button"
+              className="btn bookmark-tab-button"
               onClick={() => setTab('manga')}
             >
               <span>Manga</span>
@@ -600,7 +601,7 @@ export function BookmarkShelf({
               type="button"
               role="tab"
               aria-selected={tab === 'individual'}
-              className="bookmark-tab-button"
+              className="btn bookmark-tab-button"
               onClick={() => setTab('individual')}
             >
               <span>Manga Chapters</span>
@@ -641,7 +642,7 @@ export function BookmarkShelf({
                   ? 'Click the bookmark icon on any manga card on your shelf to bookmark the title.'
                   : 'Bookmark pages while reading in the reader to keep them here.'}
             </span>
-            <Link className="secondary no-bookmark-browse-btn" to="/">
+            <Link className="btn secondary no-bookmark-browse-btn" to="/">
               Browse your library
             </Link>
           </div>
@@ -671,7 +672,7 @@ export default function BookmarksPage() {
             </span>
           </Link>
           <div className="header-actions">
-            <Link className="icon-button" to="/" aria-label="Home" title="Home">
+            <Link className="btn icon" to="/" aria-label="Home" title="Home">
               <Home size={19} />
             </Link>
             <ThemeButton />
@@ -680,7 +681,7 @@ export default function BookmarksPage() {
             </IconButton>
           </div>
         </header>
-      </div >
+      </div>
       <main className={`library-main ${!hasBookmarks ? 'bookmarks-empty' : ''}`}>
         {hasBookmarks && (
           <div className="page-heading">

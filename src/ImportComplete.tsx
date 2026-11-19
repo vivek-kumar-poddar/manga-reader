@@ -60,7 +60,7 @@ function ImportedTitle({ manga, onClose }: { manga: Manga; onClose: () => void }
             <dd>{pages.toLocaleString()}</dd>
           </div>
         </dl>
-        <button className="primary import-success-ok" onClick={onClose}>
+        <button className="btn import-success-ok" onClick={onClose}>
           OK
         </button>
       </div>
@@ -93,7 +93,10 @@ export default function ImportComplete({
             Review imported titles, chapter counts and page counts.
           </Dialog.Description>
           <Dialog.Close asChild>
-            <button className="close-btn import-success-close" aria-label="Close import result">
+            <button
+              className="btn icon close-btn import-success-close"
+              aria-label="Close import result"
+            >
               <X size={20} />
             </button>
           </Dialog.Close>
@@ -117,10 +120,10 @@ export default function ImportComplete({
                 ))}
               </ul>
               <div className="button-row">
-                <button className="secondary" onClick={onExport}>
+                <button className="btn secondary" onClick={onExport}>
                   <Download size={16} /> Download report
                 </button>
-                <button className="secondary" onClick={onRetry}>
+                <button className="btn secondary" onClick={onRetry}>
                   Retry affected titles
                 </button>
               </div>

@@ -40,7 +40,7 @@ export function Modal({
           <div className="dialog-heading">
             <Dialog.Title>{title}</Dialog.Title>
             <Dialog.Close asChild>
-              <button className="close-btn" aria-label="Close popup">
+              <button className="btn icon close-btn" aria-label="Close popup">
                 <X size={16} />
               </button>
             </Dialog.Close>
@@ -70,6 +70,7 @@ export function Tabs({
         <button
           key={n}
           type="button"
+          className="btn"
           role="tab"
           id={id + '-' + i}
           aria-selected={value === i}
@@ -287,18 +288,18 @@ export function ImportDialog({
                   duplicate = candidate;
                   break;
                 }
-              } catch { }
+              } catch {}
             } else if (source.localPath && candidate.localPath) {
               try {
                 const same = desktopAPI.isSamePath
                   ? await desktopAPI.isSamePath(source.localPath, candidate.localPath)
                   : source.localPath.toLowerCase().replace(/[\\/]+$/, '') ===
-                  candidate.localPath.toLowerCase().replace(/[\\/]+$/, '');
+                    candidate.localPath.toLowerCase().replace(/[\\/]+$/, '');
                 if (same) {
                   duplicate = candidate;
                   break;
                 }
-              } catch { }
+              } catch {}
             }
           }
           list.push({
@@ -387,7 +388,7 @@ export function ImportDialog({
                 matched++;
               }
             }
-          } catch { }
+          } catch {}
         }
         if (matched < sample.length * 0.5 || !sample.length) {
           hasPageMismatch = true;
@@ -478,9 +479,9 @@ export function ImportDialog({
                         p.map((v, j) =>
                           j === i
                             ? {
-                              ...v,
-                              targetId: e.target.value === 'new' ? undefined : e.target.value,
-                            }
+                                ...v,
+                                targetId: e.target.value === 'new' ? undefined : e.target.value,
+                              }
                             : v,
                         ),
                       )
@@ -561,7 +562,7 @@ export function ImportDialog({
       )}
       <div className="button-row">
         <button
-          className="primary"
+          className="btn blue"
           disabled={
             loading ||
             checking ||
@@ -575,7 +576,7 @@ export function ImportDialog({
         >
           Import {plans.length} {plans.length === 1 ? 'title' : 'titles'}
         </button>
-        <button className="secondary" onClick={onClose}>
+        <button className="btn secondary" onClick={onClose}>
           Cancel
         </button>
       </div>

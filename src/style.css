@@ -42,7 +42,7 @@
   --extra-soft: #e4e4e7;
 
   /* Color-Specific Buttons & Constants */
-  --btn-default-blue: #2953ed;
+  --btn-dark-blue: #2953ed;
   --btn-dark: #38383b;
   --btn-hover: #121212;
   --color-white: #ffffff;
@@ -89,7 +89,7 @@
   --extra-soft: #56565a;
 
   /* Dark Mode Button Mechanics Mapping */
-  --btn-default: #26262a;
+  --btn-dark: #26262a;
   --btn-hover: #56565a;
   --btn-hover-light: #56565a;
   --color-white: #ffffff;
@@ -196,48 +196,8 @@ body,
 input,
 select,
 textarea,
-.settings-panel,
-.tabbed-modal.settings-panel,
-.modal-heading>p,
-.settings-tab-body section p,
-.settings-tab-body label,
-.settings-tab-body select,
-.settings-tab-body input,
-.reader-bar,
-.reader-top,
-.reader-bottom,
-.reader-bottom .current-page-input,
-.reader-bottom .total-page-count,
-.reader-top select,
-.reader-bottom select,
-.header-selectors select,
-.bar-popover-panel,
-.bar-popover-panel label,
-.library-footer,
-.library-footer span,
-.library-footer a,
-.bookmark-navigation,
-.bookmark-navigation>a,
-.bookmark-navigation button,
-.bookmark-tabs,
-.bookmark-tab-button,
-.bookmarks-toolbar,
-.shelf-sort,
-.shelf-sort>span,
-.shelf-sort.bookmark-sort,
-.shelf-sort.bookmark-sort>span,
-.manga-card-date-badge,
-.manga-card-date,
-.space-tooltip,
-.manga-bookmark-btn,
-.manga-info-btn,
-.relink-needed-btn,
-.manga-card-bottom .card-menu summary,
-summary.card-menu-trigger,
-.card-menu summary,
-.menu-popover,
-.menu-popover button {
-  font-size: var(--font-size-ui, 15px) !important;
+button {
+  font-size: var(--font-size-ui, 15px);
 }
 
 .modal-heading .dialog-heading h2,
@@ -351,127 +311,83 @@ kbd {
    5. GLOBAL ACTIONS SYSTEM: BUTTON CONTROLS & INTERACTION GEOMETRIES
    ========================================================================== */
 
-/* Shared control geometry & interaction states */
-button,
-.dropdown-trigger,
-summary.icon-button,
-a.icon-button,
-a.primary,
-a.secondary {
+/* 5.1 Base Button System (.btn and button) */
+.btn,
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-size);
+  padding: 8px 12px;
+  border-radius: var(--control-radius);
   border: none !important;
   background: var(--btn-dark);
   color: var(--color-white);
-  border-radius: var(--control-radius);
-  box-shadow: var(--card-shadow);
+  box-shadow: var(--shadow);
   transition: var(--transition);
+  font-family: inherit;
+  font-size: var(--font-size-button, 15px);
+  font-weight: 500;
+  line-height: 1.35;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
 }
 
-button:not(:disabled):hover,
-.dropdown-trigger:hover,
-summary.icon-button:hover,
-a.icon-button:hover,
-a.secondary:hover {
+.btn svg,
+button svg {
+  width: calc(var(--font-size-button, 15px) * 1.15);
+  height: calc(var(--font-size-button, 15px) * 1.15);
+  flex-shrink: 0;
+}
+
+.btn:not(:disabled):hover,
+button:not(:disabled):hover {
   background: var(--btn-hover);
   color: var(--color-white);
-  box-shadow: var(--card-shadow);
+  box-shadow: var(--card-hover-shadow);
 }
 
-/* Theme Override Layers for Global Buttons */
-.dark button,
-.dark .dropdown-trigger,
-.dark summary.icon-button,
-.dark a.icon-button,
-.dark a.primary,
-.dark a.secondary {
-  background: var(--soft);
-  color: var(--text);
-  box-shadow: var(--card-shadow);
+/* Dark Theme Buttons: white in dark theme */
+:root.dark .btn,
+.dark .btn,
+:root.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
+.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) {
+  background: var(--btn-dark);
+  color: var(--color-white);
+  box-shadow: var(--shadow);
   transition: var(--transition);
 }
 
-.dark button:not(:disabled):hover,
-.dark .dropdown-trigger:hover,
-.dark summary.icon-button:hover,
-.dark a.icon-button:hover,
-.dark a.secondary:hover {
-  background: var(--extra-soft);
-  color: var(--text);
+:root.dark .btn:not(:disabled):hover,
+.dark .btn:not(:disabled):hover,
+:root.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover,
+.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover {
+  background: var(--btn-hover);
+}
+
+/* Flex Space Between for Buttons with Text and Icons */
+.btn:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(.popover-menu-actions button),
+button:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(.popover-menu-actions button) {
+  justify-content: space-between;
 }
 
 /* Accessible Focus States */
+.btn:focus-visible,
 button:focus-visible,
+summary.icon:focus-visible,
 summary.icon-button:focus-visible,
+a.icon:focus-visible,
 a.icon-button:focus-visible {
   outline: 2px solid var(--line-focus);
   outline-offset: 2px;
 }
 
-a:focus-visible,
-select:focus-visible,
-input:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--line-focus);
-  outline-offset: 3px;
-}
-
-/* Action Utility Typography Definitions */
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
-.dropdown-trigger,
-.dropdown-trigger span,
-.shelf-sort .dropdown-trigger,
-.shelf-sort .dropdown-trigger span,
-.shelf-sort.bookmark-sort .dropdown-trigger,
-.shelf-sort.bookmark-sort .dropdown-trigger span,
-.dropdown-content,
-.dropdown-item,
-.dropdown-item span,
-option,
-select,
-.chapter-select,
-.zoom-trigger,
-.bar-popover>summary,
-summary.icon-button:not(.card-menu-trigger),
-.icon-button,
-a.icon-button,
-a.primary,
-a.secondary,
-.primary,
-.secondary,
-.browse-button,
-.support-button,
-.settings-tabs button,
-.bar-popover-panel button,
-.reader-bottom .zoom-trigger,
-.organized-bar .chapter-navigation .chapter-select {
-  font-size: var(--font-size-button, 15px) !important;
-  font-weight: 500 !important;
-  text-transform: capitalize;
-}
-
-/* Scalable Svg Asset Icons Config inside Generic Buttons */
-button:not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) svg,
-.dropdown-trigger svg,
-.dropdown-chevron svg,
-.dropdown-check svg,
-.dropdown-scroll svg,
-.zoom-trigger svg,
-.bar-popover>summary svg,
-.icon-button svg,
-summary.icon-button:not(.card-menu-trigger) svg,
-a.icon-button svg,
-a.primary svg,
-a.secondary svg,
-.primary svg,
-.secondary svg,
-.browse-button svg,
-.support-button svg {
-  width: calc(var(--font-size-button, 15px) * 1.15) !important;
-  height: calc(var(--font-size-button, 15px) * 1.15) !important;
-}
-
-/* Icon Buttons Configuration Block */
-.icon-button,
-.organized-bar .icon-button {
+/* 5.2 Icon-Only Buttons (.btn.icon and .icon-button) - No Background, Color Shift Only */
+.btn.icon,
+.icon-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -484,85 +400,226 @@ a.secondary svg,
   flex: 0 0 var(--control-size) !important;
   aspect-ratio: 1;
   padding: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  border: none !important;
   border-radius: var(--control-radius);
-  background: transparent;
+  color: var(--muted) !important;
+  cursor: pointer;
   vertical-align: middle;
+  transition: var(--transition);
 }
 
-/* Text Buttons Reset rule */
-.text-button {
-  display: block;
+.btn.icon svg,
+.icon-button svg {
+  color: currentColor;
+  stroke: currentColor;
+  transition:
+    color 200ms ease,
+    stroke 200ms ease;
+  width: calc(var(--font-size-button, 15px) * 1.15) !important;
+  height: calc(var(--font-size-button, 15px) * 1.15) !important;
+  flex-shrink: 0;
+}
+
+.btn.icon:not(:disabled):hover,
+.btn.icon:focus-visible,
+.icon-button:not(:disabled):hover,
+.icon-button:focus-visible {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+}
+
+:root.dark .btn.icon,
+.dark .btn.icon,
+:root.dark .icon-button,
+.dark .icon-button {
   background: transparent;
-  border: 0;
-  padding: 9px 0;
-  font-size: 16px;
+  box-shadow: none;
+  color: var(--muted);
 }
 
-/* Specific Buttons Layout Architectures */
-.primary,
-.secondary,
-.browse-button,
-.dropdown-trigger,
-.zoom-trigger {
-  min-height: var(--control-size);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 12px;
-  line-height: 1.35;
+:root.dark .btn.icon:not(:disabled):hover,
+.dark .btn.icon:not(:disabled):hover,
+:root.dark .btn.icon:focus-visible,
+.dark .btn.icon:focus-visible,
+:root.dark .icon-button:not(:disabled):hover,
+.dark .icon-button:not(:disabled):hover,
+:root.dark .icon-button:focus-visible,
+.dark .icon-button:focus-visible {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: #ffffff !important;
 }
 
-.primary {
-  background: var(--btn-dark);
-  color: var(--color-white);
-  border-radius: var(--control-radius);
-  box-shadow: var(--card-shadow);
+/* 5.3 Upload & Primary Action Buttons (.btn.blue) */
+.btn.blue {
+  background: var(--btn-dark-blue, #2563eb) !important;
+  color: #ffffff !important;
+  box-shadow: var(--shadow) !important;
+  transition: var(--transition) !important;
+  border: none !important;
+}
+
+.btn.blue:not(:disabled):hover {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: var(--card-hover-shadow) !important;
+}
+
+.btn.blue svg {
+  color: #ffffff;
+  stroke: currentColor;
+}
+
+:root.dark .btn.blue,
+.dark .btn.blue {
+  background: var(--btn-dark-blue, #2563eb) !important;
+  color: #ffffff !important;
+  box-shadow: var(--shadow) !important;
+}
+
+:root.dark .btn.blue:not(:disabled):hover,
+.dark .btn.blue:not(:disabled):hover {
+  background: #1d4ed8 !important;
+  color: #ffffff !important;
+  box-shadow: var(--card-hover-shadow) !important;
+}
+
+.btn.blue.is-open {
+  background: #c82828 !important;
+  color: #ffffff !important;
+}
+
+.btn.blue.is-open:not(:disabled):hover {
+  background: #a81f1f !important;
+}
+
+:root.dark .btn.blue.is-open,
+.dark .btn.blue.is-open {
+  background: #8f2424 !important;
+  color: #ffffff !important;
+}
+
+:root.dark .btn.blue.is-open:not(:disabled):hover,
+.dark .btn.blue.is-open:not(:disabled):hover {
+  background: #ab2e2e !important;
+}
+
+/* 5.4 Delete & Danger Action Buttons (.btn.delete) */
+.btn.delete,
+button.danger-text,
+.danger-text {
+  color: #b64545 !important;
+  background: var(--surface);
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow);
   transition: var(--transition);
-  font-weight: 500;
 }
 
-.primary:hover,
-a.primary:hover {
-  background: var(--btn-hover) !important;
-  color: var(--color-white) !important;
-  box-shadow: var(--card-shadow);
-  filter: none;
+.btn.delete:not(:disabled):hover,
+.btn.delete:focus-visible,
+button.danger-text:not(:disabled):hover,
+button.danger-text:focus-visible {
+  background: #dc2626 !important;
+  border-color: #991b1b !important;
+  color: #ffffff !important;
+  box-shadow: var(--shadow);
 }
 
+.btn.delete:not(:disabled):hover svg,
+.btn.delete:focus-visible svg,
+button.danger-text:not(:disabled):hover svg,
+button.danger-text:focus-visible svg {
+  color: #ffffff !important;
+  stroke: #ffffff !important;
+}
+
+:root.dark .btn.delete,
+.dark .btn.delete,
+:root.dark .danger-text,
+.dark .danger-text {
+  color: #ff9d9d !important;
+  background: var(--soft);
+  border: 1px solid var(--line) !important;
+}
+
+:root.dark .btn.delete:not(:disabled):hover,
+.dark .btn.delete:not(:disabled):hover,
+:root.dark .btn.delete:focus-visible,
+.dark .btn.delete:focus-visible,
+:root.dark button.danger-text:not(:disabled):hover,
+.dark button.danger-text:not(:disabled):hover {
+  background: #b91c1c !important;
+  border-color: #7f1d1d !important;
+  color: #ffffff !important;
+}
+
+/* Icon-only delete button (e.g. Trash2 in bookmark cards) */
+.btn.delete.icon,
+.bookmark-remove {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--muted) !important;
+}
+
+.btn.delete.icon:not(:disabled):hover,
+.btn.delete.icon:focus-visible,
+.bookmark-remove:not(:disabled):hover,
+.bookmark-remove:focus-visible {
+  background: transparent !important;
+  color: #dc2626 !important;
+}
+
+:root.dark .btn.delete.icon,
+:root.dark .bookmark-remove,
+.dark .btn.delete.icon,
+.dark .bookmark-remove {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: var(--muted) !important;
+}
+
+:root.dark .btn.delete.icon:not(:disabled):hover,
+.dark .btn.delete.icon:not(:disabled):hover,
+:root.dark .bookmark-remove:not(:disabled):hover,
+.dark .bookmark-remove:not(:disabled):hover {
+  background: transparent !important;
+  color: #ef4444 !important;
+}
+
+/* 5.5 Secondary Buttons (.btn.secondary) */
+.btn.secondary,
 .secondary {
-  background: var(--btn-dark);
-  color: var(--color-white);
-  border-radius: var(--control-radius);
-  box-shadow: var(--card-shadow);
+  background: var(--soft);
+  color: var(--text);
+  border: none !important;
+  box-shadow: var(--shadow);
   transition: var(--transition);
 }
 
-.secondary:hover {
-  background: var(--btn-hover);
-  color: var(--color-white);
-  box-shadow: var(--card-shadow);
+.btn.secondary:not(:disabled):hover,
+.secondary:not(:disabled):hover {
+  background: var(--extra-soft);
+  color: var(--text);
 }
 
-.dark .primary {
-  background: var(--text);
-  color: var(--surface);
-}
-
-.dark .primary:hover,
-.dark a.primary:hover {
-  background: var(--text) !important;
-  color: var(--surface) !important;
-  filter: brightness(0.93);
-}
-
+:root.dark .btn.secondary,
+.dark .btn.secondary,
+:root.dark .secondary,
 .dark .secondary {
   background: var(--surface);
   color: var(--text);
 }
 
-.dark .secondary:hover {
-  background: var(--extra-soft);
+:root.dark .btn.secondary:not(:disabled):hover,
+.dark .btn.secondary:not(:disabled):hover,
+:root.dark .secondary:not(:disabled):hover,
+.dark .secondary:not(:disabled):hover {
+  background: var(--soft);
   color: var(--text);
 }
 
@@ -570,7 +627,7 @@ a.secondary.no-bookmark-browse-btn {
   margin: 32px auto 0;
 }
 
-/* Close/Dismiss Structural Action Elements */
+/* 5.6 Close / Dismiss Button (.close-btn) */
 .close-btn {
   display: inline-flex;
   align-items: center;
@@ -579,141 +636,64 @@ a.secondary.no-bookmark-browse-btn {
   height: 32px !important;
   min-width: 32px !important;
   min-height: 32px !important;
-  max-width: 32px;
-  max-height: 32px;
-  flex: 0 0 32px !important;
-  aspect-ratio: 1;
   padding: 0 !important;
-  border: 1px solid var(--line) !important;
+  border: none !important;
   border-radius: var(--control-radius);
-  background: var(--surface);
-  color: var(--muted);
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--muted) !important;
   cursor: pointer;
   vertical-align: middle;
-  transition:
-    background-color 160ms ease,
-    border-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease;
+  transition: var(--transition);
 }
 
-.close-btn svg,
-.close-btn svg.lucide.lucide-x {
+.close-btn svg {
   width: 16px !important;
   height: 16px !important;
-  color: var(--muted);
-  stroke: var(--muted);
+  color: currentColor;
+  stroke: currentColor;
   transition:
-    color 160ms ease,
-    stroke 160ms ease;
+    color 200ms ease,
+    stroke 200ms ease;
 }
 
-/* Danger Structural Actions Theme Control */
-.danger-text {
-  color: #b64545 !important;
-}
-
-.dark .danger-text {
-  color: #ff9d9d !important;
-}
-
-.bookmark-card .bookmark-remove,
-.bookmark-remove,
-.close-btn,
-button.danger-text,
-.menu-popover button.danger-text,
-.danger-text {
-  transition:
-    opacity 160ms ease,
-    background-color 160ms ease,
-    border-color 160ms ease,
-    color 160ms ease,
-    box-shadow 160ms ease;
-}
-
-.bookmark-card .bookmark-remove:hover,
-.bookmark-card .bookmark-remove:focus-visible,
-.bookmark-remove:hover,
-.bookmark-remove:focus-visible,
 .close-btn:hover,
-.close-btn:focus-visible,
-button.danger-text:hover,
-button.danger-text:focus-visible,
-.menu-popover button.danger-text:hover,
-.menu-popover button.danger-text:focus-visible {
-  background: #dc2626 !important;
-  border-color: #991b1b !important;
-  color: #ffffff !important;
+.close-btn:focus-visible {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
 }
 
-.bookmark-card .bookmark-remove:hover svg,
-.bookmark-card .bookmark-remove:focus-visible svg,
-.bookmark-remove:hover svg,
-.bookmark-remove:focus-visible svg,
-.close-btn:hover svg,
-.close-btn:focus-visible svg,
-.close-btn:hover svg.lucide.lucide-x,
-.close-btn:focus-visible svg.lucide.lucide-x,
-button.danger-text:hover svg,
-button.danger-text:focus-visible svg,
-.menu-popover button.danger-text:hover svg,
-.menu-popover button.danger-text:focus-visible svg {
-  color: #ffffff !important;
-  stroke: #ffffff !important;
+:root.dark .close-btn,
+.dark .close-btn {
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--muted) !important;
 }
 
-/* Dark Mode Danger Context State Refinement */
-:root.dark .bookmark-card .bookmark-remove:hover,
-:root.dark .bookmark-card .bookmark-remove:focus-visible,
-:root.dark .bookmark-remove:hover,
-:root.dark .bookmark-remove:focus-visible,
 :root.dark .close-btn:hover,
-:root.dark .close-btn:focus-visible,
-:root.dark button.danger-text:hover,
-:root.dark button.danger-text:focus-visible,
-:root.dark .menu-popover button.danger-text:hover,
-:root.dark .menu-popover button.danger-text:focus-visible,
-.dark .bookmark-card .bookmark-remove:hover,
-.dark .bookmark-card .bookmark-remove:focus-visible,
-.dark .bookmark-remove:hover,
-.dark .bookmark-remove:focus-visible,
 .dark .close-btn:hover,
-.dark .close-btn:focus-visible,
-.dark button.danger-text:hover,
-.dark button.danger-text:focus-visible,
-.dark .menu-popover button.danger-text:hover,
-.dark .menu-popover button.danger-text:focus-visible {
-  background: #b91c1c !important;
-  border-color: #7f1d1d !important;
+:root.dark .close-btn:focus-visible,
+.dark .close-btn:focus-visible {
+  background: transparent !important;
+  box-shadow: none !important;
   color: #ffffff !important;
 }
 
-:root.dark .bookmark-card .bookmark-remove:hover svg,
-:root.dark .bookmark-card .bookmark-remove:focus-visible svg,
-:root.dark .bookmark-remove:hover svg,
-:root.dark .bookmark-remove:focus-visible svg,
-:root.dark .close-btn:hover svg,
-:root.dark .close-btn:focus-visible svg,
-:root.dark .close-btn:hover svg.lucide.lucide-x,
-:root.dark .close-btn:focus-visible svg.lucide.lucide-x,
-:root.dark button.danger-text:hover svg,
-:root.dark button.danger-text:focus-visible svg,
-:root.dark .menu-popover button.danger-text:hover svg,
-:root.dark .menu-popover button.danger-text:focus-visible svg,
-.dark .bookmark-card .bookmark-remove:hover svg,
-.dark .bookmark-card .bookmark-remove:focus-visible svg,
-.dark .bookmark-remove:hover svg,
-.dark .bookmark-remove:focus-visible svg,
-.dark .close-btn:hover svg,
-.dark .close-btn:focus-visible svg,
-.dark .close-btn:hover svg.lucide.lucide-x,
-.dark .close-btn:focus-visible svg.lucide.lucide-x,
-.dark button.danger-text:hover svg,
-.dark button.danger-text:focus-visible svg,
-.dark .menu-popover button.danger-text:hover svg,
-.dark .menu-popover button.danger-text:focus-visible svg {
-  color: #ffffff !important;
-  stroke: #ffffff !important;
+/* 5.7 Text Buttons Reset */
+.text-button {
+  display: block;
+  background: transparent;
+  border: 0;
+  padding: 9px 0;
+  font-size: 16px;
+  color: var(--muted);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.text-button:hover {
+  color: var(--text);
 }
 
 /* ==========================================================================
@@ -972,15 +952,6 @@ input[type='checkbox'] {
   gap: 2px;
 }
 
-.header-actions .icon-button {
-  background: transparent;
-  transition: var(--transition);
-}
-
-.header-actions .icon-button:hover {
-  background: var(--extra-soft);
-}
-
 .button-row {
   margin: 16px 0;
   flex-wrap: wrap;
@@ -1110,42 +1081,6 @@ input[type='checkbox'] {
   font-size: 16px;
 }
 
-/* Browser Specific Action Components for Uploader */
-.browse-button,
-.upload-zone .browse-button,
-.upload-zone:hover .browse-button:not(:hover) {
-  background-color: #2563eb !important;
-  color: #ffffff !important;
-  border: none;
-  box-shadow: var(--card-shadow);
-  transition:
-    background-color 0.3s ease-in-out,
-    color 0.3s ease-in-out,
-    border-color 0.3s ease-in-out !important;
-}
-
-.browse-button svg,
-.upload-zone .browse-button svg {
-  color: #ffffff;
-  stroke: currentColor;
-  transition:
-    color 0.3s ease-in-out,
-    stroke 0.3s ease-in-out !important;
-}
-
-.browse-button:hover,
-.upload-zone .browse-button:hover {
-  background-color: var(--btn-hover) !important;
-  color: #ffffff !important;
-  filter: none !important;
-}
-
-.browse-button:hover svg,
-.upload-zone .browse-button:hover svg {
-  color: #ffffff !important;
-  stroke: #ffffff !important;
-}
-
 .upload-buttons {
   display: flex;
   align-items: center;
@@ -1163,117 +1098,10 @@ input[type='checkbox'] {
   margin: 28px 0 0;
 }
 
+.upload-zone .upload-buttons>.btn,
 .upload-zone .upload-buttons>button {
   width: 100%;
-  height: auto;
   min-height: max(44px, calc(var(--font-size-button, 15px) * 2.8));
-  margin: 0;
-  padding: 10px 12px;
-  font-size: var(--font-size-button, 15px) !important;
-  font-weight: 500;
-  line-height: 1.35;
-  gap: 8px;
-  justify-content: center;
-  white-space: nowrap;
-  color: #fff;
-  background: var(--btn-dark);
-  box-shadow: var(--card-shadow);
-  transition:
-    background-color 0.3s ease-in-out,
-    color 0.3s ease-in-out,
-    border-color 0.3s ease-in-out !important;
-}
-
-.dark .upload-zone .upload-buttons>button {
-  background-color: var(--soft);
-}
-
-.dark .upload-zone .upload-buttons>button:hover {
-  color: var(--color-white);
-  background: var(--extra-soft) !important;
-}
-
-.upload-zone .upload-buttons>button svg {
-  width: calc(var(--font-size-button, 15px) * 1.15) !important;
-  height: calc(var(--font-size-button, 15px) * 1.15) !important;
-  flex-shrink: 0;
-}
-
-.upload-zone .upload-buttons>button:hover {
-  color: #fff;
-  background: var(--btn-hover);
-}
-
-.support-button {
-  min-height: 42px;
-  padding: 10px 15px;
-}
-
-/* Upload Visibility Toggle Layouts */
-.upload-toggle-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: 0;
-  cursor: pointer;
-  background: var(--btn-default-blue);
-  color: var(--color-white);
-  padding: 8px 12px;
-  border-radius: 7px;
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  font-family: inherit;
-  font-weight: bold;
-  font-size: var(--font-size-button, var(--font-size-ui, 15px));
-  line-height: 1.25;
-  white-space: nowrap;
-}
-
-.upload-toggle-btn:hover:not(:disabled) {
-  background: var(--btn-hover);
-}
-
-.dark .upload-toggle-btn {
-  background: var(--soft);
-  color: var(--color-white);
-}
-
-.dark .upload-toggle-btn:hover:not(:disabled) {
-  background: var(--extra-soft);
-}
-
-.upload-toggle-btn.is-open {
-  background: #c82828;
-  color: var(--color-white, #ffffff);
-}
-
-.upload-toggle-btn.is-open:hover:not(:disabled) {
-  background: #a81f1f;
-}
-
-.dark .upload-toggle-btn.is-open {
-  background: #8f2424;
-  color: var(--color-white, #ffffff);
-}
-
-.dark .upload-toggle-btn.is-open:hover:not(:disabled) {
-  background: #ab2e2e;
-}
-
-.upload-toggle-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.upload-toggle-btn svg {
-  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  flex-shrink: 0;
-}
-
-.reduced .upload-toggle-btn {
-  transition: none;
 }
 
 /* ==========================================================================
@@ -1556,6 +1384,10 @@ input[type='checkbox'] {
   background: var(--soft);
 }
 
+button.btn.icon.manga-bookmark-btn.bookmarked {
+  margin: 0 -13px 0 0;
+}
+
 .manga-card-calendar-icon {
   stroke: currentColor;
 }
@@ -1629,16 +1461,7 @@ summary.card-menu-trigger svg {
 }
 
 .manga-info-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--muted);
-  padding: 4px 8px;
-  margin-left: -8px;
-  border-radius: 5px;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
+  margin: 0 0 0 6px !important;
 }
 
 .manga-info-btn:hover,
@@ -1852,40 +1675,18 @@ summary.card-menu-trigger svg {
 
 .bookmark-navigation>a {
   margin-right: 9px;
-  background: var(--btn-dark);
-  color: var(--color-white);
-  padding: 8px 12px;
-  border-radius: 7px;
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  font-weight: bold;
 }
 
-.bookmark-navigation>a:hover {
-  background: var(--btn-hover);
+.bookmark-navigation .btn.icon {
+  background: var(--btn-dark) !important;
+  color: var(--color-white) !important;
+  box-shadow: var(--shadow) !important;
+  transition: var(--transition) !important;
+  opacity: 1;
 }
 
-.dark .bookmark-navigation>a {
-  background: var(--soft);
-}
-
-.dark .bookmark-navigation>a:hover {
-  background: var(--extra-soft);
-}
-
-.bookmark-navigation svg {
-  width: calc(var(--font-size-ui, 15px) * 1.1) !important;
-  height: calc(var(--font-size-ui, 15px) * 1.1) !important;
-}
-
-.dark .bookmark-navigation button.icon-button {
-  background: var(--soft);
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-}
-
-.dark .bookmark-navigation button.icon-button:hover {
-  background: var(--extra-soft);
+.bookmark-navigation .btn.icon:hover {
+  background: var(--btn-hover) !important;
 }
 
 /* Horizontal Track Modules */
@@ -2201,19 +2002,8 @@ summary.card-menu-trigger svg {
   margin-bottom: 48px;
 }
 
-.btn.continue-reading {
-  display: inline-block;
+.continue-reading {
   margin-top: 24px;
-  background-color: #2563eb;
-  color: var(--color-white);
-  box-shadow: var(--card-shadow);
-  transition: var(--transition);
-  padding: 10px 12px;
-  border-radius: var(--control-radius);
-}
-
-.btn.continue-reading:hover {
-  background-color: var(--btn-hover-light);
 }
 
 .text-semibold {
@@ -2296,7 +2086,7 @@ summary.card-menu-trigger svg {
 
 /* Contextual Search Form for Chapter Navigation */
 .chapter-search * {
-  color: #fff !important
+  color: #fff !important;
 }
 
 .chapter-search {
@@ -2308,7 +2098,7 @@ summary.card-menu-trigger svg {
   padding: 0 12px;
   border: none !important;
   border-radius: var(--control-radius);
-  background: var(--btn-default);
+  background: var(--btn-dark);
   color: var(--muted);
   box-shadow: var(--card-shadow);
   transition:
@@ -2320,8 +2110,6 @@ summary.card-menu-trigger svg {
 .chapter-search:focus-within {
   background: var(--btn-hover);
 }
-
-
 
 .chapter-search input {
   width: 100%;
@@ -3925,8 +3713,8 @@ summary.card-menu-trigger svg {
     gap: 8px;
   }
 
-  .support-button,
-  .upload-buttons .browse-button {
+  .upload-buttons>.btn,
+  .upload-buttons>button {
     font-size: var(--font-size-button, 15px) !important;
     padding: 10px 12px;
   }
@@ -4012,6 +3800,7 @@ summary.card-menu-trigger svg {
     padding-right: 5px;
   }
 
+  .reader-top>.btn.icon,
   .reader-top>.icon-button {
     width: 33px;
   }
@@ -4027,6 +3816,7 @@ summary.card-menu-trigger svg {
     min-width: 25px;
   }
 
+  .btn.icon,
   .icon-button {
     min-height: 42px;
     width: 38px;
@@ -4041,6 +3831,7 @@ summary.card-menu-trigger svg {
     margin: 0;
   }
 
+  .reader-bottom .btn.icon,
   .reader-bottom .icon-button {
     width: 31px;
   }

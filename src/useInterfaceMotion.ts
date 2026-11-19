@@ -7,7 +7,7 @@ export default function useInterfaceMotion(reduced: boolean) {
     const press = (event: MouseEvent) => {
       if (media.matches || !(event.target instanceof Element)) return;
       const control = event.target.closest<HTMLElement>(
-        '.icon-button,.close-btn,.primary,.secondary,.browse-button',
+        '.btn,button,.icon-button,.close-btn,.primary,.secondary',
       );
       if (!control || control.matches(':disabled') || !control.animate) return;
       for (const animation of control.getAnimations()) animation.cancel();

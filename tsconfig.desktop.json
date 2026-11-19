@@ -4,9 +4,7 @@
     "baseUrl": ".",
     "paths": {
       "./data": ["src/data.desktop.ts"],
-      "./storage": ["src/desktop/storage.ts"],
-      "./importScan": ["src/desktop/importScan.ts"],
-      "./validation": ["src/desktop/validation.ts"]
+      "./storage": ["src/desktop/storage.ts"]
     }
   },
   "include": [

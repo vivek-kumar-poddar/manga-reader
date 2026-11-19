@@ -125,7 +125,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
             <div className="dialog-heading">
               <Dialog.Title>Settings</Dialog.Title>
               <Dialog.Close asChild>
-                <button className="close-btn" aria-label="Close settings">
+                <button className="btn icon close-btn" aria-label="Close settings">
                   <X size={20} />
                 </button>
               </Dialog.Close>
@@ -140,6 +140,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 key={name}
                 type="button"
                 role="tab"
+                className="btn"
                 id={'settings-tab-' + name}
                 aria-controls={'settings-panel-' + name}
                 aria-selected={tab === name}
@@ -467,7 +468,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 <section>
                   <h3>Start fresh</h3>
                   <button
-                    className="secondary"
+                    className="btn secondary"
                     onClick={() => {
                       setSettings(defaults);
                       notify(
@@ -528,7 +529,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       : 'These estimates cover the application database and cached thumbnails, not the size of your manga folders. Quota is an estimate, not reserved disk space.'}
                   </p>
                   <div className="button-row">
-                    <button className="secondary" onClick={() => void updateStorage()}>
+                    <button className="btn secondary" onClick={() => void updateStorage()}>
                       <RefreshCw size={16} /> Refresh details
                     </button>
                   </div>
@@ -559,14 +560,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <h3>Backup & restore</h3>
                   <div className="button-row">
                     <button
-                      className="secondary"
+                      className="btn secondary"
                       onClick={() =>
                         void exportData().catch(() => notify('Could not export backup.'))
                       }
                     >
                       <Download size={16} /> Export metadata
                     </button>
-                    <button className="secondary" onClick={() => input.current?.click()}>
+                    <button className="btn blue" onClick={() => input.current?.click()}>
                       <Upload size={16} /> Import backup
                     </button>
                     <input
@@ -601,14 +602,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                       </p>
                       <div className="button-row">
                         <button
-                          className="secondary danger-text"
+                          className="btn delete"
                           disabled={clearing}
                           onClick={() => void clear()}
                         >
                           {clearing ? 'Clearing…' : 'Confirm clear'}
                         </button>
                         <button
-                          className="secondary"
+                          className="btn secondary"
                           disabled={clearing}
                           onClick={() => setConfirmAction(null)}
                         >
@@ -618,17 +619,14 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                     </div>
                   ) : (
                     <div className="button-row">
-                      <button className="secondary" onClick={() => setConfirmAction('progress')}>
+                      <button className="btn delete" onClick={() => setConfirmAction('progress')}>
                         Clear reading progress
                       </button>
-                      <button
-                        className="secondary danger-text"
-                        onClick={() => setConfirmAction('all')}
-                      >
+                      <button className="btn delete" onClick={() => setConfirmAction('all')}>
                         Clear all manga data
                       </button>
                       <button
-                        className="secondary"
+                        className="btn delete"
                         onClick={async () => {
                           if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
                             await desktopAPI.clearThumbnails();
@@ -651,7 +649,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                   <h3>Diagnostics</h3>
                   <div className="button-row">
                     <button
-                      className="secondary"
+                      className="btn secondary"
                       onClick={async () => {
                         const logs = (await desktopAPI.getDiagnostics?.()) ?? [];
                         if (!logs.length) {

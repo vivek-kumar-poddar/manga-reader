@@ -78,7 +78,13 @@ function PageImage({
         try {
           const sep = mangaLocalPath.includes('\\') ? '\\' : '/';
           const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
-          const absPath = cleanLocal + sep + pagePath.replace(/^[/\\]+/, '').split('/').join(sep);
+          const absPath =
+            cleanLocal +
+            sep +
+            pagePath
+              .replace(/^[/\\]+/, '')
+              .split('/')
+              .join(sep);
           const dim = await desktopAPI.getImageDimensions(absPath);
           if (!live) return;
           if (dim && dim.width > 0 && dim.height > 0) {
@@ -86,7 +92,7 @@ function PageImage({
             setRetry((r) => r + 1);
             return;
           }
-        } catch { }
+        } catch {}
       }
       try {
         const file = await fileFor(m, page);
@@ -132,28 +138,33 @@ function PageImage({
       const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
       const nativeSrc = desktopAPI.getPageImageUrl
         ? desktopAPI.getPageImageUrl({
-          mangaId,
-          pagePath,
-          version: mangaUpdatedAt,
-          transform,
-          localPath: cleanLocal,
-        })
+            mangaId,
+            pagePath,
+            version: mangaUpdatedAt,
+            transform,
+            localPath: cleanLocal,
+          })
         : desktopAPI.convertFileSrc!(
-          cleanLocal + sep + pagePath.replace(/^[/\\]+/, '').split('/').join(sep),
-          'mangaimg',
-        );
+            cleanLocal +
+              sep +
+              pagePath
+                .replace(/^[/\\]+/, '')
+                .split('/')
+                .join(sep),
+            'mangaimg',
+          );
 
       const stop = host.current
         ? observe(host.current, (visible) => {
-          if (!live) return;
-          if (visible) {
-            setUrl(nativeSrc);
-            setError('');
-          } else {
-            setUrl('');
-          }
-        })
-        : () => { };
+            if (!live) return;
+            if (visible) {
+              setUrl(nativeSrc);
+              setError('');
+            } else {
+              setUrl('');
+            }
+          })
+        : () => {};
 
       return () => {
         live = false;
@@ -216,7 +227,10 @@ function PageImage({
                 const absPath =
                   m.localPath.replace(/[/\\]+$/, '') +
                   sep +
-                  page.path.replace(/^[/\\]+/, '').split('/').join(sep);
+                  page.path
+                    .replace(/^[/\\]+/, '')
+                    .split('/')
+                    .join(sep);
                 const variantRes = await desktopAPI.generateImageVariant(
                   absPath,
                   1000,
@@ -229,7 +243,7 @@ function PageImage({
                   }
                   return;
                 }
-              } catch { }
+              } catch {}
             }
 
             let blob: Blob = await fileFor(m, page);
@@ -239,7 +253,7 @@ function PageImage({
               const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
               try {
                 blob = await downscaleImage(blob, 1000, targetHeight, signal);
-              } catch { }
+              } catch {}
             }
 
             if (live && wanted && !signal.aborted) {
@@ -288,11 +302,11 @@ function PageImage({
 
     const stop = host.current
       ? observe(host.current, (v) => {
-        wanted = v;
-        if (v) load();
-        else release();
-      })
-      : () => { };
+          wanted = v;
+          if (v) load();
+          else release();
+        })
+      : () => {};
 
     return () => {
       live = false;
@@ -329,12 +343,12 @@ function PageImage({
       }
     >
       {page.dimensionsPending ? (
-        <button className="page-retry" onClick={retryPreparation}>
+        <button className="btn page-retry" onClick={retryPreparation}>
           Page {index + 1}: Dimensions unavailable. Retry preparation.
         </button>
       ) : error ? (
         <button
-          className="page-retry"
+          className="btn page-retry"
           onClick={() => {
             setError('');
             setUseBlobFallback(false);

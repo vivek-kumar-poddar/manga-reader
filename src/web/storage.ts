@@ -59,18 +59,22 @@ export type SourceFile = File | FileSystemFileHandle | { getFile(): Promise<File
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
 
 export type MangaDeleteListener = (id?: string) => void;
-const deleteListeners: MangaDeleteListener[] = [];
+var _deleteListeners: MangaDeleteListener[] | undefined;
+function getDeleteListeners(): MangaDeleteListener[] {
+  return (_deleteListeners ??= []);
+}
 
 export function onMangaDelete(listener: MangaDeleteListener): () => void {
-  deleteListeners.push(listener);
+  getDeleteListeners().push(listener);
   return () => {
-    const idx = deleteListeners.indexOf(listener);
-    if (idx >= 0) deleteListeners.splice(idx, 1);
+    const list = getDeleteListeners();
+    const idx = list.indexOf(listener);
+    if (idx >= 0) list.splice(idx, 1);
   };
 }
 
 export function notifyDelete(id?: string) {
-  for (const fn of deleteListeners) {
+  for (const fn of getDeleteListeners()) {
     try {
       fn(id);
     } catch {
@@ -87,17 +91,21 @@ export interface StorageSyncMessage {
 export const syncChannel =
   typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader:sync') : null;
 
-const localSyncListeners = new Set<(msg: StorageSyncMessage) => void>();
+var _localSyncListeners: Set<(msg: StorageSyncMessage) => void> | undefined;
+function getLocalSyncListeners(): Set<(msg: StorageSyncMessage) => void> {
+  return (_localSyncListeners ??= new Set());
+}
 
 export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () => void {
-  localSyncListeners.add(listener);
+  const listeners = getLocalSyncListeners();
+  listeners.add(listener);
   return () => {
-    localSyncListeners.delete(listener);
+    listeners.delete(listener);
   };
 }
 
 export function broadcastSync(msg: StorageSyncMessage): void {
-  for (const listener of localSyncListeners) {
+  for (const listener of getLocalSyncListeners()) {
     try {
       listener(msg);
     } catch (e) {
@@ -264,20 +272,18 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
             }
           },
         })
-        : (new Promise<IDBPDatabase<MangaDB>>(() => { }));
+        : new Promise<IDBPDatabase<MangaDB>>(() => { });
   }
   return dbInstance!;
 }
 
 type StoreNames<T> = keyof T & ('manga' | 'summaries' | 'covers' | 'progress' | 'settings');
 
-export const db: Promise<IDBPDatabase<MangaDB>> = desktopAPI.isDesktop
-  ? ({
-    then: (onfulfilled?: any, onrejected?: any) => getWebDb().then(onfulfilled, onrejected),
-    catch: (onrejected?: any) => getWebDb().catch(onrejected),
-    finally: (onfinally?: any) => getWebDb().finally(onfinally),
-  } as Promise<IDBPDatabase<MangaDB>>)
-  : getWebDb();
+export const db: Promise<IDBPDatabase<MangaDB>> = {
+  then: (onfulfilled?: any, onrejected?: any) => getWebDb().then(onfulfilled, onrejected),
+  catch: (onrejected?: any) => getWebDb().catch(onrejected),
+  finally: (onfinally?: any) => getWebDb().finally(onfinally),
+} as Promise<IDBPDatabase<MangaDB>>;
 
 export const listLibraryIdb = async (): Promise<Summary[]> => {
   if (cachedSummaries !== null) {
@@ -731,9 +737,7 @@ export async function restoreBackupIdb(backup: {
     const existingSummaries = await listLibraryIdb();
     const backupIds = new Set(backup.manga.map((m) => m.id));
     const usedSlugs = new Set<string>(
-      existingSummaries
-        .filter((s) => !backupIds.has(s.id) && Boolean(s.slug))
-        .map((s) => s.slug!),
+      existingSummaries.filter((s) => !backupIds.has(s.id) && Boolean(s.slug)).map((s) => s.slug!),
     );
     const existingManga = new Map<string, Manga>();
     for (const m of backup.manga) {
