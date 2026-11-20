@@ -2,9 +2,8 @@ import { memo, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fileFor, errorMessage, type Manga, type Page } from './data';
 import { limits, assertImageDimensions } from './limits';
 import { enqueueImage, reprioritizeImage, type CancelHandle } from './imageQueue';
-import { dimensions, downscaleImage } from './images';
 import { getObjectUrl, storeObjectUrl, retainObjectUrl } from './objectUrlPool';
-import { desktopAPI } from './tauriBridge';
+import { desktopAPI, dimensions, downscaleImage } from './tauriBridge';
 
 const watched = new Map<Element, (visible: boolean) => void>();
 let observer: IntersectionObserver | undefined;
@@ -92,7 +91,7 @@ function PageImage({
             setRetry((r) => r + 1);
             return;
           }
-        } catch {}
+        } catch { }
       }
       try {
         const file = await fileFor(m, page);
@@ -138,33 +137,33 @@ function PageImage({
       const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
       const nativeSrc = desktopAPI.getPageImageUrl
         ? desktopAPI.getPageImageUrl({
-            mangaId,
-            pagePath,
-            version: mangaUpdatedAt,
-            transform,
-            localPath: cleanLocal,
-          })
+          mangaId,
+          pagePath,
+          version: mangaUpdatedAt,
+          transform,
+          localPath: cleanLocal,
+        })
         : desktopAPI.convertFileSrc!(
-            cleanLocal +
-              sep +
-              pagePath
-                .replace(/^[/\\]+/, '')
-                .split('/')
-                .join(sep),
-            'mangaimg',
-          );
+          cleanLocal +
+          sep +
+          pagePath
+            .replace(/^[/\\]+/, '')
+            .split('/')
+            .join(sep),
+          'mangaimg',
+        );
 
       const stop = host.current
         ? observe(host.current, (visible) => {
-            if (!live) return;
-            if (visible) {
-              setUrl(nativeSrc);
-              setError('');
-            } else {
-              setUrl('');
-            }
-          })
-        : () => {};
+          if (!live) return;
+          if (visible) {
+            setUrl(nativeSrc);
+            setError('');
+          } else {
+            setUrl('');
+          }
+        })
+        : () => { };
 
       return () => {
         live = false;
@@ -243,7 +242,7 @@ function PageImage({
                   }
                   return;
                 }
-              } catch {}
+              } catch { }
             }
 
             let blob: Blob = await fileFor(m, page);
@@ -253,7 +252,7 @@ function PageImage({
               const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
               try {
                 blob = await downscaleImage(blob, 1000, targetHeight, signal);
-              } catch {}
+              } catch { }
             }
 
             if (live && wanted && !signal.aborted) {
@@ -302,11 +301,11 @@ function PageImage({
 
     const stop = host.current
       ? observe(host.current, (v) => {
-          wanted = v;
-          if (v) load();
-          else release();
-        })
-      : () => {};
+        wanted = v;
+        if (v) load();
+        else release();
+      })
+      : () => { };
 
     return () => {
       live = false;

@@ -9,8 +9,7 @@ import {
   assertImageDimensions,
   withinTime,
 } from '../limits';
-import { desktopAPI, type FolderEntry } from '../tauriBridge';
-import { dimensions, thumbnail, imageFile } from '../images';
+import { desktopAPI, dimensions, thumbnail, imageFile, type FolderEntry } from '../tauriBridge';
 import {
   db,
   getManga,

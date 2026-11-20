@@ -71,7 +71,8 @@ export {
   type SourceFile,
 } from './storage';
 
-export { dimensions, thumbnail, imageFile, downscaleImage } from './images';
+export { dimensions, thumbnail, imageFile, downscaleImage } from './tauriBridge';
+
 export {
   enqueueImage,
   clearImageQueue,

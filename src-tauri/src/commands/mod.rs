@@ -5,5 +5,6 @@ pub mod fs;
 pub mod geometry;
 pub mod image;
 pub mod image_dimensions;
+pub mod images;
 pub mod indexing;
 pub mod window;
