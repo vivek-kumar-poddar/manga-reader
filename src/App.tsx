@@ -43,7 +43,6 @@ export {
 export { CardMenu } from './app-tsx/CardMenu';
 export { CalendarIcon, UploadIcon, AddMangaIcon } from './app-tsx/Icons';
 export { DateTooltip, formatAddedDate, formatWholeDate } from './app-tsx/DateTooltip';
-export { shelfCollator, sortLibraryEntries } from './app-tsx/sortUtils';
 export { Library } from './app-tsx/Library';
 
 const Reader = lazy(() => import('./Reader'));
@@ -104,7 +103,7 @@ export default function App() {
             }
           }),
         ]);
-        void resumeBackground().catch(() => {});
+        void resumeBackground().catch(() => { });
       } catch (e) {
         notify(errorMessage(e));
       } finally {
@@ -253,7 +252,7 @@ export default function App() {
         },
         { signal: lifecycle.signal },
       ),
-    ).catch(() => {});
+    ).catch(() => { });
     return () => lifecycle.abort();
   }, []);
 

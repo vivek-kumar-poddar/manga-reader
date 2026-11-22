@@ -5,5 +5,4 @@ export * from './Cover';
 export * from './CardMenu';
 export * from './Icons';
 export * from './DateTooltip';
-export * from './sortUtils';
 export * from './Library';

@@ -96,4 +96,5 @@ export class TauriDesktopBridge implements DesktopAPI {
   sanitizeDiagnosticIdentifier = tauriApp.sanitizeDiagnosticIdentifier;
   computeOffsets = tauriApp.computeOffsets;
   getWindowRange = tauriApp.getWindowRange;
+  sortLibraryEntries = tauriApp.sortLibraryEntries;
 }

@@ -38,7 +38,6 @@ import { Cover } from './Cover';
 import { CardMenu } from './CardMenu';
 import { DateTooltip, formatAddedDate } from './DateTooltip';
 import { CalendarIcon, UploadIcon, AddMangaIcon } from './Icons';
-import { sortLibraryEntries } from './sortUtils';
 
 export function Library({
   busy,
@@ -53,7 +52,51 @@ export function Library({
 }) {
   const { library, pick, notify, refresh, openSettings, settings, setSettings } = useApp();
   const shelfSort = settings.shelfSort || 'recent';
-  const sortedLibrary = useMemo(() => sortLibraryEntries(library, shelfSort), [library, shelfSort]);
+  const [sortedIds, setSortedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    let live = true;
+    const payload = library.map((m) => ({
+      id: m.id,
+      title: m.title,
+      addedAt: m.addedAt,
+      updatedAt: m.updatedAt,
+      chaptersRead: m.chaptersRead,
+      chapterCount: m.chapterCount,
+    }));
+    void desktopAPI
+      .sortLibraryEntries(payload, shelfSort)
+      .then((ids) => {
+        if (live) setSortedIds(ids);
+      })
+      .catch(() => {
+        if (live) setSortedIds(library.map((m) => m.id));
+      });
+    return () => {
+      live = false;
+    };
+  }, [library, shelfSort]);
+
+  const sortedLibrary = useMemo(() => {
+    if (!sortedIds.length) return library;
+    const byId = new Map(library.map((m) => [m.id, m]));
+    const ordered: Summary[] = [];
+    const seen = new Set<string>();
+    for (const id of sortedIds) {
+      const item = byId.get(id);
+      if (item && !seen.has(id)) {
+        seen.add(id);
+        ordered.push(item);
+      }
+    }
+    for (const item of library) {
+      if (!seen.has(item.id)) {
+        ordered.push(item);
+      }
+    }
+    return ordered;
+  }, [library, sortedIds]);
+
   const [drag, setDrag] = useState(false);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [needs, setNeeds] = useState<Set<string>>(new Set());

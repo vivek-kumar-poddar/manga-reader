@@ -8,8 +8,9 @@ import type {
   StorageStats,
   DiagnosticInputPayload,
   DiagnosticRecordPayload,
+  SortableSummary,
 } from './types';
-import type { Page, GeometryOptions, PageOffset, WindowRange } from '../model';
+import type { Page, GeometryOptions, PageOffset, WindowRange, Settings } from '../model';
 
 export function setProgressBar(progress: number): void {
   try {
@@ -99,7 +100,7 @@ export async function getLastOpenedRoots(): Promise<string[]> {
 
 export function onDragDrop(callback: (paths: string[]) => void): () => void {
   if (typeof window === 'undefined') {
-    return () => {};
+    return () => { };
   }
   let unlistenNative: (() => void) | undefined;
   let unlistenTauri: (() => void) | undefined;
@@ -107,7 +108,7 @@ export function onDragDrop(callback: (paths: string[]) => void): () => void {
 
   if (typeof (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ !== 'object') {
     (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-      unregisterListener: () => {},
+      unregisterListener: () => { },
     };
   }
 
@@ -122,12 +123,12 @@ export function onDragDrop(callback: (paths: string[]) => void): () => void {
       if (!active) {
         try {
           void un();
-        } catch {}
+        } catch { }
       } else {
         unlistenNative = un;
       }
     })
-    .catch(() => {});
+    .catch(() => { });
 
   void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
     if (!active) return;
@@ -140,21 +141,21 @@ export function onDragDrop(callback: (paths: string[]) => void): () => void {
       if (!active) {
         try {
           void un();
-        } catch {}
+        } catch { }
       } else {
         unlistenTauri = un;
       }
     })
-    .catch(() => {});
+    .catch(() => { });
 
   return () => {
     active = false;
     try {
       unlistenNative?.();
-    } catch {}
+    } catch { }
     try {
       unlistenTauri?.();
-    } catch {}
+    } catch { }
   };
 }
 
@@ -205,7 +206,7 @@ export async function getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
 export async function clearDiagnostics(): Promise<void> {
   try {
     await invokeCommand('clear_diagnostics');
-  } catch {}
+  } catch { }
 }
 
 export async function sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
@@ -242,5 +243,15 @@ export async function getWindowRange(
     viewportHeight,
     bufferScreenCount,
     threshold,
+  });
+}
+
+export async function sortLibraryEntries(
+  entries: SortableSummary[],
+  shelfSort?: Settings['shelfSort'],
+): Promise<string[]> {
+  return invokeCommand('sort_library_entries', {
+    entries,
+    shelfSort,
   });
 }

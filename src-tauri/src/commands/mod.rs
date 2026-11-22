@@ -7,4 +7,5 @@ pub mod image;
 pub mod image_dimensions;
 pub mod images;
 pub mod indexing;
+pub mod sort;
 pub mod window;

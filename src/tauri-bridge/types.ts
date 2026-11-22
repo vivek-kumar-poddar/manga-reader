@@ -195,15 +195,15 @@ export interface FsErrorPayload {
 
 export interface DbErrorPayload {
   code:
-    | 'Sqlite'
-    | 'Migration'
-    | 'Lock'
-    | 'Validation'
-    | 'NotFound'
-    | 'Conflict'
-    | 'Task'
-    | 'Io'
-    | 'Serialization';
+  | 'Sqlite'
+  | 'Migration'
+  | 'Lock'
+  | 'Validation'
+  | 'NotFound'
+  | 'Conflict'
+  | 'Task'
+  | 'Io'
+  | 'Serialization';
   message?: string;
 }
 
@@ -223,6 +223,15 @@ export interface DiagnosticInputPayload {
 export interface DiagnosticRecordPayload extends DiagnosticInputPayload {
   id: string;
   timestamp: number;
+}
+
+export interface SortableSummary {
+  id: string;
+  title: string;
+  addedAt: number;
+  updatedAt: number;
+  chaptersRead: number;
+  chapterCount: number;
 }
 
 export interface TauriCommands {
@@ -246,9 +255,9 @@ export interface TauriCommands {
   };
   downscale_image_bytes: {
     args:
-      | Uint8Array
-      | ArrayBuffer
-      | { bytes: number[]; targetWidth: number; targetHeight: number; quality?: number };
+    | Uint8Array
+    | ArrayBuffer
+    | { bytes: number[]; targetWidth: number; targetHeight: number; quality?: number };
     return: ArrayBuffer | Uint8Array;
   };
 
@@ -421,6 +430,15 @@ export interface TauriCommands {
     };
     return: WindowRange;
   };
+
+  sort_library_entries: {
+    args: {
+      entries: SortableSummary[];
+      shelfSort?: string;
+    };
+    return: string[];
+  };
+
 }
 
 export interface DesktopAPI {
@@ -564,6 +582,11 @@ export interface DesktopAPI {
     bufferScreenCount?: number,
     threshold?: number,
   ): Promise<WindowRange>;
+
+  sortLibraryEntries(
+    entries: SortableSummary[],
+    shelfSort?: Settings['shelfSort'],
+  ): Promise<string[]>;
 }
 
 export interface DesktopUpdateInfo {

@@ -24,6 +24,7 @@ import type {
   StorageStats,
   DiagnosticInputPayload,
   DiagnosticRecordPayload,
+  SortableSummary,
 } from './types';
 
 export class WebDesktopBridge implements DesktopAPI {
@@ -31,7 +32,7 @@ export class WebDesktopBridge implements DesktopAPI {
   readonly isTauri = false;
 
   onDragDrop(): () => void {
-    return () => {};
+    return () => { };
   }
 
   async selectFolder(): Promise<string | null> {
@@ -98,9 +99,9 @@ export class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  async clearDimensionCache(): Promise<void> {}
+  async clearDimensionCache(): Promise<void> { }
 
-  setProgressBar(): void {}
+  setProgressBar(): void { }
 
   async showMainWindow(): Promise<boolean> {
     return false;
@@ -118,9 +119,9 @@ export class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  async deleteThumbnail(): Promise<void> {}
+  async deleteThumbnail(): Promise<void> { }
 
-  async clearThumbnails(): Promise<void> {}
+  async clearThumbnails(): Promise<void> { }
 
   async generateThumbnail(): Promise<CachedImageResult | null> {
     return null;
@@ -174,7 +175,7 @@ export class WebDesktopBridge implements DesktopAPI {
     return undefined;
   }
 
-  async sqliteSaveManga(): Promise<void> {}
+  async sqliteSaveManga(): Promise<void> { }
 
   async sqliteSaveProgress(): Promise<'saved' | 'stale' | 'missing'> {
     return 'saved';
@@ -199,11 +200,11 @@ export class WebDesktopBridge implements DesktopAPI {
     return { cards: [], total: 0 };
   }
 
-  async sqliteDeleteManga(): Promise<void> {}
+  async sqliteDeleteManga(): Promise<void> { }
 
-  async sqliteClearLibrary(): Promise<void> {}
+  async sqliteClearLibrary(): Promise<void> { }
 
-  async sqliteResetProgress(): Promise<void> {}
+  async sqliteResetProgress(): Promise<void> { }
 
   async sqliteGetSettings(): Promise<Settings | undefined> {
     return undefined;
@@ -256,7 +257,7 @@ export class WebDesktopBridge implements DesktopAPI {
     return null;
   }
 
-  async installUpdate(): Promise<void> {}
+  async installUpdate(): Promise<void> { }
 
   async getStorageStats(): Promise<StorageStats> {
     return { db_bytes: 0, cache_bytes: 0, total_bytes: 0 };
@@ -274,7 +275,7 @@ export class WebDesktopBridge implements DesktopAPI {
     return [];
   }
 
-  async clearDiagnostics(): Promise<void> {}
+  async clearDiagnostics(): Promise<void> { }
 
   async sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
     if (!raw) return undefined;
@@ -322,5 +323,29 @@ export class WebDesktopBridge implements DesktopAPI {
       topSpacer: 0,
       bottomSpacer: 0,
     };
+  }
+
+  async sortLibraryEntries(
+    entries: SortableSummary[],
+    shelfSort: Settings['shelfSort'] = 'recent',
+  ): Promise<string[]> {
+    const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+    return [...entries]
+      .sort((a, b) => {
+        const byTitle = collator.compare(a.title, b.title);
+        return (
+          (shelfSort === 'title'
+            ? byTitle
+            : shelfSort === 'added'
+              ? b.addedAt - a.addedAt
+              : shelfSort === 'progress'
+                ? b.chaptersRead / Math.max(1, b.chapterCount) -
+                a.chaptersRead / Math.max(1, a.chapterCount)
+                : b.updatedAt - a.updatedAt) ||
+          byTitle ||
+          collator.compare(a.id, b.id)
+        );
+      })
+      .map((e) => e.id);
   }
 }
