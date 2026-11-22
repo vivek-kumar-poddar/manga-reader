@@ -19,7 +19,8 @@ export {
   parseManga,
   parseSummary,
   validateRelativePath,
-} from './validation';
+  validateBackupAsync,
+} from './tauriBridge';
 
 export {
   db,
@@ -69,10 +70,9 @@ export {
   type SaveProgressResult,
   type MangaDB,
   type SourceFile,
-} from './storage';
+} from './desktop/storage';
 
 export { dimensions, thumbnail, imageFile, downscaleImage } from './tauriBridge';
-
 export {
   enqueueImage,
   clearImageQueue,
@@ -93,6 +93,7 @@ export {
 export { normalizePath } from './paths';
 
 export { getPageImageUrl, getCoverImageUrl, type PageImageResourceOptions } from './tauriBridge';
+export { stopBackground, scheduleBackground, resumeBackground } from './tauriBridge';
 
 export {
   DesktopHandle,
@@ -108,9 +109,6 @@ export {
   chapterPreviews,
   indexSource,
   prepareChapter,
-  stopBackground,
-  scheduleBackground,
-  resumeBackground,
   discardScan,
   warmSources,
   type Issue,
@@ -119,4 +117,4 @@ export {
   type PrepareChapterOptions,
   type ChapterPreview,
   type Source,
-} from './tauriBridge';
+} from './web/importScan';

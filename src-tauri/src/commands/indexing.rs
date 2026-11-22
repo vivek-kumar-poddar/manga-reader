@@ -1639,12 +1639,13 @@ pub async fn prepare_chapter_core(
 
     if total_pending > 0 {
         let mut done = 0;
+        type PendingBatchResult = (usize, String, Result<(u32, u32, u64, f64), String>);
         for chunk in pending_items.chunks(SCAN_BATCH_SIZE) {
             check_cancelled(handle.as_ref(), external_cancel.as_ref())?;
 
             let chunk_vec = chunk.to_vec();
             let base = root_path.clone();
-            let batch_results: Vec<(usize, String, Result<(u32, u32, u64, f64), String>)> =
+            let batch_results: Vec<PendingBatchResult> =
                 tauri::async_runtime::spawn_blocking(move || {
                     chunk_vec
                         .into_par_iter()

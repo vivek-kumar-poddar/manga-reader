@@ -31,6 +31,7 @@ impl DimensionCache {
         self.map.get(key).copied()
     }
 
+    #[allow(clippy::map_entry)]
     fn insert(&mut self, key: String, val: HeaderDimensions) {
         if self.map.contains_key(&key) {
             self.map.insert(key, val);

@@ -9,7 +9,9 @@ import {
   assertImageDimensions,
   withinTime,
 } from '../limits';
-import { desktopAPI, dimensions, thumbnail, imageFile, type FolderEntry } from '../tauriBridge';
+import { desktopAPI } from '../tauri-bridge/api';
+import { dimensions, thumbnail, imageFile } from '../tauri-bridge/imageUtils';
+import type { FolderEntry } from '../tauri-bridge/types';
 import {
   db,
   getManga,
@@ -151,7 +153,7 @@ export class DesktopHandle {
     readonly modified: number,
     readonly width?: number | null,
     readonly height?: number | null,
-  ) { }
+  ) {}
 
   get absPath(): string {
     return this.absolutePath;
@@ -318,8 +320,8 @@ export async function fromHandle(handle: Directory, options: ScanOptions = {}): 
       active++;
       const task = scanImage(entry, options.signal)
         .then(
-          () => { },
-          () => { },
+          () => {},
+          () => {},
         )
         .finally(() => {
           active--;
@@ -627,11 +629,11 @@ export function droppedSources(
         file: item.getAsFile(),
         handle: typed.getAsFileSystemHandle
           ? withinTime(
-            typed.getAsFileSystemHandle(),
-            limits.ioTimeoutMs,
-            'Reading dropped handle',
-            options.signal,
-          ).catch(() => null)
+              typed.getAsFileSystemHandle(),
+              limits.ioTimeoutMs,
+              'Reading dropped handle',
+              options.signal,
+            ).catch(() => null)
           : undefined,
       };
     });
@@ -1067,9 +1069,9 @@ export async function indexSource(
   const sortedNames =
     naturalSort && sort !== 'name'
       ? await (async () => {
-        const names = await naturalSort([...grouped.keys()]);
-        return sort === 'reverse' ? names.reverse() : names;
-      })()
+          const names = await naturalSort([...grouped.keys()]);
+          return sort === 'reverse' ? names.reverse() : names;
+        })()
       : [...grouped.keys()].sort(compare);
 
   const chapters = await Promise.all(
