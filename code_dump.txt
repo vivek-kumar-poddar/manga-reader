@@ -538,8 +538,7 @@
 5: export * from './CardMenu';
 6: export * from './Icons';
 7: export * from './DateTooltip';
-8: export * from './sortUtils';
-9: export * from './Library';
+8: export * from './Library';
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\app-tsx\Library.tsx ===
 1: import { useState, useEffect, useMemo } from 'react';
 2: import { Link, useNavigate } from 'react-router-dom';
@@ -581,500 +580,518 @@
 38: import { CardMenu } from './CardMenu';
 39: import { DateTooltip, formatAddedDate } from './DateTooltip';
 40: import { CalendarIcon, UploadIcon, AddMangaIcon } from './Icons';
-41: import { sortLibraryEntries } from './sortUtils';
-42: 
-43: export function Library({
-44:   busy,
-45:   scan,
-46:   drop,
-47:   cancel,
-48: }: {
-49:   busy: boolean;
-50:   scan: ScanState;
-51:   drop: (items: DataTransferItem[]) => void;
-52:   cancel: () => void;
-53: }) {
-54:   const { library, pick, notify, refresh, openSettings, settings, setSettings } = useApp();
-55:   const shelfSort = settings.shelfSort || 'recent';
-56:   const sortedLibrary = useMemo(() => sortLibraryEntries(library, shelfSort), [library, shelfSort]);
-57:   const [drag, setDrag] = useState(false);
-58:   const [uploadOpen, setUploadOpen] = useState(false);
-59:   const [needs, setNeeds] = useState<Set<string>>(new Set());
-60:   const [supported, setSupported] = useState(false);
-61:   const [removeId, setRemoveId] = useState<string>();
-62:   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
-63:   const nav = useNavigate();
-64: 
-65:   const showUploadZone = library.length === 0 || uploadOpen || busy;
-66: 
-67:   useEffect(() => {
-68:     if (library.length === 0) {
-69:       setUploadOpen(false);
-70:     }
-71:   }, [library.length]);
-72: 
-73:   useEffect(() => {
-74:     if (!showUploadZone) {
-75:       setDrag(false);
-76:     }
-77:   }, [showUploadZone]);
-78: 
-79:   useEffect(() => {
-80:     let live = true;
-81:     function updateBookmarkedIds() {
-82:       void getMangaBookmarkedIds().then((ids) => {
-83:         if (live) setBookmarkedIds(ids);
-84:       });
-85:     }
-86:     updateBookmarkedIds();
-87:     const onSync = (e: MessageEvent) => {
-88:       if (e.data?.type === 'progress' || e.data?.type === 'library') updateBookmarkedIds();
-89:     };
-90:     syncChannel?.addEventListener('message', onSync);
-91:     return () => {
-92:       live = false;
-93:       syncChannel?.removeEventListener('message', onSync);
-94:     };
-95:   }, [library]);
-96: 
-97:   async function toggleMangaBookmark(m: Summary, e: React.MouseEvent) {
-98:     e.stopPropagation();
-99:     e.preventDefault();
-100:     const isBookmarked = bookmarkedIds.has(m.id);
-101:     try {
-102:       const manga = await getManga(m.id);
-103:       if (!manga) return;
-104:       if (isBookmarked) {
-105:         for (const ch of manga.chapters) {
-106:           for (const b of ch.bookmarks || []) {
-107:             if (b.mangaBookmark) {
-108:               await removeBookmark(m.id, ch.name, b);
-109:             }
-110:           }
-111:         }
-112:         setBookmarkedIds((prev) => {
-113:           const next = new Set(prev);
-114:           next.delete(m.id);
-115:           return next;
-116:         });
-117:         await refresh();
-118:         notify('Bookmark removed.');
-119:       } else {
-120:         const ch = manga.chapters[0];
-121:         if (ch) {
-122:           const pagePath = ch.pages[0]?.path;
-123:           const pos: Position = {
-124:             page: 0,
-125:             fraction: 0,
-126:             path: pagePath,
-127:             mangaBookmark: true,
-128:             timestamp: Date.now(),
-129:           };
-130:           await addBookmark(m.id, ch.name, pos);
-131:           setBookmarkedIds((prev) => new Set(prev).add(m.id));
-132:           await refresh();
-133:           notify(`Bookmarked ${m.title}.`);
-134:         }
-135:       }
-136:     } catch (err) {
-137:       notify(errorMessage(err));
-138:     }
-139:   }
-140: 
-141:   useEffect(() => {
-142:     let live = true;
-143:     let revision = 0;
-144:     function checkAccess() {
-145:       const current = ++revision;
-146:       void Promise.all(library.map(async (m) => (!(await access(m)) ? m.id : ''))).then(
-147:         (ids) => live && current === revision && setNeeds(new Set(ids.filter(Boolean))),
-148:       );
-149:     }
-150:     function onVisible() {
-151:       if (document.visibilityState === 'visible') checkAccess();
-152:     }
-153:     checkAccess();
-154:     window.addEventListener('focus', checkAccess);
-155:     document.addEventListener('visibilitychange', onVisible);
-156:     return () => {
-157:       live = false;
-158:       window.removeEventListener('focus', checkAccess);
-159:       document.removeEventListener('visibilitychange', onVisible);
-160:     };
-161:   }, [library]);
-162: 
-163:   async function mark(id: string, read: boolean) {
-164:     const m = await getManga(id);
-165:     if (!m) return;
-166:     await saveManga({
-167:       ...m,
-168:       chapters: m.chapters.map((c) => ({
-169:         ...c,
-170:         read,
-171:         ...(read ? {} : { position: undefined }),
-172:       })),
-173:     });
-174:     await refresh();
-175:   }
-176: 
-177:   async function remove() {
-178:     if (!removeId) return;
-179:     await deleteManga(removeId);
-180:     setRemoveId(undefined);
-181:     await refresh();
-182:     notify('Manga removed.');
-183:   }
-184: 
-185:   return (
-186:     <>
-187:       <div className="header-wrap">
-188:         <header className="library-header">
-189:           <Link to="/" className="brand">
-190:             <BookOpen size={23} strokeWidth={1.5} />
-191:             <span>
-192:               Reader<span className="brand-period">.</span>
-193:             </span>
-194:           </Link>
-195:           <div className="header-actions">
-196:             <Link className="btn icon" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
-197:               <BookMarked size={19} />
-198:             </Link>
-199:             <ThemeButton />
-200:             <IconButton label="Settings" onClick={openSettings}>
-201:               <Gear size={19} />
-202:             </IconButton>
-203:           </div>
-204:         </header>
-205:       </div>
-206:       <main className="library-main">
-207:         <div className="page-heading library-page-heading">
-208:           <div>
-209:             <h1>Your library</h1>
-210:             <DailyWelcome />
-211:           </div>
-212:           {library.length > 0 && (
-213:             <button
-214:               type="button"
-215:               className={'btn blue' + (uploadOpen ? ' is-open' : '')}
-216:               aria-expanded={showUploadZone}
-217:               aria-controls={showUploadZone ? 'library-upload-zone' : undefined}
-218:               disabled={busy}
-219:               onClick={() => setUploadOpen((prev) => !prev)}
-220:             >
-221:               {uploadOpen ? (
-222:                 <>
-223:                   <X size={18} aria-hidden="true" />
-224:                   <span>Close Upload</span>
-225:                 </>
-226:               ) : (
-227:                 <>
-228:                   <AddMangaIcon />
-229:                   <span>Add New Manga</span>
-230:                 </>
-231:               )}
-232:             </button>
-233:           )}
-234:         </div>
-235:         {showUploadZone && (
-236:           <div
-237:             id="library-upload-zone"
-238:             aria-busy={busy}
-239:             onClick={(e) => {
-240:               if (!busy && !(e.target as HTMLElement).closest('button,a')) void pick();
-241:             }}
-242:             onDragOver={(e) => {
-243:               e.preventDefault();
-244:               if (!busy) setDrag(true);
-245:             }}
-246:             onDragLeave={() => setDrag(false)}
-247:             onDrop={(e) => {
-248:               e.preventDefault();
-249:               setDrag(false);
-250:               if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
-251:             }}
-252:             className={
-253:               'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
-254:               (drag ? 'dragging' : '')
-255:             }
-256:           >
-257:             {busy ? (
-258:               <>
-259:                 <LoaderCircle className="spin" size={26} />
-260:                 <strong className="index-count" aria-live="polite">
-261:                   {scan.phase === 'index' ? 'Saving…' : `${scan.done} found`}
-262:                 </strong>
-263:                 <span>
-264:                   {scan.phase === 'index' ? 'Adding to your library…' : 'Preparing your manga…'}
-265:                 </span>
-266:                 <span className="subtle">{scan.title}</span>
-267:                 <button className="btn secondary" onClick={cancel}>
-268:                   Cancel import
-269:                 </button>
-270:               </>
-271:             ) : (
-272:               <>
-273:                 <h2 className="upload-area-title">
-274:                   {drag ? 'Drop your stories here' : 'Make room for a good story'}
-275:                 </h2>
-276:                 <p>Drop manga folders here, or choose your files.</p>
-277:                 <div className="upload-buttons">
-278:                   <button className="btn blue" onClick={() => void pick()}>
-279:                     Choose a folder <UploadIcon size={16} />
-280:                   </button>
-281:                   <button className="btn secondary" onClick={() => setSupported(true)}>
-282:                     <Info size={16} /> What’s supported
-283:                   </button>
-284:                 </div>
-285:               </>
-286:             )}
-287:           </div>
-288:         )}
-289: 
-290:         {library.length > 0 && (
-291:           <>
-292:             <BookmarkShelf carousel />
-293:             <div className="shelf-toolbar">
-294:               <div className="collection-heading">
-295:                 <h2>
-296:                   {library.length === 1
-297:                     ? '1 manga on your shelf.'
-298:                     : `${library.length} manga on your shelf.`}
-299:                 </h2>
-300:                 <span>Saved on this device</span>
-301:               </div>
-302:               {library.length > 1 && (
-303:                 <label className="shelf-sort">
-304:                   <Dropdown
-305:                     aria-label="Sort manga shelf"
-306:                     value={shelfSort}
-307:                     onChange={(e) =>
-308:                       setSettings({
-309:                         ...settings,
-310:                         shelfSort: e.target.value as Settings['shelfSort'],
-311:                       })
-312:                     }
-313:                   >
-314:                     <option value="recent">Recent activity</option>
-315:                     <option value="title">Title A–Z</option>
-316:                     <option value="added">Newest added</option>
-317:                     <option value="progress">Most completed</option>
-318:                   </Dropdown>
-319:                 </label>
-320:               )}
-321:             </div>
-322:             <div className="manga-grid">
-323:               {sortedLibrary.map((m) => {
-324:                 const openManga = () =>
-325:                   void getManga(m.id)
-326:                     .then((latest) => {
-327:                       if (latest) nav(mangaPath(latest));
-328:                     })
-329:                     .catch((error) => notify(errorMessage(error)));
-330: 
-331:                 return (
-332:                   <article className="manga-card" key={m.id}>
-333:                     <div
-334:                       className="manga-card-left"
-335:                       role="button"
-336:                       tabIndex={-1}
-337:                       aria-hidden="true"
-338:                       onClick={openManga}
-339:                     >
-340:                       <Cover m={m} size={512} />
-341:                     </div>
-342:                     <div className="manga-card-right">
-343:                       <div
-344:                         className="manga-open"
-345:                         role="button"
-346:                         tabIndex={0}
-347:                         onClick={openManga}
-348:                         onKeyDown={(e) => {
-349:                           if (e.target !== e.currentTarget) return;
-350:                           if (e.key === 'Enter' || e.key === ' ') {
-351:                             e.preventDefault();
-352:                             openManga();
-353:                           }
-354:                         }}
-355:                         aria-label={
-356:                           (m.hasProgress ? 'Continue reading ' : 'Start reading ') + m.title
-357:                         }
-358:                       >
-359:                         <div className="manga-card-right-top">
-360:                           <div className="manga-card-title-row">
-361:                             <h3 title={m.title}>{m.title}</h3>
-362:                             <span className="manga-card-counter">
-363:                               {m.chaptersRead} / {m.chapterCount}
-364:                             </span>
-365:                           </div>
-366:                           <div className="reading-progress">
-367:                             <span
-368:                               style={{
-369:                                 width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
-370:                               }}
-371:                             />
-372:                           </div>
-373:                         </div>
-374:                         <div className="manga-card-right-bottom">
-375:                           <DateTooltip timestamp={m.addedAt}>
-376:                             <CalendarIcon className="manga-card-calendar-icon" />
-377:                             <span className="manga-card-date">{formatAddedDate(m.addedAt)}</span>
-378:                           </DateTooltip>
-379:                           <button
-380:                             type="button"
-381:                             className={
-382:                               'btn icon manga-bookmark-btn' +
-383:                               (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
-384:                             }
-385:                             onClick={(e) => void toggleMangaBookmark(m, e)}
-386:                             title={
-387:                               bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
-388:                             }
-389:                             aria-label={
-390:                               bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
-391:                             }
-392:                             aria-pressed={bookmarkedIds.has(m.id)}
-393:                           >
-394:                             <Bookmark
-395:                               size={16}
-396:                               fill={bookmarkedIds.has(m.id) ? 'currentColor' : 'none'}
-397:                             />
-398:                           </button>
-399:                         </div>
-400:                       </div>
-401:                       <div className="manga-card-bottom">
-402:                         {needs.has(m.id) ? (
-403:                           <button
-404:                             type="button"
-405:                             className="btn relink-needed-btn"
-406:                             onClick={async (e) => {
-407:                               e.stopPropagation();
-408:                               try {
-409:                                 const allowed = await access(m, true);
-410:                                 if (allowed) {
-411:                                   setNeeds((prev) => {
-412:                                     const next = new Set(prev);
-413:                                     next.delete(m.id);
-414:                                     return next;
-415:                                   });
-416:                                   await refresh();
-417:                                   return;
-418:                                 }
-419:                               } catch {
-420:                                 // Fall through to folder picker
-421:                               }
-422:                               void pick(m);
-423:                             }}
-424:                             title="Grant access or re-link folder"
-425:                           >
-426:                             Re-link needed
-427:                           </button>
-428:                         ) : (
-429:                           <Link
-430:                             className="btn icon manga-info-btn"
-431:                             to={mangaDetailsPath(m)}
-432:                             aria-label={'Info for ' + m.title}
-433:                           >
-434:                             <svg
-435:                               xmlns="http://www.w3.org/2000/svg"
-436:                               width="18"
-437:                               height="18"
-438:                               fill="none"
-439:                               stroke="currentColor"
-440:                               strokeLinecap="round"
-441:                               strokeLinejoin="round"
-442:                               strokeWidth="2"
-443:                               color="currentColor"
-444:                               viewBox="0 0 24 24"
-445:                             >
-446:                               <circle cx="12" cy="12" r="10" />
-447:                               <path d="M12 16v-4m.125-3.75H12m.25 0a.25.25 0 1 0-.5 0 .25.25 0 0 0 .5 0" />
-448:                             </svg>
-449:                             <span>Info</span>
-450:                           </Link>
-451:                         )}
-452:                         <CardMenu
-453:                           title={m.title}
-454:                           needsRelink={needs.has(m.id)}
-455:                           onRelink={() => void pick(m)}
-456:                           onMarkRead={() =>
-457:                             void mark(m.id, true).catch((e) => notify(errorMessage(e)))
-458:                           }
-459:                           onMarkUnread={() =>
-460:                             void mark(m.id, false).catch((e) => notify(errorMessage(e)))
-461:                           }
-462:                           onRemove={() => {
-463:                             if (settings.confirmDelete) {
-464:                               setRemoveId(m.id);
-465:                             } else {
-466:                               void deleteManga(m.id)
-467:                                 .then(refresh)
-468:                                 .then(() => notify('Manga removed.'))
-469:                                 .catch((e) => notify(errorMessage(e)));
-470:                             }
-471:                           }}
-472:                         />
-473:                       </div>
-474:                     </div>
-475:                   </article>
-476:                 );
-477:               })}
-478:             </div>
-479:           </>
-480:         )}
-481: 
-482:         <footer className="library-footer">
-483:           <span>By Vivek Kr. Poddar · v{APP_VERSION}</span>
-484:           <span>A quieter way to read.</span>
-485:         </footer>
-486:       </main>
-487:       <SupportedDialog open={supported} onClose={() => setSupported(false)} />
-488:       <Modal
-489:         open={!!removeId}
-490:         onClose={() => setRemoveId(undefined)}
-491:         title="Remove this title?"
-492:         className="confirm-modal"
-493:         description="Only this title’s saved metadata, cover, bookmarks, and reading progress will be removed. Your original files stay untouched."
-494:       >
-495:         <div className="button-row">
-496:           <button
-497:             className="btn delete"
-498:             onClick={() => void remove().catch((e) => notify(errorMessage(e)))}
-499:           >
-500:             Remove title
-501:           </button>
-502:           <button className="btn secondary" onClick={() => setRemoveId(undefined)}>
-503:             Cancel
-504:           </button>
-505:         </div>
-506:       </Modal>
-507:     </>
-508:   );
-509: }
-=== FILE: C:\Users\VKPs\Documents\manga-reader\src\app-tsx\sortUtils.ts ===
-1: import type { Summary, Settings } from '../data';
-2: 
-3: export const shelfCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
-4: 
-5: export function sortLibraryEntries(
-6:   library: readonly Summary[],
-7:   shelfSort: Settings['shelfSort'] = 'recent',
-8: ): Summary[] {
-9:   return [...library].sort((a, b) => {
-10:     const byTitle = shelfCollator.compare(a.title, b.title);
-11:     return (
-12:       (shelfSort === 'title'
-13:         ? byTitle
-14:         : shelfSort === 'added'
-15:           ? b.addedAt - a.addedAt
-16:           : shelfSort === 'progress'
-17:             ? b.chaptersRead / Math.max(1, b.chapterCount) -
-18:               a.chaptersRead / Math.max(1, a.chapterCount)
-19:             : b.updatedAt - a.updatedAt) ||
-20:       byTitle ||
-21:       shelfCollator.compare(a.id, b.id)
-22:     );
-23:   });
-24: }
+41: 
+42: export function Library({
+43:   busy,
+44:   scan,
+45:   drop,
+46:   cancel,
+47: }: {
+48:   busy: boolean;
+49:   scan: ScanState;
+50:   drop: (items: DataTransferItem[]) => void;
+51:   cancel: () => void;
+52: }) {
+53:   const { library, pick, notify, refresh, openSettings, settings, setSettings } = useApp();
+54:   const shelfSort = settings.shelfSort || 'recent';
+55:   const [sortedIds, setSortedIds] = useState<string[]>([]);
+56: 
+57:   useEffect(() => {
+58:     let live = true;
+59:     const payload = library.map((m) => ({
+60:       id: m.id,
+61:       title: m.title,
+62:       addedAt: m.addedAt,
+63:       updatedAt: m.updatedAt,
+64:       chaptersRead: m.chaptersRead,
+65:       chapterCount: m.chapterCount,
+66:     }));
+67:     void desktopAPI
+68:       .sortLibraryEntries(payload, shelfSort)
+69:       .then((ids) => {
+70:         if (live) setSortedIds(ids);
+71:       })
+72:       .catch(() => {
+73:         if (live) setSortedIds(library.map((m) => m.id));
+74:       });
+75:     return () => {
+76:       live = false;
+77:     };
+78:   }, [library, shelfSort]);
+79: 
+80:   const sortedLibrary = useMemo(() => {
+81:     if (!sortedIds.length) return library;
+82:     const byId = new Map(library.map((m) => [m.id, m]));
+83:     const ordered: Summary[] = [];
+84:     const seen = new Set<string>();
+85:     for (const id of sortedIds) {
+86:       const item = byId.get(id);
+87:       if (item && !seen.has(id)) {
+88:         seen.add(id);
+89:         ordered.push(item);
+90:       }
+91:     }
+92:     for (const item of library) {
+93:       if (!seen.has(item.id)) {
+94:         ordered.push(item);
+95:       }
+96:     }
+97:     return ordered;
+98:   }, [library, sortedIds]);
+99: 
+100:   const [drag, setDrag] = useState(false);
+101:   const [uploadOpen, setUploadOpen] = useState(false);
+102:   const [needs, setNeeds] = useState<Set<string>>(new Set());
+103:   const [supported, setSupported] = useState(false);
+104:   const [removeId, setRemoveId] = useState<string>();
+105:   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+106:   const nav = useNavigate();
+107: 
+108:   const showUploadZone = library.length === 0 || uploadOpen || busy;
+109: 
+110:   useEffect(() => {
+111:     if (library.length === 0) {
+112:       setUploadOpen(false);
+113:     }
+114:   }, [library.length]);
+115: 
+116:   useEffect(() => {
+117:     if (!showUploadZone) {
+118:       setDrag(false);
+119:     }
+120:   }, [showUploadZone]);
+121: 
+122:   useEffect(() => {
+123:     let live = true;
+124:     function updateBookmarkedIds() {
+125:       void getMangaBookmarkedIds().then((ids) => {
+126:         if (live) setBookmarkedIds(ids);
+127:       });
+128:     }
+129:     updateBookmarkedIds();
+130:     const onSync = (e: MessageEvent) => {
+131:       if (e.data?.type === 'progress' || e.data?.type === 'library') updateBookmarkedIds();
+132:     };
+133:     syncChannel?.addEventListener('message', onSync);
+134:     return () => {
+135:       live = false;
+136:       syncChannel?.removeEventListener('message', onSync);
+137:     };
+138:   }, [library]);
+139: 
+140:   async function toggleMangaBookmark(m: Summary, e: React.MouseEvent) {
+141:     e.stopPropagation();
+142:     e.preventDefault();
+143:     const isBookmarked = bookmarkedIds.has(m.id);
+144:     try {
+145:       const manga = await getManga(m.id);
+146:       if (!manga) return;
+147:       if (isBookmarked) {
+148:         for (const ch of manga.chapters) {
+149:           for (const b of ch.bookmarks || []) {
+150:             if (b.mangaBookmark) {
+151:               await removeBookmark(m.id, ch.name, b);
+152:             }
+153:           }
+154:         }
+155:         setBookmarkedIds((prev) => {
+156:           const next = new Set(prev);
+157:           next.delete(m.id);
+158:           return next;
+159:         });
+160:         await refresh();
+161:         notify('Bookmark removed.');
+162:       } else {
+163:         const ch = manga.chapters[0];
+164:         if (ch) {
+165:           const pagePath = ch.pages[0]?.path;
+166:           const pos: Position = {
+167:             page: 0,
+168:             fraction: 0,
+169:             path: pagePath,
+170:             mangaBookmark: true,
+171:             timestamp: Date.now(),
+172:           };
+173:           await addBookmark(m.id, ch.name, pos);
+174:           setBookmarkedIds((prev) => new Set(prev).add(m.id));
+175:           await refresh();
+176:           notify(`Bookmarked ${m.title}.`);
+177:         }
+178:       }
+179:     } catch (err) {
+180:       notify(errorMessage(err));
+181:     }
+182:   }
+183: 
+184:   useEffect(() => {
+185:     let live = true;
+186:     let revision = 0;
+187:     function checkAccess() {
+188:       const current = ++revision;
+189:       void Promise.all(library.map(async (m) => (!(await access(m)) ? m.id : ''))).then(
+190:         (ids) => live && current === revision && setNeeds(new Set(ids.filter(Boolean))),
+191:       );
+192:     }
+193:     function onVisible() {
+194:       if (document.visibilityState === 'visible') checkAccess();
+195:     }
+196:     checkAccess();
+197:     window.addEventListener('focus', checkAccess);
+198:     document.addEventListener('visibilitychange', onVisible);
+199:     return () => {
+200:       live = false;
+201:       window.removeEventListener('focus', checkAccess);
+202:       document.removeEventListener('visibilitychange', onVisible);
+203:     };
+204:   }, [library]);
+205: 
+206:   async function mark(id: string, read: boolean) {
+207:     const m = await getManga(id);
+208:     if (!m) return;
+209:     await saveManga({
+210:       ...m,
+211:       chapters: m.chapters.map((c) => ({
+212:         ...c,
+213:         read,
+214:         ...(read ? {} : { position: undefined }),
+215:       })),
+216:     });
+217:     await refresh();
+218:   }
+219: 
+220:   async function remove() {
+221:     if (!removeId) return;
+222:     await deleteManga(removeId);
+223:     setRemoveId(undefined);
+224:     await refresh();
+225:     notify('Manga removed.');
+226:   }
+227: 
+228:   return (
+229:     <>
+230:       <div className="header-wrap">
+231:         <header className="library-header">
+232:           <Link to="/" className="brand">
+233:             <BookOpen size={23} strokeWidth={1.5} />
+234:             <span>
+235:               Reader<span className="brand-period">.</span>
+236:             </span>
+237:           </Link>
+238:           <div className="header-actions">
+239:             <Link className="btn icon" to="/bookmarks" aria-label="Bookmarks" title="Bookmarks">
+240:               <BookMarked size={19} />
+241:             </Link>
+242:             <ThemeButton />
+243:             <IconButton label="Settings" onClick={openSettings}>
+244:               <Gear size={19} />
+245:             </IconButton>
+246:           </div>
+247:         </header>
+248:       </div>
+249:       <main className="library-main">
+250:         <div className="page-heading library-page-heading">
+251:           <div>
+252:             <h1>Your library</h1>
+253:             <DailyWelcome />
+254:           </div>
+255:           {library.length > 0 && (
+256:             <button
+257:               type="button"
+258:               className={'btn blue' + (uploadOpen ? ' is-open' : '')}
+259:               aria-expanded={showUploadZone}
+260:               aria-controls={showUploadZone ? 'library-upload-zone' : undefined}
+261:               disabled={busy}
+262:               onClick={() => setUploadOpen((prev) => !prev)}
+263:             >
+264:               {uploadOpen ? (
+265:                 <>
+266:                   <X size={18} aria-hidden="true" />
+267:                   <span>Close Upload</span>
+268:                 </>
+269:               ) : (
+270:                 <>
+271:                   <AddMangaIcon />
+272:                   <span>Add New Manga</span>
+273:                 </>
+274:               )}
+275:             </button>
+276:           )}
+277:         </div>
+278:         {showUploadZone && (
+279:           <div
+280:             id="library-upload-zone"
+281:             aria-busy={busy}
+282:             onClick={(e) => {
+283:               if (!busy && !(e.target as HTMLElement).closest('button,a')) void pick();
+284:             }}
+285:             onDragOver={(e) => {
+286:               e.preventDefault();
+287:               if (!busy) setDrag(true);
+288:             }}
+289:             onDragLeave={() => setDrag(false)}
+290:             onDrop={(e) => {
+291:               e.preventDefault();
+292:               setDrag(false);
+293:               if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
+294:             }}
+295:             className={
+296:               'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
+297:               (drag ? 'dragging' : '')
+298:             }
+299:           >
+300:             {busy ? (
+301:               <>
+302:                 <LoaderCircle className="spin" size={26} />
+303:                 <strong className="index-count" aria-live="polite">
+304:                   {scan.phase === 'index' ? 'Saving…' : `${scan.done} found`}
+305:                 </strong>
+306:                 <span>
+307:                   {scan.phase === 'index' ? 'Adding to your library…' : 'Preparing your manga…'}
+308:                 </span>
+309:                 <span className="subtle">{scan.title}</span>
+310:                 <button className="btn secondary" onClick={cancel}>
+311:                   Cancel import
+312:                 </button>
+313:               </>
+314:             ) : (
+315:               <>
+316:                 <h2 className="upload-area-title">
+317:                   {drag ? 'Drop your stories here' : 'Make room for a good story'}
+318:                 </h2>
+319:                 <p>Drop manga folders here, or choose your files.</p>
+320:                 <div className="upload-buttons">
+321:                   <button className="btn blue" onClick={() => void pick()}>
+322:                     Choose a folder <UploadIcon size={16} />
+323:                   </button>
+324:                   <button className="btn secondary" onClick={() => setSupported(true)}>
+325:                     <Info size={16} /> What’s supported
+326:                   </button>
+327:                 </div>
+328:               </>
+329:             )}
+330:           </div>
+331:         )}
+332: 
+333:         {library.length > 0 && (
+334:           <>
+335:             <BookmarkShelf carousel />
+336:             <div className="shelf-toolbar">
+337:               <div className="collection-heading">
+338:                 <h2>
+339:                   {library.length === 1
+340:                     ? '1 manga on your shelf.'
+341:                     : `${library.length} manga on your shelf.`}
+342:                 </h2>
+343:                 <span>Saved on this device</span>
+344:               </div>
+345:               {library.length > 1 && (
+346:                 <label className="shelf-sort">
+347:                   <Dropdown
+348:                     aria-label="Sort manga shelf"
+349:                     value={shelfSort}
+350:                     onChange={(e) =>
+351:                       setSettings({
+352:                         ...settings,
+353:                         shelfSort: e.target.value as Settings['shelfSort'],
+354:                       })
+355:                     }
+356:                   >
+357:                     <option value="recent">Recent activity</option>
+358:                     <option value="title">Title A–Z</option>
+359:                     <option value="added">Newest added</option>
+360:                     <option value="progress">Most completed</option>
+361:                   </Dropdown>
+362:                 </label>
+363:               )}
+364:             </div>
+365:             <div className="manga-grid">
+366:               {sortedLibrary.map((m) => {
+367:                 const openManga = () =>
+368:                   void getManga(m.id)
+369:                     .then((latest) => {
+370:                       if (latest) nav(mangaPath(latest));
+371:                     })
+372:                     .catch((error) => notify(errorMessage(error)));
+373: 
+374:                 return (
+375:                   <article className="manga-card" key={m.id}>
+376:                     <div
+377:                       className="manga-card-left"
+378:                       role="button"
+379:                       tabIndex={-1}
+380:                       aria-hidden="true"
+381:                       onClick={openManga}
+382:                     >
+383:                       <Cover m={m} size={512} />
+384:                     </div>
+385:                     <div className="manga-card-right">
+386:                       <div
+387:                         className="manga-open"
+388:                         role="button"
+389:                         tabIndex={0}
+390:                         onClick={openManga}
+391:                         onKeyDown={(e) => {
+392:                           if (e.target !== e.currentTarget) return;
+393:                           if (e.key === 'Enter' || e.key === ' ') {
+394:                             e.preventDefault();
+395:                             openManga();
+396:                           }
+397:                         }}
+398:                         aria-label={
+399:                           (m.hasProgress ? 'Continue reading ' : 'Start reading ') + m.title
+400:                         }
+401:                       >
+402:                         <div className="manga-card-right-top">
+403:                           <div className="manga-card-title-row">
+404:                             <h3 title={m.title}>{m.title}</h3>
+405:                             <span className="manga-card-counter">
+406:                               {m.chaptersRead} / {m.chapterCount}
+407:                             </span>
+408:                           </div>
+409:                           <div className="reading-progress">
+410:                             <span
+411:                               style={{
+412:                                 width: (100 * m.chaptersRead) / Math.max(1, m.chapterCount) + '%',
+413:                               }}
+414:                             />
+415:                           </div>
+416:                         </div>
+417:                         <div className="manga-card-right-bottom">
+418:                           <DateTooltip timestamp={m.addedAt}>
+419:                             <CalendarIcon className="manga-card-calendar-icon" />
+420:                             <span className="manga-card-date">{formatAddedDate(m.addedAt)}</span>
+421:                           </DateTooltip>
+422:                           <button
+423:                             type="button"
+424:                             className={
+425:                               'btn icon manga-bookmark-btn' +
+426:                               (bookmarkedIds.has(m.id) ? ' bookmarked' : '')
+427:                             }
+428:                             onClick={(e) => void toggleMangaBookmark(m, e)}
+429:                             title={
+430:                               bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+431:                             }
+432:                             aria-label={
+433:                               bookmarkedIds.has(m.id) ? 'Remove bookmark' : 'Bookmark this title'
+434:                             }
+435:                             aria-pressed={bookmarkedIds.has(m.id)}
+436:                           >
+437:                             <Bookmark
+438:                               size={16}
+439:                               fill={bookmarkedIds.has(m.id) ? 'currentColor' : 'none'}
+440:                             />
+441:                           </button>
+442:                         </div>
+443:                       </div>
+444:                       <div className="manga-card-bottom">
+445:                         {needs.has(m.id) ? (
+446:                           <button
+447:                             type="button"
+448:                             className="btn relink-needed-btn"
+449:                             onClick={async (e) => {
+450:                               e.stopPropagation();
+451:                               try {
+452:                                 const allowed = await access(m, true);
+453:                                 if (allowed) {
+454:                                   setNeeds((prev) => {
+455:                                     const next = new Set(prev);
+456:                                     next.delete(m.id);
+457:                                     return next;
+458:                                   });
+459:                                   await refresh();
+460:                                   return;
+461:                                 }
+462:                               } catch {
+463:                                 // Fall through to folder picker
+464:                               }
+465:                               void pick(m);
+466:                             }}
+467:                             title="Grant access or re-link folder"
+468:                           >
+469:                             Re-link needed
+470:                           </button>
+471:                         ) : (
+472:                           <Link
+473:                             className="btn icon manga-info-btn"
+474:                             to={mangaDetailsPath(m)}
+475:                             aria-label={'Info for ' + m.title}
+476:                           >
+477:                             <svg
+478:                               xmlns="http://www.w3.org/2000/svg"
+479:                               width="18"
+480:                               height="18"
+481:                               fill="none"
+482:                               stroke="currentColor"
+483:                               strokeLinecap="round"
+484:                               strokeLinejoin="round"
+485:                               strokeWidth="2"
+486:                               color="currentColor"
+487:                               viewBox="0 0 24 24"
+488:                             >
+489:                               <circle cx="12" cy="12" r="10" />
+490:                               <path d="M12 16v-4m.125-3.75H12m.25 0a.25.25 0 1 0-.5 0 .25.25 0 0 0 .5 0" />
+491:                             </svg>
+492:                             <span>Info</span>
+493:                           </Link>
+494:                         )}
+495:                         <CardMenu
+496:                           title={m.title}
+497:                           needsRelink={needs.has(m.id)}
+498:                           onRelink={() => void pick(m)}
+499:                           onMarkRead={() =>
+500:                             void mark(m.id, true).catch((e) => notify(errorMessage(e)))
+501:                           }
+502:                           onMarkUnread={() =>
+503:                             void mark(m.id, false).catch((e) => notify(errorMessage(e)))
+504:                           }
+505:                           onRemove={() => {
+506:                             if (settings.confirmDelete) {
+507:                               setRemoveId(m.id);
+508:                             } else {
+509:                               void deleteManga(m.id)
+510:                                 .then(refresh)
+511:                                 .then(() => notify('Manga removed.'))
+512:                                 .catch((e) => notify(errorMessage(e)));
+513:                             }
+514:                           }}
+515:                         />
+516:                       </div>
+517:                     </div>
+518:                   </article>
+519:                 );
+520:               })}
+521:             </div>
+522:           </>
+523:         )}
+524: 
+525:         <footer className="library-footer">
+526:           <span>By Vivek Kr. Poddar · v{APP_VERSION}</span>
+527:           <span>A quieter way to read.</span>
+528:         </footer>
+529:       </main>
+530:       <SupportedDialog open={supported} onClose={() => setSupported(false)} />
+531:       <Modal
+532:         open={!!removeId}
+533:         onClose={() => setRemoveId(undefined)}
+534:         title="Remove this title?"
+535:         className="confirm-modal"
+536:         description="Only this title’s saved metadata, cover, bookmarks, and reading progress will be removed. Your original files stay untouched."
+537:       >
+538:         <div className="button-row">
+539:           <button
+540:             className="btn delete"
+541:             onClick={() => void remove().catch((e) => notify(errorMessage(e)))}
+542:           >
+543:             Remove title
+544:           </button>
+545:           <button className="btn secondary" onClick={() => setRemoveId(undefined)}>
+546:             Cancel
+547:           </button>
+548:         </div>
+549:       </Modal>
+550:     </>
+551:   );
+552: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\app-tsx\ThemeButton.tsx ===
 1: import { Sun, Moon } from 'lucide-react';
 2: import { useApp } from './AppContext';
@@ -4484,242 +4501,253 @@
 8:   StorageStats,
 9:   DiagnosticInputPayload,
 10:   DiagnosticRecordPayload,
-11: } from './types';
-12: import type { Page, GeometryOptions, PageOffset, WindowRange } from '../model';
-13: 
-14: export function setProgressBar(progress: number): void {
-15:   try {
-16:     void invokeCommand('set_progress_bar', { progress }).catch((err) => {
-17:       console.warn('Tauri setProgressBar failed:', err);
-18:     });
-19:   } catch (err) {
-20:     console.warn('Tauri setProgressBar failed:', err);
-21:   }
-22: }
-23: 
-24: export async function showMainWindow(): Promise<boolean> {
-25:   try {
-26:     await invokeCommand('show_main_window');
-27:     return true;
-28:   } catch (err) {
-29:     console.warn('Tauri showMainWindow failed:', err);
-30:     return false;
-31:   }
-32: }
-33: 
-34: export async function getAppConfig(): Promise<AppConfig | null> {
-35:   try {
-36:     return await invokeCommand('get_app_config');
-37:   } catch (err) {
-38:     console.warn('Tauri getAppConfig failed:', err);
-39:     return null;
-40:   }
-41: }
-42: 
-43: export async function saveAppConfig(config: AppConfig): Promise<boolean> {
-44:   try {
-45:     await invokeCommand('save_app_config', { config });
-46:     return true;
-47:   } catch (err) {
-48:     console.warn('Tauri saveAppConfig failed:', err);
-49:     return false;
-50:   }
-51: }
-52: 
-53: export async function setWindowPreferences(preferences: WindowPreferences): Promise<boolean> {
-54:   try {
-55:     await invokeCommand('set_window_preferences', { preferences });
-56:     return true;
-57:   } catch (err) {
-58:     console.warn('Tauri setWindowPreferences failed:', err);
-59:     return false;
-60:   }
-61: }
-62: 
-63: export async function setAppPreference(key: string, value: unknown): Promise<boolean> {
-64:   try {
-65:     await invokeCommand('set_app_preference', { key, value });
-66:     return true;
-67:   } catch (err) {
-68:     console.warn('Tauri setAppPreference failed:', key, err);
-69:     return false;
-70:   }
-71: }
-72: 
-73: export async function getAppPreference(key: string): Promise<unknown> {
-74:   try {
-75:     return await invokeCommand('get_app_preference', { key });
-76:   } catch (err) {
-77:     console.warn('Tauri getAppPreference failed:', key, err);
-78:     return null;
-79:   }
-80: }
-81: 
-82: export async function recordOpenedRoot(rootPath: string): Promise<string[]> {
-83:   try {
-84:     return await invokeCommand('record_opened_root', { rootPath });
-85:   } catch (err) {
-86:     console.warn('Tauri recordOpenedRoot failed for', rootPath, err);
-87:     return [];
-88:   }
-89: }
-90: 
-91: export async function getLastOpenedRoots(): Promise<string[]> {
-92:   try {
-93:     return await invokeCommand('get_last_opened_roots');
-94:   } catch (err) {
-95:     console.warn('Tauri getLastOpenedRoots failed:', err);
-96:     return [];
-97:   }
-98: }
-99: 
-100: export function onDragDrop(callback: (paths: string[]) => void): () => void {
-101:   if (typeof window === 'undefined') {
-102:     return () => {};
-103:   }
-104:   let unlistenNative: (() => void) | undefined;
-105:   let unlistenTauri: (() => void) | undefined;
-106:   let active = true;
-107: 
-108:   if (typeof (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ !== 'object') {
-109:     (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
-110:       unregisterListener: () => {},
-111:     };
-112:   }
-113: 
-114:   void listen<string[]>('native-drag-drop', (event) => {
-115:     if (!active) return;
-116:     const paths = event.payload;
-117:     if (Array.isArray(paths) && paths.length > 0) {
-118:       callback(paths);
-119:     }
-120:   })
-121:     .then((un) => {
-122:       if (!active) {
-123:         try {
-124:           void un();
-125:         } catch {}
-126:       } else {
-127:         unlistenNative = un;
-128:       }
-129:     })
-130:     .catch(() => {});
-131: 
-132:   void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
-133:     if (!active) return;
-134:     const paths = event.payload?.paths;
-135:     if (Array.isArray(paths) && paths.length > 0) {
-136:       callback(paths);
-137:     }
-138:   })
-139:     .then((un) => {
-140:       if (!active) {
-141:         try {
-142:           void un();
-143:         } catch {}
-144:       } else {
-145:         unlistenTauri = un;
-146:       }
-147:     })
-148:     .catch(() => {});
-149: 
-150:   return () => {
-151:     active = false;
-152:     try {
-153:       unlistenNative?.();
-154:     } catch {}
-155:     try {
-156:       unlistenTauri?.();
-157:     } catch {}
-158:   };
-159: }
-160: 
-161: export async function checkForUpdate(): Promise<DesktopUpdateInfo | null> {
-162:   try {
-163:     return await invoke<DesktopUpdateInfo | null>('plugin:updater|check');
-164:   } catch (err) {
-165:     console.warn('Tauri updater check failed:', err);
-166:     throw err;
-167:   }
-168: }
-169: 
-170: export async function installUpdate(): Promise<void> {
-171:   try {
-172:     await invoke('plugin:updater|download_and_install');
-173:   } catch (err) {
-174:     console.error('Failed to install desktop update:', err);
-175:     throw err;
-176:   }
-177: }
-178: 
-179: export async function getStorageStats(): Promise<StorageStats> {
-180:   return invokeCommand('get_storage_stats', {});
-181: }
-182: 
-183: export async function saveFileDialog(defaultName: string, content: string): Promise<boolean> {
-184:   return invokeCommand('save_file_dialog', { defaultName, content });
-185: }
-186: 
-187: export async function recordDiagnostic(
-188:   entry: DiagnosticInputPayload,
-189: ): Promise<DiagnosticRecordPayload | null> {
-190:   try {
-191:     return await invokeCommand('record_diagnostic', { entry });
-192:   } catch {
-193:     return null;
-194:   }
-195: }
-196: 
-197: export async function getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
-198:   try {
-199:     return await invokeCommand('get_diagnostics');
-200:   } catch {
-201:     return [];
-202:   }
-203: }
-204: 
-205: export async function clearDiagnostics(): Promise<void> {
-206:   try {
-207:     await invokeCommand('clear_diagnostics');
-208:   } catch {}
-209: }
-210: 
-211: export async function sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
-212:   try {
-213:     const res = await invokeCommand('sanitize_diagnostic_identifier', { raw });
-214:     return res ?? undefined;
-215:   } catch {
-216:     return undefined;
-217:   }
-218: }
-219: 
-220: export async function computeOffsets(
-221:   pages: Array<Pick<Page, 'width' | 'height'>>,
-222:   options: GeometryOptions,
-223:   measuredHeights?: Record<number, number>,
-224: ): Promise<PageOffset[]> {
-225:   return invokeCommand('compute_offsets', {
-226:     pages: pages.map((p) => ({ width: p.width, height: p.height })),
-227:     options,
-228:     measuredHeights,
-229:   });
-230: }
-231: 
-232: export async function getWindowRange(
-233:   offsets: PageOffset[],
-234:   scrollY: number,
-235:   viewportHeight: number,
-236:   bufferScreenCount?: number,
-237:   threshold?: number,
-238: ): Promise<WindowRange> {
-239:   return invokeCommand('get_window_range', {
-240:     offsets,
-241:     scrollY,
-242:     viewportHeight,
-243:     bufferScreenCount,
-244:     threshold,
-245:   });
-246: }
+11:   SortableSummary,
+12: } from './types';
+13: import type { Page, GeometryOptions, PageOffset, WindowRange, Settings } from '../model';
+14: 
+15: export function setProgressBar(progress: number): void {
+16:   try {
+17:     void invokeCommand('set_progress_bar', { progress }).catch((err) => {
+18:       console.warn('Tauri setProgressBar failed:', err);
+19:     });
+20:   } catch (err) {
+21:     console.warn('Tauri setProgressBar failed:', err);
+22:   }
+23: }
+24: 
+25: export async function showMainWindow(): Promise<boolean> {
+26:   try {
+27:     await invokeCommand('show_main_window');
+28:     return true;
+29:   } catch (err) {
+30:     console.warn('Tauri showMainWindow failed:', err);
+31:     return false;
+32:   }
+33: }
+34: 
+35: export async function getAppConfig(): Promise<AppConfig | null> {
+36:   try {
+37:     return await invokeCommand('get_app_config');
+38:   } catch (err) {
+39:     console.warn('Tauri getAppConfig failed:', err);
+40:     return null;
+41:   }
+42: }
+43: 
+44: export async function saveAppConfig(config: AppConfig): Promise<boolean> {
+45:   try {
+46:     await invokeCommand('save_app_config', { config });
+47:     return true;
+48:   } catch (err) {
+49:     console.warn('Tauri saveAppConfig failed:', err);
+50:     return false;
+51:   }
+52: }
+53: 
+54: export async function setWindowPreferences(preferences: WindowPreferences): Promise<boolean> {
+55:   try {
+56:     await invokeCommand('set_window_preferences', { preferences });
+57:     return true;
+58:   } catch (err) {
+59:     console.warn('Tauri setWindowPreferences failed:', err);
+60:     return false;
+61:   }
+62: }
+63: 
+64: export async function setAppPreference(key: string, value: unknown): Promise<boolean> {
+65:   try {
+66:     await invokeCommand('set_app_preference', { key, value });
+67:     return true;
+68:   } catch (err) {
+69:     console.warn('Tauri setAppPreference failed:', key, err);
+70:     return false;
+71:   }
+72: }
+73: 
+74: export async function getAppPreference(key: string): Promise<unknown> {
+75:   try {
+76:     return await invokeCommand('get_app_preference', { key });
+77:   } catch (err) {
+78:     console.warn('Tauri getAppPreference failed:', key, err);
+79:     return null;
+80:   }
+81: }
+82: 
+83: export async function recordOpenedRoot(rootPath: string): Promise<string[]> {
+84:   try {
+85:     return await invokeCommand('record_opened_root', { rootPath });
+86:   } catch (err) {
+87:     console.warn('Tauri recordOpenedRoot failed for', rootPath, err);
+88:     return [];
+89:   }
+90: }
+91: 
+92: export async function getLastOpenedRoots(): Promise<string[]> {
+93:   try {
+94:     return await invokeCommand('get_last_opened_roots');
+95:   } catch (err) {
+96:     console.warn('Tauri getLastOpenedRoots failed:', err);
+97:     return [];
+98:   }
+99: }
+100: 
+101: export function onDragDrop(callback: (paths: string[]) => void): () => void {
+102:   if (typeof window === 'undefined') {
+103:     return () => { };
+104:   }
+105:   let unlistenNative: (() => void) | undefined;
+106:   let unlistenTauri: (() => void) | undefined;
+107:   let active = true;
+108: 
+109:   if (typeof (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ !== 'object') {
+110:     (window as any).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+111:       unregisterListener: () => { },
+112:     };
+113:   }
+114: 
+115:   void listen<string[]>('native-drag-drop', (event) => {
+116:     if (!active) return;
+117:     const paths = event.payload;
+118:     if (Array.isArray(paths) && paths.length > 0) {
+119:       callback(paths);
+120:     }
+121:   })
+122:     .then((un) => {
+123:       if (!active) {
+124:         try {
+125:           void un();
+126:         } catch { }
+127:       } else {
+128:         unlistenNative = un;
+129:       }
+130:     })
+131:     .catch(() => { });
+132: 
+133:   void listen<{ paths?: string[] }>('tauri://drag-drop', (event) => {
+134:     if (!active) return;
+135:     const paths = event.payload?.paths;
+136:     if (Array.isArray(paths) && paths.length > 0) {
+137:       callback(paths);
+138:     }
+139:   })
+140:     .then((un) => {
+141:       if (!active) {
+142:         try {
+143:           void un();
+144:         } catch { }
+145:       } else {
+146:         unlistenTauri = un;
+147:       }
+148:     })
+149:     .catch(() => { });
+150: 
+151:   return () => {
+152:     active = false;
+153:     try {
+154:       unlistenNative?.();
+155:     } catch { }
+156:     try {
+157:       unlistenTauri?.();
+158:     } catch { }
+159:   };
+160: }
+161: 
+162: export async function checkForUpdate(): Promise<DesktopUpdateInfo | null> {
+163:   try {
+164:     return await invoke<DesktopUpdateInfo | null>('plugin:updater|check');
+165:   } catch (err) {
+166:     console.warn('Tauri updater check failed:', err);
+167:     throw err;
+168:   }
+169: }
+170: 
+171: export async function installUpdate(): Promise<void> {
+172:   try {
+173:     await invoke('plugin:updater|download_and_install');
+174:   } catch (err) {
+175:     console.error('Failed to install desktop update:', err);
+176:     throw err;
+177:   }
+178: }
+179: 
+180: export async function getStorageStats(): Promise<StorageStats> {
+181:   return invokeCommand('get_storage_stats', {});
+182: }
+183: 
+184: export async function saveFileDialog(defaultName: string, content: string): Promise<boolean> {
+185:   return invokeCommand('save_file_dialog', { defaultName, content });
+186: }
+187: 
+188: export async function recordDiagnostic(
+189:   entry: DiagnosticInputPayload,
+190: ): Promise<DiagnosticRecordPayload | null> {
+191:   try {
+192:     return await invokeCommand('record_diagnostic', { entry });
+193:   } catch {
+194:     return null;
+195:   }
+196: }
+197: 
+198: export async function getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
+199:   try {
+200:     return await invokeCommand('get_diagnostics');
+201:   } catch {
+202:     return [];
+203:   }
+204: }
+205: 
+206: export async function clearDiagnostics(): Promise<void> {
+207:   try {
+208:     await invokeCommand('clear_diagnostics');
+209:   } catch { }
+210: }
+211: 
+212: export async function sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
+213:   try {
+214:     const res = await invokeCommand('sanitize_diagnostic_identifier', { raw });
+215:     return res ?? undefined;
+216:   } catch {
+217:     return undefined;
+218:   }
+219: }
+220: 
+221: export async function computeOffsets(
+222:   pages: Array<Pick<Page, 'width' | 'height'>>,
+223:   options: GeometryOptions,
+224:   measuredHeights?: Record<number, number>,
+225: ): Promise<PageOffset[]> {
+226:   return invokeCommand('compute_offsets', {
+227:     pages: pages.map((p) => ({ width: p.width, height: p.height })),
+228:     options,
+229:     measuredHeights,
+230:   });
+231: }
+232: 
+233: export async function getWindowRange(
+234:   offsets: PageOffset[],
+235:   scrollY: number,
+236:   viewportHeight: number,
+237:   bufferScreenCount?: number,
+238:   threshold?: number,
+239: ): Promise<WindowRange> {
+240:   return invokeCommand('get_window_range', {
+241:     offsets,
+242:     scrollY,
+243:     viewportHeight,
+244:     bufferScreenCount,
+245:     threshold,
+246:   });
+247: }
+248: 
+249: export async function sortLibraryEntries(
+250:   entries: SortableSummary[],
+251:   shelfSort?: Settings['shelfSort'],
+252: ): Promise<string[]> {
+253:   return invokeCommand('sort_library_entries', {
+254:     entries,
+255:     shelfSort,
+256:   });
+257: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\tauri-bridge\TauriBridge.ts ===
 1: import type { DesktopAPI } from './types';
 2: import { getPageImageUrl, getCoverImageUrl } from './urls';
@@ -4819,7 +4847,8 @@
 96:   sanitizeDiagnosticIdentifier = tauriApp.sanitizeDiagnosticIdentifier;
 97:   computeOffsets = tauriApp.computeOffsets;
 98:   getWindowRange = tauriApp.getWindowRange;
-99: }
+99:   sortLibraryEntries = tauriApp.sortLibraryEntries;
+100: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\tauri-bridge\tauriDb.ts ===
 1: import { invokeCommand } from './runtime';
 2: import type { Manga, Summary, Position, Settings, Page } from '../model';
@@ -5851,15 +5880,15 @@
 195: 
 196: export interface DbErrorPayload {
 197:   code:
-198:     | 'Sqlite'
-199:     | 'Migration'
-200:     | 'Lock'
-201:     | 'Validation'
-202:     | 'NotFound'
-203:     | 'Conflict'
-204:     | 'Task'
-205:     | 'Io'
-206:     | 'Serialization';
+198:   | 'Sqlite'
+199:   | 'Migration'
+200:   | 'Lock'
+201:   | 'Validation'
+202:   | 'NotFound'
+203:   | 'Conflict'
+204:   | 'Task'
+205:   | 'Io'
+206:   | 'Serialization';
 207:   message?: string;
 208: }
 209: 
@@ -5881,353 +5910,376 @@
 225:   timestamp: number;
 226: }
 227: 
-228: export interface TauriCommands {
-229:   select_folder: { args: Record<string, never>; return: string | null };
-230:   list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
-231:   read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
-232:   get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
-233:   get_header_dimensions: {
-234:     args: Uint8Array | ArrayBuffer | { cacheKey?: string; bytes: number[] };
-235:     return: { width: number; height: number } | null;
-236:   };
-237: 
-238:   is_image_file: { args: { name: string; mimeType: string }; return: boolean };
-239:   decode_image_dimensions: {
-240:     args: Uint8Array | ArrayBuffer | { bytes: number[] };
-241:     return: { width: number; height: number } | null;
-242:   };
-243:   generate_thumbnail_from_bytes: {
-244:     args: Uint8Array | ArrayBuffer | { bytes: number[]; quality?: number };
-245:     return: ArrayBuffer | Uint8Array;
-246:   };
-247:   downscale_image_bytes: {
-248:     args:
-249:       | Uint8Array
-250:       | ArrayBuffer
-251:       | { bytes: number[]; targetWidth: number; targetHeight: number; quality?: number };
-252:     return: ArrayBuffer | Uint8Array;
-253:   };
-254: 
-255:   clear_dimension_cache: { args: Record<string, never>; return: void };
-256:   cancel_scan: { args: { scanId: string }; return: boolean };
-257:   natural_sort_paths: { args: { paths: string[] }; return: string[] };
-258:   resolve_manga_path: {
-259:     args: { mangaId?: string; relativePath: string; localPath?: string };
-260:     return: string;
-261:   };
-262:   check_access: {
-263:     args: { mangaId?: string; localPath?: string };
-264:     return: boolean;
-265:   };
-266:   revoke_root: {
-267:     args: { rootPath: string };
-268:     return: boolean;
-269:   };
-270:   get_authorized_roots: {
-271:     args: Record<string, never>;
-272:     return: string[];
-273:   };
-274:   discover_library: {
-275:     args: { folderPath: string; scanId?: string };
-276:     return: LibraryDiscovery | null;
-277:   };
-278:   is_same_path: { args: { pathA: string; pathB: string }; return: boolean };
-279:   set_progress_bar: { args: { progress: number }; return: void };
-280:   show_main_window: { args: Record<string, never>; return: void };
-281:   save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
-282:   read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
-283:   get_thumbnail_url: { args: { id: string; size?: number | null }; return: string | null };
-284:   delete_thumbnail: { args: { id: string }; return: void };
-285:   clear_thumbnails: { args: Record<string, never>; return: void };
-286:   generate_thumbnail: {
-287:     args: { filePath: string; id: string; size?: number | null };
-288:     return: CachedImageResult;
-289:   };
-290:   generate_image_variant: {
-291:     args: { filePath: string; maxWidth: number; maxHeight: number };
-292:     return: CachedImageResult;
-293:   };
-294:   get_app_config: { args: Record<string, never>; return: AppConfig };
-295:   save_app_config: { args: { config: AppConfig }; return: void };
-296:   set_window_preferences: { args: { preferences: WindowPreferences }; return: void };
-297:   set_app_preference: { args: { key: string; value: unknown }; return: void };
-298:   get_app_preference: { args: { key: string }; return: unknown };
-299:   record_opened_root: { args: { rootPath: string }; return: string[] };
-300:   get_last_opened_roots: { args: Record<string, never>; return: string[] };
-301:   is_library_migrated: { args: Record<string, never>; return: boolean };
-302:   import_legacy_library: { args: { payload: unknown }; return: boolean };
-303:   sqlite_list_library: { args: Record<string, never>; return: Summary[] };
-304:   sqlite_get_manga: { args: { id: string }; return: Manga | undefined };
-305:   sqlite_save_manga: { args: { manga: Manga }; return: void };
-306:   sqlite_save_progress: {
-307:     args: {
-308:       mangaId: string;
-309:       chapterIndex: number;
-310:       position: Position;
-311:       read: boolean;
-312:       bookmarks?: Position[];
-313:       updateLast: boolean;
-314:       expectedRevision?: number;
-315:       expectedUpdatedAt?: number;
-316:     };
-317:     return: 'saved' | 'stale' | 'missing';
-318:   };
-319:   sqlite_add_bookmark: {
-320:     args: { mangaId: string; chapterName: string; position: Position };
-321:     return: Position[];
-322:   };
-323:   sqlite_remove_bookmark: {
-324:     args: { mangaId: string; chapterName: string; position: Position };
-325:     return: Position[];
-326:   };
-327:   sqlite_get_bookmarked_manga_ids: {
-328:     args: Record<string, never>;
-329:     return: { allBookmarkedIds: string[]; mangaBookmarkedIds: string[] };
-330:   };
-331:   get_bookmark_cards: {
-332:     args: { query: BookmarkCardsQuery };
-333:     return: BookmarkCardsResult;
-334:   };
-335:   sqlite_delete_manga: { args: { id: string }; return: void };
-336:   sqlite_clear_library: { args: Record<string, never>; return: void };
-337:   sqlite_reset_progress: { args: Record<string, never>; return: void };
-338:   sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
-339:   sqlite_save_settings: { args: { settings: Settings }; return: void };
-340:   validate_library_backup: { args: { backupJson: string }; return: unknown };
-341: 
-342:   validate_relative_path_cmd: { args: { path: string }; return: string };
-343:   matching_position_cmd: {
-344:     args: { saved?: Position; pages?: Page[]; oldPages?: Page[] };
-345:     return: Position | null;
-346:   };
-347:   parse_position_cmd: {
-348:     args: { value: Position; pages?: Page[]; oldPages?: Page[] };
-349:     return: Position;
-350:   };
-351:   parse_manga_cmd: {
-352:     args: { value: unknown; preserveHardwarePointers?: boolean };
-353:     return: Manga;
-354:   };
-355:   parse_summary_cmd: { args: { value: unknown }; return: Summary | null };
-356:   parse_settings_cmd: { args: { value: unknown }; return: Settings };
-357: 
-358:   export_library_backup: { args: Record<string, never>; return: string };
-359:   restore_library_backup: { args: { backupJson: string }; return: void };
-360:   index_title: {
-361:     args: {
-362:       root: string;
-363:       options?: {
-364:         sort?: string;
-365:         previous?: any;
-366:         targetId?: string;
-367:         warmChapters?: number;
-368:         jobId?: string;
-369:         title?: string;
-370:       };
-371:       onProgress?: unknown;
-372:     };
-373:     return: IndexTitleDto;
-374:   };
-375:   prepare_chapter: {
-376:     args: {
-377:       mangaId: string;
-378:       chapterIndex: number;
-379:       jobId?: string;
+228: export interface SortableSummary {
+229:   id: string;
+230:   title: string;
+231:   addedAt: number;
+232:   updatedAt: number;
+233:   chaptersRead: number;
+234:   chapterCount: number;
+235: }
+236: 
+237: export interface TauriCommands {
+238:   select_folder: { args: Record<string, never>; return: string | null };
+239:   list_folder: { args: { folderPath: string; scanId?: string }; return: FolderEntry[] };
+240:   read_file: { args: { absolutePath: string }; return: ArrayBuffer | number[] | Uint8Array };
+241:   get_image_dimensions: { args: { absolutePath: string }; return: [number, number] | null };
+242:   get_header_dimensions: {
+243:     args: Uint8Array | ArrayBuffer | { cacheKey?: string; bytes: number[] };
+244:     return: { width: number; height: number } | null;
+245:   };
+246: 
+247:   is_image_file: { args: { name: string; mimeType: string }; return: boolean };
+248:   decode_image_dimensions: {
+249:     args: Uint8Array | ArrayBuffer | { bytes: number[] };
+250:     return: { width: number; height: number } | null;
+251:   };
+252:   generate_thumbnail_from_bytes: {
+253:     args: Uint8Array | ArrayBuffer | { bytes: number[]; quality?: number };
+254:     return: ArrayBuffer | Uint8Array;
+255:   };
+256:   downscale_image_bytes: {
+257:     args:
+258:     | Uint8Array
+259:     | ArrayBuffer
+260:     | { bytes: number[]; targetWidth: number; targetHeight: number; quality?: number };
+261:     return: ArrayBuffer | Uint8Array;
+262:   };
+263: 
+264:   clear_dimension_cache: { args: Record<string, never>; return: void };
+265:   cancel_scan: { args: { scanId: string }; return: boolean };
+266:   natural_sort_paths: { args: { paths: string[] }; return: string[] };
+267:   resolve_manga_path: {
+268:     args: { mangaId?: string; relativePath: string; localPath?: string };
+269:     return: string;
+270:   };
+271:   check_access: {
+272:     args: { mangaId?: string; localPath?: string };
+273:     return: boolean;
+274:   };
+275:   revoke_root: {
+276:     args: { rootPath: string };
+277:     return: boolean;
+278:   };
+279:   get_authorized_roots: {
+280:     args: Record<string, never>;
+281:     return: string[];
+282:   };
+283:   discover_library: {
+284:     args: { folderPath: string; scanId?: string };
+285:     return: LibraryDiscovery | null;
+286:   };
+287:   is_same_path: { args: { pathA: string; pathB: string }; return: boolean };
+288:   set_progress_bar: { args: { progress: number }; return: void };
+289:   show_main_window: { args: Record<string, never>; return: void };
+290:   save_thumbnail: { args: Uint8Array | ArrayBuffer; return: void };
+291:   read_thumbnail: { args: { id: string }; return: ArrayBuffer | number[] | Uint8Array };
+292:   get_thumbnail_url: { args: { id: string; size?: number | null }; return: string | null };
+293:   delete_thumbnail: { args: { id: string }; return: void };
+294:   clear_thumbnails: { args: Record<string, never>; return: void };
+295:   generate_thumbnail: {
+296:     args: { filePath: string; id: string; size?: number | null };
+297:     return: CachedImageResult;
+298:   };
+299:   generate_image_variant: {
+300:     args: { filePath: string; maxWidth: number; maxHeight: number };
+301:     return: CachedImageResult;
+302:   };
+303:   get_app_config: { args: Record<string, never>; return: AppConfig };
+304:   save_app_config: { args: { config: AppConfig }; return: void };
+305:   set_window_preferences: { args: { preferences: WindowPreferences }; return: void };
+306:   set_app_preference: { args: { key: string; value: unknown }; return: void };
+307:   get_app_preference: { args: { key: string }; return: unknown };
+308:   record_opened_root: { args: { rootPath: string }; return: string[] };
+309:   get_last_opened_roots: { args: Record<string, never>; return: string[] };
+310:   is_library_migrated: { args: Record<string, never>; return: boolean };
+311:   import_legacy_library: { args: { payload: unknown }; return: boolean };
+312:   sqlite_list_library: { args: Record<string, never>; return: Summary[] };
+313:   sqlite_get_manga: { args: { id: string }; return: Manga | undefined };
+314:   sqlite_save_manga: { args: { manga: Manga }; return: void };
+315:   sqlite_save_progress: {
+316:     args: {
+317:       mangaId: string;
+318:       chapterIndex: number;
+319:       position: Position;
+320:       read: boolean;
+321:       bookmarks?: Position[];
+322:       updateLast: boolean;
+323:       expectedRevision?: number;
+324:       expectedUpdatedAt?: number;
+325:     };
+326:     return: 'saved' | 'stale' | 'missing';
+327:   };
+328:   sqlite_add_bookmark: {
+329:     args: { mangaId: string; chapterName: string; position: Position };
+330:     return: Position[];
+331:   };
+332:   sqlite_remove_bookmark: {
+333:     args: { mangaId: string; chapterName: string; position: Position };
+334:     return: Position[];
+335:   };
+336:   sqlite_get_bookmarked_manga_ids: {
+337:     args: Record<string, never>;
+338:     return: { allBookmarkedIds: string[]; mangaBookmarkedIds: string[] };
+339:   };
+340:   get_bookmark_cards: {
+341:     args: { query: BookmarkCardsQuery };
+342:     return: BookmarkCardsResult;
+343:   };
+344:   sqlite_delete_manga: { args: { id: string }; return: void };
+345:   sqlite_clear_library: { args: Record<string, never>; return: void };
+346:   sqlite_reset_progress: { args: Record<string, never>; return: void };
+347:   sqlite_get_settings: { args: Record<string, never>; return: Settings | null };
+348:   sqlite_save_settings: { args: { settings: Settings }; return: void };
+349:   validate_library_backup: { args: { backupJson: string }; return: unknown };
+350: 
+351:   validate_relative_path_cmd: { args: { path: string }; return: string };
+352:   matching_position_cmd: {
+353:     args: { saved?: Position; pages?: Page[]; oldPages?: Page[] };
+354:     return: Position | null;
+355:   };
+356:   parse_position_cmd: {
+357:     args: { value: Position; pages?: Page[]; oldPages?: Page[] };
+358:     return: Position;
+359:   };
+360:   parse_manga_cmd: {
+361:     args: { value: unknown; preserveHardwarePointers?: boolean };
+362:     return: Manga;
+363:   };
+364:   parse_summary_cmd: { args: { value: unknown }; return: Summary | null };
+365:   parse_settings_cmd: { args: { value: unknown }; return: Settings };
+366: 
+367:   export_library_backup: { args: Record<string, never>; return: string };
+368:   restore_library_backup: { args: { backupJson: string }; return: void };
+369:   index_title: {
+370:     args: {
+371:       root: string;
+372:       options?: {
+373:         sort?: string;
+374:         previous?: any;
+375:         targetId?: string;
+376:         warmChapters?: number;
+377:         jobId?: string;
+378:         title?: string;
+379:       };
 380:       onProgress?: unknown;
 381:     };
-382:     return: PrepareChapterDto;
+382:     return: IndexTitleDto;
 383:   };
-384: 
-385:   preview_chapters: {
-386:     args: { paths: string[] };
-387:     return: Array<{ name: string; pageCount: number }>;
-388:   };
-389:   schedule_background: { args: { mangaId: string }; return: boolean };
-390:   stop_background: { args: { mangaId: string }; return: void };
-391:   stop_all_background: { args: Record<string, never>; return: void };
-392:   resume_background: { args: Record<string, never>; return: number };
+384:   prepare_chapter: {
+385:     args: {
+386:       mangaId: string;
+387:       chapterIndex: number;
+388:       jobId?: string;
+389:       onProgress?: unknown;
+390:     };
+391:     return: PrepareChapterDto;
+392:   };
 393: 
-394:   get_storage_stats: { args: Record<string, never>; return: StorageStats };
-395:   save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
-396:   record_diagnostic: {
-397:     args: { entry: DiagnosticInputPayload };
-398:     return: DiagnosticRecordPayload | null;
-399:   };
-400:   get_diagnostics: { args: Record<string, never>; return: DiagnosticRecordPayload[] };
-401:   clear_diagnostics: { args: Record<string, never>; return: void };
-402:   sanitize_diagnostic_identifier: {
-403:     args: { raw?: string };
-404:     return: string | null;
-405:   };
-406:   compute_offsets: {
-407:     args: {
-408:       pages: Array<{ width: number; height: number }>;
-409:       options: GeometryOptions;
-410:       measuredHeights?: Record<number, number>;
-411:     };
-412:     return: PageOffset[];
-413:   };
-414:   get_window_range: {
-415:     args: {
-416:       offsets: PageOffset[];
-417:       scrollY: number;
-418:       viewportHeight: number;
-419:       bufferScreenCount?: number;
-420:       threshold?: number;
-421:     };
-422:     return: WindowRange;
-423:   };
-424: }
-425: 
-426: export interface DesktopAPI {
-427:   readonly isDesktop: boolean;
-428:   readonly isTauri: boolean;
-429:   selectFolder(): Promise<string | null>;
-430:   listFolder(folderPath: string, options?: ListFolderOptions): Promise<FolderEntry[]>;
-431:   discoverLibrary?(
-432:     folderPath: string,
-433:     options?: ListFolderOptions,
-434:   ): Promise<LibraryDiscovery | null>;
-435:   naturalSortPaths?(paths: string[]): Promise<string[]>;
-436:   resolvePath?(mangaId?: string, relativePath?: string, localPath?: string): Promise<string>;
-437:   checkAccess?(mangaId?: string, localPath?: string): Promise<boolean>;
-438:   revokeRoot?(rootPath: string): Promise<boolean>;
-439:   getAuthorizedRoots?(): Promise<string[]>;
-440:   isSamePath?(pathA: string, pathB: string): Promise<boolean>;
-441:   cancelScan?(scanId: string): Promise<boolean>;
-442:   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
-443:   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
-444:   getHeaderDimensions?(file: File): Promise<{ width: number; height: number } | undefined>;
-445: 
-446:   decodeImageDimensions?(
-447:     file: File,
-448:     signal?: AbortSignal,
-449:   ): Promise<{ width: number; height: number } | undefined>;
-450:   generateThumbnailFromBytes?(
-451:     file: File,
-452:     quality?: number,
-453:     signal?: AbortSignal,
-454:   ): Promise<Blob | undefined>;
-455:   downscaleImageBytes?(
-456:     blob: Blob,
-457:     targetWidth: number,
-458:     targetHeight: number,
-459:     signal?: AbortSignal,
-460:   ): Promise<Blob | null>;
-461: 
-462:   clearDimensionCache?(): Promise<void>;
-463:   setProgressBar(progress: number): void;
-464:   showMainWindow?(): Promise<boolean>;
-465:   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
-466:   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
-467:   getThumbnailUrl?(id: string, size?: number): Promise<string | null>;
-468:   deleteThumbnail?(id: string): Promise<void>;
-469:   clearThumbnails?(): Promise<void>;
-470:   generateThumbnail?(
-471:     filePath: string,
-472:     id: string,
-473:     size?: number,
-474:   ): Promise<CachedImageResult | null>;
-475:   generateImageVariant?(
-476:     filePath: string,
-477:     maxWidth: number,
-478:     maxHeight: number,
-479:   ): Promise<CachedImageResult | null>;
-480:   getAppConfig?(): Promise<AppConfig | null>;
-481:   saveAppConfig?(config: AppConfig): Promise<boolean>;
-482:   setWindowPreferences?(preferences: WindowPreferences): Promise<boolean>;
-483:   setAppPreference?(key: string, value: unknown): Promise<boolean>;
-484:   getAppPreference?(key: string): Promise<unknown>;
-485:   recordOpenedRoot?(rootPath: string): Promise<string[]>;
-486:   getLastOpenedRoots?(): Promise<string[]>;
-487:   isLibraryMigrated?(): Promise<boolean>;
-488:   importLegacyLibrary?(payload: unknown): Promise<boolean>;
-489:   sqliteListLibrary?(): Promise<Summary[]>;
-490:   sqliteGetManga?(id: string): Promise<Manga | undefined>;
-491:   sqliteSaveManga?(manga: Manga): Promise<void>;
-492:   sqliteSaveProgress?(params: {
-493:     mangaId: string;
-494:     chapterIndex: number;
-495:     position: Position;
-496:     read: boolean;
-497:     bookmarks?: Position[];
-498:     updateLast: boolean;
-499:     expectedRevision?: number;
-500:     expectedUpdatedAt?: number;
-501:   }): Promise<'saved' | 'stale' | 'missing'>;
-502:   sqliteAddBookmark?(params: {
-503:     mangaId: string;
-504:     chapterName: string;
-505:     position: Position;
-506:   }): Promise<Position[]>;
-507:   sqliteRemoveBookmark?(params: {
-508:     mangaId: string;
-509:     chapterName: string;
-510:     position: Position;
-511:   }): Promise<Position[]>;
-512:   sqliteGetBookmarkedMangaIds?(): Promise<{
-513:     allBookmarkedIds: string[];
-514:     mangaBookmarkedIds: string[];
-515:   }>;
-516:   getBookmarkCards?(query: BookmarkCardsQuery): Promise<BookmarkCardsResult>;
-517:   sqliteDeleteManga?(id: string): Promise<void>;
-518:   sqliteClearLibrary?(): Promise<void>;
-519:   sqliteResetProgress?(): Promise<void>;
-520:   sqliteGetSettings?(): Promise<Settings | undefined>;
-521:   sqliteSaveSettings?(settings: Settings): Promise<Settings>;
-522:   exportBackup?(): Promise<string>;
-523:   restoreBackup?(backupJson: string): Promise<Settings>;
-524:   validateBackup?(backupJson: string): Promise<unknown>;
-525:   indexTitle?(
-526:     root: string,
-527:     options?: IndexTitleOptions,
-528:     onProgress?: (progress: IndexScanProgress) => void,
-529:   ): Promise<IndexTitleDto>;
-530:   prepareChapter?(
-531:     mangaId: string,
-532:     chapterIndex: number,
-533:     onProgress?: (progress: IndexScanProgress) => void,
-534:     signal?: AbortSignal,
-535:   ): Promise<PrepareChapterDto>;
-536: 
-537:   previewChapters?(paths: string[]): Promise<Array<{ name: string; pageCount: number }>>;
-538:   scheduleBackground?(mangaId: string): Promise<boolean>;
-539:   stopBackground?(mangaId: string): Promise<void>;
-540:   stopAllBackground?(): Promise<void>;
-541:   resumeBackground?(): Promise<number>;
-542: 
-543:   convertFileSrc?(filePath: string, protocol?: string): string;
-544:   getPageImageUrl?(options: PageImageResourceOptions): string;
-545:   getCoverImageUrl?(mangaId: string, version?: string | number, size?: number): string;
-546:   onDragDrop?(callback: (paths: string[]) => void): () => void;
-547:   checkForUpdate?(): Promise<DesktopUpdateInfo | null>;
-548:   installUpdate?(): Promise<void>;
-549:   getStorageStats?(): Promise<StorageStats>;
-550:   saveFileDialog?(defaultName: string, content: string): Promise<boolean>;
-551:   recordDiagnostic?(entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null>;
-552:   getDiagnostics?(): Promise<DiagnosticRecordPayload[]>;
-553:   clearDiagnostics?(): Promise<void>;
-554:   sanitizeDiagnosticIdentifier?(raw?: string): Promise<string | undefined>;
-555:   computeOffsets(
-556:     pages: Array<Pick<Page, 'width' | 'height'>>,
-557:     options: GeometryOptions,
-558:     measuredHeights?: Record<number, number>,
-559:   ): Promise<PageOffset[]>;
-560:   getWindowRange(
-561:     offsets: PageOffset[],
-562:     scrollY: number,
-563:     viewportHeight: number,
-564:     bufferScreenCount?: number,
-565:     threshold?: number,
-566:   ): Promise<WindowRange>;
-567: }
-568: 
-569: export interface DesktopUpdateInfo {
-570:   version: string;
-571:   currentVersion?: string;
-572:   body?: string;
-573:   date?: string;
-574: }
+394:   preview_chapters: {
+395:     args: { paths: string[] };
+396:     return: Array<{ name: string; pageCount: number }>;
+397:   };
+398:   schedule_background: { args: { mangaId: string }; return: boolean };
+399:   stop_background: { args: { mangaId: string }; return: void };
+400:   stop_all_background: { args: Record<string, never>; return: void };
+401:   resume_background: { args: Record<string, never>; return: number };
+402: 
+403:   get_storage_stats: { args: Record<string, never>; return: StorageStats };
+404:   save_file_dialog: { args: { defaultName: string; content: string }; return: boolean };
+405:   record_diagnostic: {
+406:     args: { entry: DiagnosticInputPayload };
+407:     return: DiagnosticRecordPayload | null;
+408:   };
+409:   get_diagnostics: { args: Record<string, never>; return: DiagnosticRecordPayload[] };
+410:   clear_diagnostics: { args: Record<string, never>; return: void };
+411:   sanitize_diagnostic_identifier: {
+412:     args: { raw?: string };
+413:     return: string | null;
+414:   };
+415:   compute_offsets: {
+416:     args: {
+417:       pages: Array<{ width: number; height: number }>;
+418:       options: GeometryOptions;
+419:       measuredHeights?: Record<number, number>;
+420:     };
+421:     return: PageOffset[];
+422:   };
+423:   get_window_range: {
+424:     args: {
+425:       offsets: PageOffset[];
+426:       scrollY: number;
+427:       viewportHeight: number;
+428:       bufferScreenCount?: number;
+429:       threshold?: number;
+430:     };
+431:     return: WindowRange;
+432:   };
+433: 
+434:   sort_library_entries: {
+435:     args: {
+436:       entries: SortableSummary[];
+437:       shelfSort?: string;
+438:     };
+439:     return: string[];
+440:   };
+441: 
+442: }
+443: 
+444: export interface DesktopAPI {
+445:   readonly isDesktop: boolean;
+446:   readonly isTauri: boolean;
+447:   selectFolder(): Promise<string | null>;
+448:   listFolder(folderPath: string, options?: ListFolderOptions): Promise<FolderEntry[]>;
+449:   discoverLibrary?(
+450:     folderPath: string,
+451:     options?: ListFolderOptions,
+452:   ): Promise<LibraryDiscovery | null>;
+453:   naturalSortPaths?(paths: string[]): Promise<string[]>;
+454:   resolvePath?(mangaId?: string, relativePath?: string, localPath?: string): Promise<string>;
+455:   checkAccess?(mangaId?: string, localPath?: string): Promise<boolean>;
+456:   revokeRoot?(rootPath: string): Promise<boolean>;
+457:   getAuthorizedRoots?(): Promise<string[]>;
+458:   isSamePath?(pathA: string, pathB: string): Promise<boolean>;
+459:   cancelScan?(scanId: string): Promise<boolean>;
+460:   readFile(absolutePath: string): Promise<ArrayBuffer | null>;
+461:   getImageDimensions?(absolutePath: string): Promise<{ width: number; height: number } | null>;
+462:   getHeaderDimensions?(file: File): Promise<{ width: number; height: number } | undefined>;
+463: 
+464:   decodeImageDimensions?(
+465:     file: File,
+466:     signal?: AbortSignal,
+467:   ): Promise<{ width: number; height: number } | undefined>;
+468:   generateThumbnailFromBytes?(
+469:     file: File,
+470:     quality?: number,
+471:     signal?: AbortSignal,
+472:   ): Promise<Blob | undefined>;
+473:   downscaleImageBytes?(
+474:     blob: Blob,
+475:     targetWidth: number,
+476:     targetHeight: number,
+477:     signal?: AbortSignal,
+478:   ): Promise<Blob | null>;
+479: 
+480:   clearDimensionCache?(): Promise<void>;
+481:   setProgressBar(progress: number): void;
+482:   showMainWindow?(): Promise<boolean>;
+483:   saveThumbnail?(id: string, buffer: ArrayBuffer | Uint8Array): Promise<boolean>;
+484:   getThumbnail?(id: string): Promise<ArrayBuffer | null>;
+485:   getThumbnailUrl?(id: string, size?: number): Promise<string | null>;
+486:   deleteThumbnail?(id: string): Promise<void>;
+487:   clearThumbnails?(): Promise<void>;
+488:   generateThumbnail?(
+489:     filePath: string,
+490:     id: string,
+491:     size?: number,
+492:   ): Promise<CachedImageResult | null>;
+493:   generateImageVariant?(
+494:     filePath: string,
+495:     maxWidth: number,
+496:     maxHeight: number,
+497:   ): Promise<CachedImageResult | null>;
+498:   getAppConfig?(): Promise<AppConfig | null>;
+499:   saveAppConfig?(config: AppConfig): Promise<boolean>;
+500:   setWindowPreferences?(preferences: WindowPreferences): Promise<boolean>;
+501:   setAppPreference?(key: string, value: unknown): Promise<boolean>;
+502:   getAppPreference?(key: string): Promise<unknown>;
+503:   recordOpenedRoot?(rootPath: string): Promise<string[]>;
+504:   getLastOpenedRoots?(): Promise<string[]>;
+505:   isLibraryMigrated?(): Promise<boolean>;
+506:   importLegacyLibrary?(payload: unknown): Promise<boolean>;
+507:   sqliteListLibrary?(): Promise<Summary[]>;
+508:   sqliteGetManga?(id: string): Promise<Manga | undefined>;
+509:   sqliteSaveManga?(manga: Manga): Promise<void>;
+510:   sqliteSaveProgress?(params: {
+511:     mangaId: string;
+512:     chapterIndex: number;
+513:     position: Position;
+514:     read: boolean;
+515:     bookmarks?: Position[];
+516:     updateLast: boolean;
+517:     expectedRevision?: number;
+518:     expectedUpdatedAt?: number;
+519:   }): Promise<'saved' | 'stale' | 'missing'>;
+520:   sqliteAddBookmark?(params: {
+521:     mangaId: string;
+522:     chapterName: string;
+523:     position: Position;
+524:   }): Promise<Position[]>;
+525:   sqliteRemoveBookmark?(params: {
+526:     mangaId: string;
+527:     chapterName: string;
+528:     position: Position;
+529:   }): Promise<Position[]>;
+530:   sqliteGetBookmarkedMangaIds?(): Promise<{
+531:     allBookmarkedIds: string[];
+532:     mangaBookmarkedIds: string[];
+533:   }>;
+534:   getBookmarkCards?(query: BookmarkCardsQuery): Promise<BookmarkCardsResult>;
+535:   sqliteDeleteManga?(id: string): Promise<void>;
+536:   sqliteClearLibrary?(): Promise<void>;
+537:   sqliteResetProgress?(): Promise<void>;
+538:   sqliteGetSettings?(): Promise<Settings | undefined>;
+539:   sqliteSaveSettings?(settings: Settings): Promise<Settings>;
+540:   exportBackup?(): Promise<string>;
+541:   restoreBackup?(backupJson: string): Promise<Settings>;
+542:   validateBackup?(backupJson: string): Promise<unknown>;
+543:   indexTitle?(
+544:     root: string,
+545:     options?: IndexTitleOptions,
+546:     onProgress?: (progress: IndexScanProgress) => void,
+547:   ): Promise<IndexTitleDto>;
+548:   prepareChapter?(
+549:     mangaId: string,
+550:     chapterIndex: number,
+551:     onProgress?: (progress: IndexScanProgress) => void,
+552:     signal?: AbortSignal,
+553:   ): Promise<PrepareChapterDto>;
+554: 
+555:   previewChapters?(paths: string[]): Promise<Array<{ name: string; pageCount: number }>>;
+556:   scheduleBackground?(mangaId: string): Promise<boolean>;
+557:   stopBackground?(mangaId: string): Promise<void>;
+558:   stopAllBackground?(): Promise<void>;
+559:   resumeBackground?(): Promise<number>;
+560: 
+561:   convertFileSrc?(filePath: string, protocol?: string): string;
+562:   getPageImageUrl?(options: PageImageResourceOptions): string;
+563:   getCoverImageUrl?(mangaId: string, version?: string | number, size?: number): string;
+564:   onDragDrop?(callback: (paths: string[]) => void): () => void;
+565:   checkForUpdate?(): Promise<DesktopUpdateInfo | null>;
+566:   installUpdate?(): Promise<void>;
+567:   getStorageStats?(): Promise<StorageStats>;
+568:   saveFileDialog?(defaultName: string, content: string): Promise<boolean>;
+569:   recordDiagnostic?(entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null>;
+570:   getDiagnostics?(): Promise<DiagnosticRecordPayload[]>;
+571:   clearDiagnostics?(): Promise<void>;
+572:   sanitizeDiagnosticIdentifier?(raw?: string): Promise<string | undefined>;
+573:   computeOffsets(
+574:     pages: Array<Pick<Page, 'width' | 'height'>>,
+575:     options: GeometryOptions,
+576:     measuredHeights?: Record<number, number>,
+577:   ): Promise<PageOffset[]>;
+578:   getWindowRange(
+579:     offsets: PageOffset[],
+580:     scrollY: number,
+581:     viewportHeight: number,
+582:     bufferScreenCount?: number,
+583:     threshold?: number,
+584:   ): Promise<WindowRange>;
+585: 
+586:   sortLibraryEntries(
+587:     entries: SortableSummary[],
+588:     shelfSort?: Settings['shelfSort'],
+589:   ): Promise<string[]>;
+590: }
+591: 
+592: export interface DesktopUpdateInfo {
+593:   version: string;
+594:   currentVersion?: string;
+595:   body?: string;
+596:   date?: string;
+597: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\tauri-bridge\urls.ts ===
 1: import type { PageImageResourceOptions } from './types';
 2: 
@@ -6334,306 +6386,331 @@
 24:   StorageStats,
 25:   DiagnosticInputPayload,
 26:   DiagnosticRecordPayload,
-27: } from './types';
-28: 
-29: export class WebDesktopBridge implements DesktopAPI {
-30:   readonly isDesktop = false;
-31:   readonly isTauri = false;
-32: 
-33:   onDragDrop(): () => void {
-34:     return () => {};
-35:   }
-36: 
-37:   async selectFolder(): Promise<string | null> {
-38:     return null;
-39:   }
-40: 
-41:   async listFolder(): Promise<FolderEntry[]> {
-42:     return [];
-43:   }
-44: 
-45:   async discoverLibrary(): Promise<LibraryDiscovery | null> {
-46:     return null;
-47:   }
-48: 
-49:   async naturalSortPaths(paths: string[]): Promise<string[]> {
-50:     return paths;
-51:   }
-52: 
-53:   async resolvePath(_mangaId?: string, relativePath = '', localPath?: string): Promise<string> {
-54:     if (localPath) {
-55:       const sep = localPath.includes('\\') ? '\\' : '/';
-56:       return `${localPath}${sep}${relativePath.split('/').join(sep)}`;
-57:     }
-58:     return relativePath;
-59:   }
-60: 
-61:   async checkAccess(): Promise<boolean> {
-62:     return true;
-63:   }
-64: 
-65:   async revokeRoot(): Promise<boolean> {
-66:     return false;
-67:   }
-68: 
-69:   async getAuthorizedRoots(): Promise<string[]> {
-70:     return [];
-71:   }
-72: 
-73:   async cancelScan(): Promise<boolean> {
-74:     return false;
-75:   }
-76: 
-77:   async readFile(): Promise<ArrayBuffer | null> {
-78:     return null;
-79:   }
-80: 
-81:   async getImageDimensions(): Promise<{ width: number; height: number } | null> {
-82:     return null;
-83:   }
-84: 
-85:   async getHeaderDimensions(): Promise<{ width: number; height: number } | undefined> {
-86:     return undefined;
-87:   }
-88: 
-89:   async decodeImageDimensions(): Promise<{ width: number; height: number } | undefined> {
-90:     return undefined;
-91:   }
-92: 
-93:   async generateThumbnailFromBytes(): Promise<Blob | undefined> {
-94:     return undefined;
-95:   }
-96: 
-97:   async downscaleImageBytes(): Promise<Blob | null> {
-98:     return null;
-99:   }
-100: 
-101:   async clearDimensionCache(): Promise<void> {}
-102: 
-103:   setProgressBar(): void {}
-104: 
-105:   async showMainWindow(): Promise<boolean> {
-106:     return false;
-107:   }
-108: 
-109:   async saveThumbnail(): Promise<boolean> {
-110:     return false;
-111:   }
-112: 
-113:   async getThumbnail(): Promise<ArrayBuffer | null> {
-114:     return null;
-115:   }
-116: 
-117:   async getThumbnailUrl(): Promise<string | null> {
-118:     return null;
-119:   }
-120: 
-121:   async deleteThumbnail(): Promise<void> {}
-122: 
-123:   async clearThumbnails(): Promise<void> {}
-124: 
-125:   async generateThumbnail(): Promise<CachedImageResult | null> {
-126:     return null;
-127:   }
-128: 
-129:   async generateImageVariant(): Promise<CachedImageResult | null> {
-130:     return null;
-131:   }
-132: 
-133:   async getAppConfig(): Promise<AppConfig | null> {
-134:     return null;
-135:   }
-136: 
-137:   async saveAppConfig(): Promise<boolean> {
-138:     return false;
-139:   }
-140: 
-141:   async setWindowPreferences(): Promise<boolean> {
-142:     return false;
-143:   }
-144: 
-145:   async setAppPreference(): Promise<boolean> {
-146:     return false;
-147:   }
-148: 
-149:   async getAppPreference(): Promise<unknown> {
-150:     return null;
-151:   }
-152: 
-153:   async recordOpenedRoot(): Promise<string[]> {
-154:     return [];
-155:   }
-156: 
-157:   async getLastOpenedRoots(): Promise<string[]> {
-158:     return [];
-159:   }
-160: 
-161:   async isLibraryMigrated(): Promise<boolean> {
-162:     return false;
-163:   }
-164: 
-165:   async importLegacyLibrary(): Promise<boolean> {
-166:     return false;
-167:   }
-168: 
-169:   async sqliteListLibrary(): Promise<Summary[]> {
-170:     return [];
-171:   }
-172: 
-173:   async sqliteGetManga(): Promise<Manga | undefined> {
-174:     return undefined;
-175:   }
-176: 
-177:   async sqliteSaveManga(): Promise<void> {}
-178: 
-179:   async sqliteSaveProgress(): Promise<'saved' | 'stale' | 'missing'> {
-180:     return 'saved';
-181:   }
-182: 
-183:   async sqliteAddBookmark(): Promise<Position[]> {
-184:     return [];
-185:   }
-186: 
-187:   async sqliteRemoveBookmark(): Promise<Position[]> {
-188:     return [];
-189:   }
-190: 
-191:   async sqliteGetBookmarkedMangaIds(): Promise<{
-192:     allBookmarkedIds: string[];
-193:     mangaBookmarkedIds: string[];
-194:   }> {
-195:     return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
-196:   }
-197: 
-198:   async getBookmarkCards(_query: BookmarkCardsQuery = {}): Promise<BookmarkCardsResult> {
-199:     return { cards: [], total: 0 };
-200:   }
-201: 
-202:   async sqliteDeleteManga(): Promise<void> {}
-203: 
-204:   async sqliteClearLibrary(): Promise<void> {}
-205: 
-206:   async sqliteResetProgress(): Promise<void> {}
-207: 
-208:   async sqliteGetSettings(): Promise<Settings | undefined> {
-209:     return undefined;
-210:   }
-211: 
-212:   async sqliteSaveSettings(settings: Settings): Promise<Settings> {
-213:     return settings;
-214:   }
-215: 
-216:   async exportBackup(): Promise<string> {
-217:     return '';
-218:   }
-219: 
-220:   async restoreBackup(): Promise<Settings> {
-221:     return {} as Settings;
-222:   }
-223: 
-224:   async validateBackup(): Promise<unknown> {
-225:     return null;
-226:   }
-227: 
-228:   async isSamePath(pathA: string, pathB: string): Promise<boolean> {
-229:     return (
-230:       pathA.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
-231:       pathB.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
-232:     );
-233:   }
-234: 
-235:   async indexTitle(): Promise<IndexTitleDto> {
-236:     throw new Error('indexTitle is only available in desktop environment.');
-237:   }
-238: 
-239:   async prepareChapter(): Promise<PrepareChapterDto> {
-240:     throw new Error('prepareChapter is only available in desktop environment.');
-241:   }
-242: 
-243:   convertFileSrc(filePath: string): string {
-244:     return filePath;
-245:   }
-246: 
-247:   getPageImageUrl(_options: PageImageResourceOptions): string {
-248:     return '';
-249:   }
-250: 
-251:   getCoverImageUrl(_mangaId: string, _version?: string | number, _size?: number): string {
-252:     return '';
-253:   }
-254: 
-255:   async checkForUpdate(): Promise<DesktopUpdateInfo | null> {
-256:     return null;
-257:   }
-258: 
-259:   async installUpdate(): Promise<void> {}
-260: 
-261:   async getStorageStats(): Promise<StorageStats> {
-262:     return { db_bytes: 0, cache_bytes: 0, total_bytes: 0 };
-263:   }
-264: 
-265:   async saveFileDialog(_defaultName: string, _content: string): Promise<boolean> {
-266:     return false;
-267:   }
-268: 
-269:   async recordDiagnostic(_entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null> {
-270:     return null;
-271:   }
-272: 
-273:   async getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
-274:     return [];
-275:   }
-276: 
-277:   async clearDiagnostics(): Promise<void> {}
-278: 
-279:   async sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
-280:     if (!raw) return undefined;
-281:     const parts = raw.replace(/\\/g, '/').split('/').filter(Boolean);
-282:     return parts.length ? parts.slice(-2).join('/') : undefined;
-283:   }
-284: 
-285:   async computeOffsets(
-286:     pages: Array<Pick<Page, 'width' | 'height'>>,
-287:     options: GeometryOptions,
-288:     measuredHeights?: Record<number, number>,
-289:   ): Promise<PageOffset[]> {
-290:     const offsets: PageOffset[] = [];
-291:     let currentTop = 0;
-292:     const safeZoom = Math.max(0.1, options.zoom || 1);
-293:     for (let i = 0; i < pages.length; i++) {
-294:       let height = measuredHeights?.[i];
-295:       if (height === undefined || height <= 0 || !Number.isFinite(height)) {
-296:         const p = pages[i];
-297:         const nativeWidth = Math.max(1, p.width) * safeZoom;
-298:         const aspect = Math.max(1, p.width) / Math.max(1, p.height);
-299:         const readingW =
-300:           options.maxWidth > 0 ? options.maxWidth * safeZoom : options.containerWidth;
-301:         const targetW = Math.max(
-302:           1,
-303:           Math.round(Math.min(options.containerWidth, readingW, nativeWidth)),
-304:         );
-305:         height = Math.max(1, Math.round(targetW / aspect));
-306:       }
-307:       const bottom = currentTop + height;
-308:       offsets.push({ page: i, top: currentTop, height, bottom });
-309:       currentTop = bottom;
-310:     }
-311:     return offsets;
-312:   }
-313: 
-314:   async getWindowRange(
-315:     offsets: PageOffset[],
-316:     _scrollY: number,
-317:     _viewportHeight: number,
-318:   ): Promise<WindowRange> {
-319:     return {
-320:       startIndex: 0,
-321:       endIndex: Math.max(0, offsets.length - 1),
-322:       topSpacer: 0,
-323:       bottomSpacer: 0,
-324:     };
-325:   }
-326: }
+27:   SortableSummary,
+28: } from './types';
+29: 
+30: export class WebDesktopBridge implements DesktopAPI {
+31:   readonly isDesktop = false;
+32:   readonly isTauri = false;
+33: 
+34:   onDragDrop(): () => void {
+35:     return () => { };
+36:   }
+37: 
+38:   async selectFolder(): Promise<string | null> {
+39:     return null;
+40:   }
+41: 
+42:   async listFolder(): Promise<FolderEntry[]> {
+43:     return [];
+44:   }
+45: 
+46:   async discoverLibrary(): Promise<LibraryDiscovery | null> {
+47:     return null;
+48:   }
+49: 
+50:   async naturalSortPaths(paths: string[]): Promise<string[]> {
+51:     return paths;
+52:   }
+53: 
+54:   async resolvePath(_mangaId?: string, relativePath = '', localPath?: string): Promise<string> {
+55:     if (localPath) {
+56:       const sep = localPath.includes('\\') ? '\\' : '/';
+57:       return `${localPath}${sep}${relativePath.split('/').join(sep)}`;
+58:     }
+59:     return relativePath;
+60:   }
+61: 
+62:   async checkAccess(): Promise<boolean> {
+63:     return true;
+64:   }
+65: 
+66:   async revokeRoot(): Promise<boolean> {
+67:     return false;
+68:   }
+69: 
+70:   async getAuthorizedRoots(): Promise<string[]> {
+71:     return [];
+72:   }
+73: 
+74:   async cancelScan(): Promise<boolean> {
+75:     return false;
+76:   }
+77: 
+78:   async readFile(): Promise<ArrayBuffer | null> {
+79:     return null;
+80:   }
+81: 
+82:   async getImageDimensions(): Promise<{ width: number; height: number } | null> {
+83:     return null;
+84:   }
+85: 
+86:   async getHeaderDimensions(): Promise<{ width: number; height: number } | undefined> {
+87:     return undefined;
+88:   }
+89: 
+90:   async decodeImageDimensions(): Promise<{ width: number; height: number } | undefined> {
+91:     return undefined;
+92:   }
+93: 
+94:   async generateThumbnailFromBytes(): Promise<Blob | undefined> {
+95:     return undefined;
+96:   }
+97: 
+98:   async downscaleImageBytes(): Promise<Blob | null> {
+99:     return null;
+100:   }
+101: 
+102:   async clearDimensionCache(): Promise<void> { }
+103: 
+104:   setProgressBar(): void { }
+105: 
+106:   async showMainWindow(): Promise<boolean> {
+107:     return false;
+108:   }
+109: 
+110:   async saveThumbnail(): Promise<boolean> {
+111:     return false;
+112:   }
+113: 
+114:   async getThumbnail(): Promise<ArrayBuffer | null> {
+115:     return null;
+116:   }
+117: 
+118:   async getThumbnailUrl(): Promise<string | null> {
+119:     return null;
+120:   }
+121: 
+122:   async deleteThumbnail(): Promise<void> { }
+123: 
+124:   async clearThumbnails(): Promise<void> { }
+125: 
+126:   async generateThumbnail(): Promise<CachedImageResult | null> {
+127:     return null;
+128:   }
+129: 
+130:   async generateImageVariant(): Promise<CachedImageResult | null> {
+131:     return null;
+132:   }
+133: 
+134:   async getAppConfig(): Promise<AppConfig | null> {
+135:     return null;
+136:   }
+137: 
+138:   async saveAppConfig(): Promise<boolean> {
+139:     return false;
+140:   }
+141: 
+142:   async setWindowPreferences(): Promise<boolean> {
+143:     return false;
+144:   }
+145: 
+146:   async setAppPreference(): Promise<boolean> {
+147:     return false;
+148:   }
+149: 
+150:   async getAppPreference(): Promise<unknown> {
+151:     return null;
+152:   }
+153: 
+154:   async recordOpenedRoot(): Promise<string[]> {
+155:     return [];
+156:   }
+157: 
+158:   async getLastOpenedRoots(): Promise<string[]> {
+159:     return [];
+160:   }
+161: 
+162:   async isLibraryMigrated(): Promise<boolean> {
+163:     return false;
+164:   }
+165: 
+166:   async importLegacyLibrary(): Promise<boolean> {
+167:     return false;
+168:   }
+169: 
+170:   async sqliteListLibrary(): Promise<Summary[]> {
+171:     return [];
+172:   }
+173: 
+174:   async sqliteGetManga(): Promise<Manga | undefined> {
+175:     return undefined;
+176:   }
+177: 
+178:   async sqliteSaveManga(): Promise<void> { }
+179: 
+180:   async sqliteSaveProgress(): Promise<'saved' | 'stale' | 'missing'> {
+181:     return 'saved';
+182:   }
+183: 
+184:   async sqliteAddBookmark(): Promise<Position[]> {
+185:     return [];
+186:   }
+187: 
+188:   async sqliteRemoveBookmark(): Promise<Position[]> {
+189:     return [];
+190:   }
+191: 
+192:   async sqliteGetBookmarkedMangaIds(): Promise<{
+193:     allBookmarkedIds: string[];
+194:     mangaBookmarkedIds: string[];
+195:   }> {
+196:     return { allBookmarkedIds: [], mangaBookmarkedIds: [] };
+197:   }
+198: 
+199:   async getBookmarkCards(_query: BookmarkCardsQuery = {}): Promise<BookmarkCardsResult> {
+200:     return { cards: [], total: 0 };
+201:   }
+202: 
+203:   async sqliteDeleteManga(): Promise<void> { }
+204: 
+205:   async sqliteClearLibrary(): Promise<void> { }
+206: 
+207:   async sqliteResetProgress(): Promise<void> { }
+208: 
+209:   async sqliteGetSettings(): Promise<Settings | undefined> {
+210:     return undefined;
+211:   }
+212: 
+213:   async sqliteSaveSettings(settings: Settings): Promise<Settings> {
+214:     return settings;
+215:   }
+216: 
+217:   async exportBackup(): Promise<string> {
+218:     return '';
+219:   }
+220: 
+221:   async restoreBackup(): Promise<Settings> {
+222:     return {} as Settings;
+223:   }
+224: 
+225:   async validateBackup(): Promise<unknown> {
+226:     return null;
+227:   }
+228: 
+229:   async isSamePath(pathA: string, pathB: string): Promise<boolean> {
+230:     return (
+231:       pathA.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase() ===
+232:       pathB.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase()
+233:     );
+234:   }
+235: 
+236:   async indexTitle(): Promise<IndexTitleDto> {
+237:     throw new Error('indexTitle is only available in desktop environment.');
+238:   }
+239: 
+240:   async prepareChapter(): Promise<PrepareChapterDto> {
+241:     throw new Error('prepareChapter is only available in desktop environment.');
+242:   }
+243: 
+244:   convertFileSrc(filePath: string): string {
+245:     return filePath;
+246:   }
+247: 
+248:   getPageImageUrl(_options: PageImageResourceOptions): string {
+249:     return '';
+250:   }
+251: 
+252:   getCoverImageUrl(_mangaId: string, _version?: string | number, _size?: number): string {
+253:     return '';
+254:   }
+255: 
+256:   async checkForUpdate(): Promise<DesktopUpdateInfo | null> {
+257:     return null;
+258:   }
+259: 
+260:   async installUpdate(): Promise<void> { }
+261: 
+262:   async getStorageStats(): Promise<StorageStats> {
+263:     return { db_bytes: 0, cache_bytes: 0, total_bytes: 0 };
+264:   }
+265: 
+266:   async saveFileDialog(_defaultName: string, _content: string): Promise<boolean> {
+267:     return false;
+268:   }
+269: 
+270:   async recordDiagnostic(_entry: DiagnosticInputPayload): Promise<DiagnosticRecordPayload | null> {
+271:     return null;
+272:   }
+273: 
+274:   async getDiagnostics(): Promise<DiagnosticRecordPayload[]> {
+275:     return [];
+276:   }
+277: 
+278:   async clearDiagnostics(): Promise<void> { }
+279: 
+280:   async sanitizeDiagnosticIdentifier(raw?: string): Promise<string | undefined> {
+281:     if (!raw) return undefined;
+282:     const parts = raw.replace(/\\/g, '/').split('/').filter(Boolean);
+283:     return parts.length ? parts.slice(-2).join('/') : undefined;
+284:   }
+285: 
+286:   async computeOffsets(
+287:     pages: Array<Pick<Page, 'width' | 'height'>>,
+288:     options: GeometryOptions,
+289:     measuredHeights?: Record<number, number>,
+290:   ): Promise<PageOffset[]> {
+291:     const offsets: PageOffset[] = [];
+292:     let currentTop = 0;
+293:     const safeZoom = Math.max(0.1, options.zoom || 1);
+294:     for (let i = 0; i < pages.length; i++) {
+295:       let height = measuredHeights?.[i];
+296:       if (height === undefined || height <= 0 || !Number.isFinite(height)) {
+297:         const p = pages[i];
+298:         const nativeWidth = Math.max(1, p.width) * safeZoom;
+299:         const aspect = Math.max(1, p.width) / Math.max(1, p.height);
+300:         const readingW =
+301:           options.maxWidth > 0 ? options.maxWidth * safeZoom : options.containerWidth;
+302:         const targetW = Math.max(
+303:           1,
+304:           Math.round(Math.min(options.containerWidth, readingW, nativeWidth)),
+305:         );
+306:         height = Math.max(1, Math.round(targetW / aspect));
+307:       }
+308:       const bottom = currentTop + height;
+309:       offsets.push({ page: i, top: currentTop, height, bottom });
+310:       currentTop = bottom;
+311:     }
+312:     return offsets;
+313:   }
+314: 
+315:   async getWindowRange(
+316:     offsets: PageOffset[],
+317:     _scrollY: number,
+318:     _viewportHeight: number,
+319:   ): Promise<WindowRange> {
+320:     return {
+321:       startIndex: 0,
+322:       endIndex: Math.max(0, offsets.length - 1),
+323:       topSpacer: 0,
+324:       bottomSpacer: 0,
+325:     };
+326:   }
+327: 
+328:   async sortLibraryEntries(
+329:     entries: SortableSummary[],
+330:     shelfSort: Settings['shelfSort'] = 'recent',
+331:   ): Promise<string[]> {
+332:     const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+333:     return [...entries]
+334:       .sort((a, b) => {
+335:         const byTitle = collator.compare(a.title, b.title);
+336:         return (
+337:           (shelfSort === 'title'
+338:             ? byTitle
+339:             : shelfSort === 'added'
+340:               ? b.addedAt - a.addedAt
+341:               : shelfSort === 'progress'
+342:                 ? b.chaptersRead / Math.max(1, b.chapterCount) -
+343:                 a.chaptersRead / Math.max(1, a.chapterCount)
+344:                 : b.updatedAt - a.updatedAt) ||
+345:           byTitle ||
+346:           collator.compare(a.id, b.id)
+347:         );
+348:       })
+349:       .map((e) => e.id);
+350:   }
+351: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\web\importScan.ts ===
 1: import { uniqueSlug, normalizeRelativePath } from '../paths';
 2: import { type Directory, type Page, type Manga } from '../model';
@@ -9990,399 +10067,398 @@
 43: export { CardMenu } from './app-tsx/CardMenu';
 44: export { CalendarIcon, UploadIcon, AddMangaIcon } from './app-tsx/Icons';
 45: export { DateTooltip, formatAddedDate, formatWholeDate } from './app-tsx/DateTooltip';
-46: export { shelfCollator, sortLibraryEntries } from './app-tsx/sortUtils';
-47: export { Library } from './app-tsx/Library';
-48: 
-49: const Reader = lazy(() => import('./Reader'));
-50: const MangaDetails = lazy(() => import('./MangaDetails'));
-51: const SettingsPanel = lazy(() => import('./SettingsPanel'));
-52: const ImportComplete = lazy(() => import('./ImportComplete'));
-53: 
-54: export default function App() {
-55:   const [settings, setSettingsState] = useState<Settings>(defaults);
-56:   const [library, setLibrary] = useState<Summary[]>([]);
-57:   const [ready, setReady] = useState(false);
-58:   const [settingsOpen, setSettingsOpen] = useState(false);
-59:   const [notice, notify] = useState('');
-60:   const [updateReady, setUpdateReady] = useState(hasUpdate());
-61:   const [updating, setUpdating] = useState(false);
-62:   const [updateError, setUpdateError] = useState('');
-63:   const fileInput = useRef<HTMLInputElement>(null);
-64:   const imageInput = useRef<HTMLInputElement>(null);
-65:   const pending = useRef<Summary | Manga | undefined>(undefined);
-66:   const standardOnly = useRef(false);
-67:   useInterfaceMotion(settings.reduced);
-68:   const refresh = async () => setLibrary(await listLibrary());
-69: 
-70:   const {
-71:     state: importState,
-72:     isBusy: busy,
-73:     scanState: scan,
-74:     discover,
-75:     runImport,
-76:     cancel,
-77:     dismiss: dismissImport,
-78:   } = useImport({
-79:     onRefresh: refresh,
-80:     onNotify: notify,
-81:   });
-82: 
-83:   useEffect(() => {
-84:     const blocked = () =>
-85:       notify(
-86:         'Close other Reader tabs to finish upgrading local storage. Your data will be preserved.',
-87:       );
-88:     window.addEventListener('reader-storage-blocked', blocked);
-89:     const onSync = () => {
-90:       void refresh();
-91:     };
-92:     syncChannel?.addEventListener('message', onSync);
-93: 
-94:     const init = async () => {
-95:       try {
-96:         if (desktopAPI.isDesktop) {
-97:           await ensureLibraryMigrated();
-98:         }
-99:         await Promise.all([
-100:           refresh(),
-101:           getStoredSettings().then((s) => {
-102:             if (s) {
-103:               setSettingsState(s);
-104:             }
-105:           }),
-106:         ]);
-107:         void resumeBackground().catch(() => {});
-108:       } catch (e) {
-109:         notify(errorMessage(e));
-110:       } finally {
-111:         setReady(true);
-112:       }
-113:     };
-114:     void init();
-115: 
-116:     return () => {
-117:       window.removeEventListener('reader-storage-blocked', blocked);
-118:       syncChannel?.removeEventListener('message', onSync);
-119:     };
-120:   }, []);
-121: 
-122:   useEffect(() => {
-123:     const update = () => setUpdateReady(hasUpdate());
-124:     window.addEventListener('reader-update-ready', update);
-125:     update();
-126:     return () => window.removeEventListener('reader-update-ready', update);
-127:   }, []);
-128: 
-129:   function setSettings(s: Settings) {
-130:     const validated = parseSettings(s);
-131:     setSettingsState(validated);
-132:     void saveStoredSettings(validated).catch((e) => notify(errorMessage(e)));
-133:   }
-134: 
-135:   useEffect(() => {
-136:     const media = matchMedia('(prefers-color-scheme: dark)');
-137:     const update = () => {
-138:       document.documentElement.classList.toggle(
-139:         'dark',
-140:         settings.theme === 'dark' || (settings.theme === 'system' && media.matches),
-141:       );
-142:       document.documentElement.classList.toggle('reduced', settings.reduced);
-143:       document.documentElement.style.setProperty(
-144:         '--font-size-ui',
-145:         `${settings.fontSizeUi ?? 15}px`,
-146:       );
-147:       document.documentElement.style.setProperty(
-148:         '--font-size-title',
-149:         `${settings.fontSizeTitle ?? 15}px`,
-150:       );
-151:       document.documentElement.style.setProperty(
-152:         '--font-size-button',
-153:         `${settings.fontSizeButton ?? 15}px`,
-154:       );
-155:     };
-156:     update();
-157:     media.addEventListener('change', update);
-158:     return () => media.removeEventListener('change', update);
-159:   }, [settings]);
-160: 
-161:   useEffect(() => {
-162:     if (!notice) return;
-163:     const timer = setTimeout(() => notify(''), 3000);
-164:     return () => clearTimeout(timer);
-165:   }, [notice]);
-166: 
-167:   async function pick(m?: Summary | Manga) {
-168:     if (busy) return;
-169:     pending.current = m;
-170:     if (desktopAPI.isDesktop) {
-171:       let folderPath: string | null = null;
-172:       try {
-173:         folderPath = await desktopAPI.selectFolder();
-174:       } catch {
-175:         // dialog error
-176:       }
-177:       if (!folderPath) return;
-178:       await discover(async (opts) => [await fromDesktopFolder(folderPath!, opts)], m);
-179:       return;
-180:     }
-181:     const picker = (window as unknown as { showDirectoryPicker?: () => Promise<Directory> })
-182:       .showDirectoryPicker;
-183:     const standard = () => {
-184:       if (fileInput.current && 'webkitdirectory' in fileInput.current) fileInput.current.click();
-185:       else imageInput.current?.click();
-186:     };
-187:     if (!picker || window.self !== window.top || standardOnly.current) {
-188:       standard();
-189:       return;
-190:     }
-191:     try {
-192:       const handle = await picker.call(window);
-193:       await discover(async (options) => [await fromHandle(handle, options)], m);
-194:     } catch (e) {
-195:       if (e instanceof DOMException && e.name === 'AbortError') return;
-196:       standardOnly.current = true;
-197:       if (navigator.userActivation?.isActive) standard();
-198:       else notify('Direct folder selection is unavailable. Click again to use standard selection.');
-199:     }
-200:   }
-201: 
-202:   const drop = (items: DataTransferItem[]) => {
-203:     if (busy) return;
-204:     void discover(async (options) => {
-205:       const read = droppedSources(items, options);
-206:       return await read();
-207:     });
-208:   };
-209: 
-210:   useEffect(() => {
-211:     if (!desktopAPI.isDesktop || !desktopAPI.onDragDrop) return;
-212:     return desktopAPI.onDragDrop((paths) => {
-213:       if (busy || !paths.length) return;
-214:       void discover(async (options) => {
-215:         const sources = [];
-216:         for (const p of paths) {
-217:           try {
-218:             sources.push(await fromDesktopFolder(p, options));
-219:           } catch (e) {
-220:             console.warn('Failed to import dropped folder:', p, e);
-221:           }
-222:         }
-223:         return sources;
-224:       });
-225:     });
-226:   }, [busy, discover]);
-227: 
-228:   useEffect(() => {
-229:     const context = (
-230:       document as unknown as {
-231:         modelContext?: { registerTool: (tool: unknown, options: unknown) => Promise<void> };
-232:       }
-233:     ).modelContext;
-234:     if (!context) return;
-235:     const lifecycle = new AbortController();
-236:     void Promise.resolve(
-237:       context.registerTool(
-238:         {
-239:           name: 'list_local_manga',
-240:           description: 'Read local library titles and chapter progress.',
-241:           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-242:           annotations: { readOnlyHint: true, untrustedContentHint: true },
-243:           execute: async (input: unknown) => {
-244:             if (!input || typeof input !== 'object' || Object.keys(input).length)
-245:               throw new Error('Expected an empty object.');
-246:             return (await listLibrary()).map((m) => ({
-247:               id: m.id,
-248:               title: m.title,
-249:               chapters: m.chapterCount,
-250:               read: m.chaptersRead,
-251:             }));
-252:           },
-253:         },
-254:         { signal: lifecycle.signal },
-255:       ),
-256:     ).catch(() => {});
-257:     return () => lifecycle.abort();
-258:   }, []);
-259: 
-260:   function exportReport() {
-261:     if (importState.status !== 'complete') return;
-262:     const url = URL.createObjectURL(
-263:       new Blob([importState.report.issues.map((i) => `${i.path}: ${i.reason}`).join('\n')], {
-264:         type: 'text/plain',
-265:       }),
-266:     );
-267:     const a = document.createElement('a');
-268:     a.href = url;
-269:     a.download = 'manga-report.txt';
-270:     a.click();
-271:     setTimeout(() => URL.revokeObjectURL(url), 1000);
-272:   }
-273: 
-274:   return (
-275:     <AppContext.Provider
-276:       value={{
-277:         settings,
-278:         setSettings,
-279:         library,
-280:         refresh,
-281:         notify,
-282:         pick,
-283:         openSettings: () => setSettingsOpen(true),
-284:       }}
-285:     >
-286:       <input
-287:         hidden
-288:         ref={fileInput}
-289:         type="file"
-290:         multiple
-291:         {...{ webkitdirectory: '' }}
-292:         onChange={(e) => {
-293:           const files = Array.from(e.target.files || []);
-294:           if (files.length) void discover(async () => fromFiles(files), pending.current);
-295:           e.target.value = '';
-296:         }}
-297:       />
-298:       <input
-299:         hidden
-300:         ref={imageInput}
-301:         type="file"
-302:         multiple
-303:         accept="image/*,.heic,.heif,.tif,.tiff"
-304:         onChange={(e) => {
-305:           const files = Array.from(e.target.files || []);
-306:           if (files.length) void discover(async () => fromFiles(files), pending.current);
-307:           e.target.value = '';
-308:         }}
-309:       />
-310:       {ready ? (
-311:         <Suspense
-312:           fallback={
-313:             <div className="loading-screen">
-314:               <LoaderCircle className="spin" /> Opening…
-315:             </div>
-316:           }
-317:         >
-318:           <Routes>
-319:             <Route path="/bookmarks" element={<BookmarksPage />} />
-320:             <Route
-321:               path="/"
-322:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
-323:             />
-324:             <Route
-325:               path="/index.html"
-326:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
-327:             />
-328:             <Route
-329:               path="/read/:mangaId"
-330:               element={
-331:                 <Reader
-332:                   indexing={busy}
-333:                   indexingProgress={[scan.done, scan.total]}
-334:                   cancelImport={cancel}
-335:                 />
-336:               }
-337:             />
-338:             <Route path="/:slug" element={<MangaDetails />} />
-339:             <Route
-340:               path="/:slug/:chapterSegment"
-341:               element={
-342:                 <Reader
-343:                   indexing={busy}
-344:                   indexingProgress={[scan.done, scan.total]}
-345:                   cancelImport={cancel}
-346:                 />
-347:               }
-348:             />
-349:             <Route
-350:               path="*"
-351:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
-352:             />
-353:           </Routes>
-354:         </Suspense>
-355:       ) : (
-356:         <div className="loading-screen">
-357:           <LoaderCircle className="spin" /> Opening your library…
-358:         </div>
-359:       )}
-360:       {settingsOpen && (
-361:         <Suspense fallback={null}>
-362:           <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-363:         </Suspense>
-364:       )}
-365:       {importState.status === 'preview' && (
-366:         <ImportDialog
-367:           sources={importState.preview.sources}
-368:           target={importState.preview.target}
-369:           library={library}
-370:           onClose={dismissImport}
-371:           onImport={(plans) => void runImport(plans)}
-372:         />
-373:       )}
-374:       {importState.status === 'complete' && (
-375:         <Suspense fallback={null}>
-376:           <ImportComplete
-377:             titles={importState.report.titles}
-378:             issues={importState.report.issues}
-379:             onClose={dismissImport}
-380:             onExport={exportReport}
-381:             onRetry={() => void runImport(importState.report.retry)}
-382:           />
-383:         </Suspense>
-384:       )}
-385:       {updateReady && (
-386:         <div className="update-banner" role="status">
-387:           A new Reader version is ready.{' '}
-388:           <button
-389:             className="btn"
-390:             disabled={updating || busy}
-391:             onClick={async () => {
-392:               setUpdating(true);
-393:               setUpdateError('');
-394:               try {
-395:                 await applyUpdate();
-396:               } catch (e) {
-397:                 setUpdateError(errorMessage(e));
-398:               } finally {
-399:                 setUpdating(false);
-400:               }
-401:             }}
-402:           >
-403:             {updating ? 'Saving & reloading…' : busy ? 'Finish importing first' : 'Save & reload'}
-404:           </button>
-405:           {updateError && <span role="alert">{updateError}</span>}
-406:           <details className="update-help">
-407:             <summary>Need to refresh manually?</summary>
-408:             <p>
-409:               Return to your library first to save your reading position. Then press{' '}
-410:               <strong>Ctrl + Shift + R</strong> on Windows/Linux, or <strong>⌘ + Shift + R</strong>{' '}
-411:               in Chrome/Firefox on Mac. In Safari on Mac, use <strong>⌘ + Option + R</strong>.
-412:             </p>
-413:             <p>
-414:               On mobile, or if the old version remains: close every Reader tab and app window, then
-415:               reopen Reader while online.
-416:             </p>
-417:             <p>
-418:               Do not clear site data—it contains your saved library and progress. Selected folders
-419:               may need re-linking after reloading.
-420:             </p>
-421:           </details>
-422:         </div>
-423:       )}
-424:       {notice && (
-425:         <div className="toast" role="status">
-426:           {notice}
-427:           <button
-428:             className="btn icon close-btn"
-429:             onClick={() => notify('')}
-430:             aria-label="Dismiss notification"
-431:           >
-432:             <X size={16} />
-433:           </button>
-434:         </div>
-435:       )}
-436:     </AppContext.Provider>
-437:   );
-438: }
+46: export { Library } from './app-tsx/Library';
+47: 
+48: const Reader = lazy(() => import('./Reader'));
+49: const MangaDetails = lazy(() => import('./MangaDetails'));
+50: const SettingsPanel = lazy(() => import('./SettingsPanel'));
+51: const ImportComplete = lazy(() => import('./ImportComplete'));
+52: 
+53: export default function App() {
+54:   const [settings, setSettingsState] = useState<Settings>(defaults);
+55:   const [library, setLibrary] = useState<Summary[]>([]);
+56:   const [ready, setReady] = useState(false);
+57:   const [settingsOpen, setSettingsOpen] = useState(false);
+58:   const [notice, notify] = useState('');
+59:   const [updateReady, setUpdateReady] = useState(hasUpdate());
+60:   const [updating, setUpdating] = useState(false);
+61:   const [updateError, setUpdateError] = useState('');
+62:   const fileInput = useRef<HTMLInputElement>(null);
+63:   const imageInput = useRef<HTMLInputElement>(null);
+64:   const pending = useRef<Summary | Manga | undefined>(undefined);
+65:   const standardOnly = useRef(false);
+66:   useInterfaceMotion(settings.reduced);
+67:   const refresh = async () => setLibrary(await listLibrary());
+68: 
+69:   const {
+70:     state: importState,
+71:     isBusy: busy,
+72:     scanState: scan,
+73:     discover,
+74:     runImport,
+75:     cancel,
+76:     dismiss: dismissImport,
+77:   } = useImport({
+78:     onRefresh: refresh,
+79:     onNotify: notify,
+80:   });
+81: 
+82:   useEffect(() => {
+83:     const blocked = () =>
+84:       notify(
+85:         'Close other Reader tabs to finish upgrading local storage. Your data will be preserved.',
+86:       );
+87:     window.addEventListener('reader-storage-blocked', blocked);
+88:     const onSync = () => {
+89:       void refresh();
+90:     };
+91:     syncChannel?.addEventListener('message', onSync);
+92: 
+93:     const init = async () => {
+94:       try {
+95:         if (desktopAPI.isDesktop) {
+96:           await ensureLibraryMigrated();
+97:         }
+98:         await Promise.all([
+99:           refresh(),
+100:           getStoredSettings().then((s) => {
+101:             if (s) {
+102:               setSettingsState(s);
+103:             }
+104:           }),
+105:         ]);
+106:         void resumeBackground().catch(() => { });
+107:       } catch (e) {
+108:         notify(errorMessage(e));
+109:       } finally {
+110:         setReady(true);
+111:       }
+112:     };
+113:     void init();
+114: 
+115:     return () => {
+116:       window.removeEventListener('reader-storage-blocked', blocked);
+117:       syncChannel?.removeEventListener('message', onSync);
+118:     };
+119:   }, []);
+120: 
+121:   useEffect(() => {
+122:     const update = () => setUpdateReady(hasUpdate());
+123:     window.addEventListener('reader-update-ready', update);
+124:     update();
+125:     return () => window.removeEventListener('reader-update-ready', update);
+126:   }, []);
+127: 
+128:   function setSettings(s: Settings) {
+129:     const validated = parseSettings(s);
+130:     setSettingsState(validated);
+131:     void saveStoredSettings(validated).catch((e) => notify(errorMessage(e)));
+132:   }
+133: 
+134:   useEffect(() => {
+135:     const media = matchMedia('(prefers-color-scheme: dark)');
+136:     const update = () => {
+137:       document.documentElement.classList.toggle(
+138:         'dark',
+139:         settings.theme === 'dark' || (settings.theme === 'system' && media.matches),
+140:       );
+141:       document.documentElement.classList.toggle('reduced', settings.reduced);
+142:       document.documentElement.style.setProperty(
+143:         '--font-size-ui',
+144:         `${settings.fontSizeUi ?? 15}px`,
+145:       );
+146:       document.documentElement.style.setProperty(
+147:         '--font-size-title',
+148:         `${settings.fontSizeTitle ?? 15}px`,
+149:       );
+150:       document.documentElement.style.setProperty(
+151:         '--font-size-button',
+152:         `${settings.fontSizeButton ?? 15}px`,
+153:       );
+154:     };
+155:     update();
+156:     media.addEventListener('change', update);
+157:     return () => media.removeEventListener('change', update);
+158:   }, [settings]);
+159: 
+160:   useEffect(() => {
+161:     if (!notice) return;
+162:     const timer = setTimeout(() => notify(''), 3000);
+163:     return () => clearTimeout(timer);
+164:   }, [notice]);
+165: 
+166:   async function pick(m?: Summary | Manga) {
+167:     if (busy) return;
+168:     pending.current = m;
+169:     if (desktopAPI.isDesktop) {
+170:       let folderPath: string | null = null;
+171:       try {
+172:         folderPath = await desktopAPI.selectFolder();
+173:       } catch {
+174:         // dialog error
+175:       }
+176:       if (!folderPath) return;
+177:       await discover(async (opts) => [await fromDesktopFolder(folderPath!, opts)], m);
+178:       return;
+179:     }
+180:     const picker = (window as unknown as { showDirectoryPicker?: () => Promise<Directory> })
+181:       .showDirectoryPicker;
+182:     const standard = () => {
+183:       if (fileInput.current && 'webkitdirectory' in fileInput.current) fileInput.current.click();
+184:       else imageInput.current?.click();
+185:     };
+186:     if (!picker || window.self !== window.top || standardOnly.current) {
+187:       standard();
+188:       return;
+189:     }
+190:     try {
+191:       const handle = await picker.call(window);
+192:       await discover(async (options) => [await fromHandle(handle, options)], m);
+193:     } catch (e) {
+194:       if (e instanceof DOMException && e.name === 'AbortError') return;
+195:       standardOnly.current = true;
+196:       if (navigator.userActivation?.isActive) standard();
+197:       else notify('Direct folder selection is unavailable. Click again to use standard selection.');
+198:     }
+199:   }
+200: 
+201:   const drop = (items: DataTransferItem[]) => {
+202:     if (busy) return;
+203:     void discover(async (options) => {
+204:       const read = droppedSources(items, options);
+205:       return await read();
+206:     });
+207:   };
+208: 
+209:   useEffect(() => {
+210:     if (!desktopAPI.isDesktop || !desktopAPI.onDragDrop) return;
+211:     return desktopAPI.onDragDrop((paths) => {
+212:       if (busy || !paths.length) return;
+213:       void discover(async (options) => {
+214:         const sources = [];
+215:         for (const p of paths) {
+216:           try {
+217:             sources.push(await fromDesktopFolder(p, options));
+218:           } catch (e) {
+219:             console.warn('Failed to import dropped folder:', p, e);
+220:           }
+221:         }
+222:         return sources;
+223:       });
+224:     });
+225:   }, [busy, discover]);
+226: 
+227:   useEffect(() => {
+228:     const context = (
+229:       document as unknown as {
+230:         modelContext?: { registerTool: (tool: unknown, options: unknown) => Promise<void> };
+231:       }
+232:     ).modelContext;
+233:     if (!context) return;
+234:     const lifecycle = new AbortController();
+235:     void Promise.resolve(
+236:       context.registerTool(
+237:         {
+238:           name: 'list_local_manga',
+239:           description: 'Read local library titles and chapter progress.',
+240:           inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+241:           annotations: { readOnlyHint: true, untrustedContentHint: true },
+242:           execute: async (input: unknown) => {
+243:             if (!input || typeof input !== 'object' || Object.keys(input).length)
+244:               throw new Error('Expected an empty object.');
+245:             return (await listLibrary()).map((m) => ({
+246:               id: m.id,
+247:               title: m.title,
+248:               chapters: m.chapterCount,
+249:               read: m.chaptersRead,
+250:             }));
+251:           },
+252:         },
+253:         { signal: lifecycle.signal },
+254:       ),
+255:     ).catch(() => { });
+256:     return () => lifecycle.abort();
+257:   }, []);
+258: 
+259:   function exportReport() {
+260:     if (importState.status !== 'complete') return;
+261:     const url = URL.createObjectURL(
+262:       new Blob([importState.report.issues.map((i) => `${i.path}: ${i.reason}`).join('\n')], {
+263:         type: 'text/plain',
+264:       }),
+265:     );
+266:     const a = document.createElement('a');
+267:     a.href = url;
+268:     a.download = 'manga-report.txt';
+269:     a.click();
+270:     setTimeout(() => URL.revokeObjectURL(url), 1000);
+271:   }
+272: 
+273:   return (
+274:     <AppContext.Provider
+275:       value={{
+276:         settings,
+277:         setSettings,
+278:         library,
+279:         refresh,
+280:         notify,
+281:         pick,
+282:         openSettings: () => setSettingsOpen(true),
+283:       }}
+284:     >
+285:       <input
+286:         hidden
+287:         ref={fileInput}
+288:         type="file"
+289:         multiple
+290:         {...{ webkitdirectory: '' }}
+291:         onChange={(e) => {
+292:           const files = Array.from(e.target.files || []);
+293:           if (files.length) void discover(async () => fromFiles(files), pending.current);
+294:           e.target.value = '';
+295:         }}
+296:       />
+297:       <input
+298:         hidden
+299:         ref={imageInput}
+300:         type="file"
+301:         multiple
+302:         accept="image/*,.heic,.heif,.tif,.tiff"
+303:         onChange={(e) => {
+304:           const files = Array.from(e.target.files || []);
+305:           if (files.length) void discover(async () => fromFiles(files), pending.current);
+306:           e.target.value = '';
+307:         }}
+308:       />
+309:       {ready ? (
+310:         <Suspense
+311:           fallback={
+312:             <div className="loading-screen">
+313:               <LoaderCircle className="spin" /> Opening…
+314:             </div>
+315:           }
+316:         >
+317:           <Routes>
+318:             <Route path="/bookmarks" element={<BookmarksPage />} />
+319:             <Route
+320:               path="/"
+321:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
+322:             />
+323:             <Route
+324:               path="/index.html"
+325:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
+326:             />
+327:             <Route
+328:               path="/read/:mangaId"
+329:               element={
+330:                 <Reader
+331:                   indexing={busy}
+332:                   indexingProgress={[scan.done, scan.total]}
+333:                   cancelImport={cancel}
+334:                 />
+335:               }
+336:             />
+337:             <Route path="/:slug" element={<MangaDetails />} />
+338:             <Route
+339:               path="/:slug/:chapterSegment"
+340:               element={
+341:                 <Reader
+342:                   indexing={busy}
+343:                   indexingProgress={[scan.done, scan.total]}
+344:                   cancelImport={cancel}
+345:                 />
+346:               }
+347:             />
+348:             <Route
+349:               path="*"
+350:               element={<Library busy={busy} scan={scan} drop={drop} cancel={cancel} />}
+351:             />
+352:           </Routes>
+353:         </Suspense>
+354:       ) : (
+355:         <div className="loading-screen">
+356:           <LoaderCircle className="spin" /> Opening your library…
+357:         </div>
+358:       )}
+359:       {settingsOpen && (
+360:         <Suspense fallback={null}>
+361:           <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+362:         </Suspense>
+363:       )}
+364:       {importState.status === 'preview' && (
+365:         <ImportDialog
+366:           sources={importState.preview.sources}
+367:           target={importState.preview.target}
+368:           library={library}
+369:           onClose={dismissImport}
+370:           onImport={(plans) => void runImport(plans)}
+371:         />
+372:       )}
+373:       {importState.status === 'complete' && (
+374:         <Suspense fallback={null}>
+375:           <ImportComplete
+376:             titles={importState.report.titles}
+377:             issues={importState.report.issues}
+378:             onClose={dismissImport}
+379:             onExport={exportReport}
+380:             onRetry={() => void runImport(importState.report.retry)}
+381:           />
+382:         </Suspense>
+383:       )}
+384:       {updateReady && (
+385:         <div className="update-banner" role="status">
+386:           A new Reader version is ready.{' '}
+387:           <button
+388:             className="btn"
+389:             disabled={updating || busy}
+390:             onClick={async () => {
+391:               setUpdating(true);
+392:               setUpdateError('');
+393:               try {
+394:                 await applyUpdate();
+395:               } catch (e) {
+396:                 setUpdateError(errorMessage(e));
+397:               } finally {
+398:                 setUpdating(false);
+399:               }
+400:             }}
+401:           >
+402:             {updating ? 'Saving & reloading…' : busy ? 'Finish importing first' : 'Save & reload'}
+403:           </button>
+404:           {updateError && <span role="alert">{updateError}</span>}
+405:           <details className="update-help">
+406:             <summary>Need to refresh manually?</summary>
+407:             <p>
+408:               Return to your library first to save your reading position. Then press{' '}
+409:               <strong>Ctrl + Shift + R</strong> on Windows/Linux, or <strong>⌘ + Shift + R</strong>{' '}
+410:               in Chrome/Firefox on Mac. In Safari on Mac, use <strong>⌘ + Option + R</strong>.
+411:             </p>
+412:             <p>
+413:               On mobile, or if the old version remains: close every Reader tab and app window, then
+414:               reopen Reader while online.
+415:             </p>
+416:             <p>
+417:               Do not clear site data—it contains your saved library and progress. Selected folders
+418:               may need re-linking after reloading.
+419:             </p>
+420:           </details>
+421:         </div>
+422:       )}
+423:       {notice && (
+424:         <div className="toast" role="status">
+425:           {notice}
+426:           <button
+427:             className="btn icon close-btn"
+428:             onClick={() => notify('')}
+429:             aria-label="Dismiss notification"
+430:           >
+431:             <X size={16} />
+432:           </button>
+433:         </div>
+434:       )}
+435:     </AppContext.Provider>
+436:   );
+437: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src\Bookmarks.tsx ===
 1: import { useEffect, useRef, useState } from 'react';
 2: import { Link } from 'react-router-dom';
@@ -20282,7 +20358,195 @@
 7: pub mod image_dimensions;
 8: pub mod images;
 9: pub mod indexing;
-10: pub mod window;
+10: pub mod sort;
+11: pub mod window;
+=== FILE: C:\Users\VKPs\Documents\manga-reader\src-tauri\src\commands\sort.rs ===
+1: use serde::{Deserialize, Serialize};
+2: use std::cmp::Ordering;
+3: 
+4: #[derive(Debug, Clone, Serialize, Deserialize)]
+5: #[serde(rename_all = "camelCase")]
+6: pub struct SortableSummary {
+7:     pub id: String,
+8:     pub title: String,
+9:     pub added_at: f64,
+10:     pub updated_at: f64,
+11:     pub chapters_read: usize,
+12:     pub chapter_count: usize,
+13: }
+14: 
+15: /// Case-insensitive numeric collation matching `Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })`.
+16: pub fn collate_numeric_ci(a: &str, b: &str) -> Ordering {
+17:     let la = a.to_lowercase();
+18:     let lb = b.to_lowercase();
+19:     let mut ca = la.chars().peekable();
+20:     let mut cb = lb.chars().peekable();
+21: 
+22:     loop {
+23:         match (ca.peek().copied(), cb.peek().copied()) {
+24:             (None, None) => return Ordering::Equal,
+25:             (None, Some(_)) => return Ordering::Less,
+26:             (Some(_), None) => return Ordering::Greater,
+27:             (Some(x), Some(y)) if x.is_ascii_digit() && y.is_ascii_digit() => {
+28:                 let mut num_a = String::new();
+29:                 while let Some(&d) = ca.peek() {
+30:                     if d.is_ascii_digit() {
+31:                         num_a.push(d);
+32:                         ca.next();
+33:                     } else {
+34:                         break;
+35:                     }
+36:                 }
+37:                 let mut num_b = String::new();
+38:                 while let Some(&d) = cb.peek() {
+39:                     if d.is_ascii_digit() {
+40:                         num_b.push(d);
+41:                         cb.next();
+42:                     } else {
+43:                         break;
+44:                     }
+45:                 }
+46:                 let ta = num_a.trim_start_matches('0');
+47:                 let tb = num_b.trim_start_matches('0');
+48:                 let ord = ta.len().cmp(&tb.len()).then_with(|| ta.cmp(tb));
+49:                 if ord != Ordering::Equal {
+50:                     return ord;
+51:                 }
+52:             }
+53:             (Some(x), Some(y)) => {
+54:                 let ord = x.cmp(&y);
+55:                 if ord != Ordering::Equal {
+56:                     return ord;
+57:                 }
+58:                 ca.next();
+59:                 cb.next();
+60:             }
+61:         }
+62:     }
+63: }
+64: 
+65: fn compare_f64_desc(a: f64, b: f64) -> Ordering {
+66:     let va = if a.is_finite() && a != 0.0 { a } else { 0.0 };
+67:     let vb = if b.is_finite() && b != 0.0 { b } else { 0.0 };
+68:     vb.total_cmp(&va)
+69: }
+70: 
+71: pub fn sort_library_entries_internal(
+72:     mut entries: Vec<SortableSummary>,
+73:     shelf_sort: Option<&str>,
+74: ) -> Vec<String> {
+75:     let mode = shelf_sort.unwrap_or("recent");
+76: 
+77:     entries.sort_by(|a, b| {
+78:         let by_title = collate_numeric_ci(&a.title, &b.title);
+79:         let primary = match mode {
+80:             "title" => by_title,
+81:             "added" => compare_f64_desc(a.added_at, b.added_at),
+82:             "progress" => {
+83:                 let ratio_a = a.chapters_read as f64 / a.chapter_count.max(1) as f64;
+84:                 let ratio_b = b.chapters_read as f64 / b.chapter_count.max(1) as f64;
+85:                 compare_f64_desc(ratio_a, ratio_b)
+86:             }
+87:             _ => compare_f64_desc(a.updated_at, b.updated_at),
+88:         };
+89: 
+90:         primary
+91:             .then(by_title)
+92:             .then_with(|| collate_numeric_ci(&a.id, &b.id))
+93:     });
+94: 
+95:     entries.into_iter().map(|e| e.id).collect()
+96: }
+97: 
+98: #[tauri::command]
+99: pub fn sort_library_entries(
+100:     entries: Vec<SortableSummary>,
+101:     shelf_sort: Option<String>,
+102: ) -> Vec<String> {
+103:     sort_library_entries_internal(entries, shelf_sort.as_deref())
+104: }
+105: 
+106: #[cfg(test)]
+107: mod tests {
+108:     use super::*;
+109: 
+110:     fn sample_entries() -> Vec<SortableSummary> {
+111:         vec![
+112:             SortableSummary {
+113:                 id: "m-10".into(),
+114:                 title: "Manga 10".into(),
+115:                 added_at: 100.0,
+116:                 updated_at: 500.0,
+117:                 chapters_read: 5,
+118:                 chapter_count: 10,
+119:             },
+120:             SortableSummary {
+121:                 id: "m-2".into(),
+122:                 title: "manga 2".into(),
+123:                 added_at: 300.0,
+124:                 updated_at: 200.0,
+125:                 chapters_read: 9,
+126:                 chapter_count: 10,
+127:             },
+128:             SortableSummary {
+129:                 id: "m-1".into(),
+130:                 title: "Alpha".into(),
+131:                 added_at: 200.0,
+132:                 updated_at: 800.0,
+133:                 chapters_read: 0,
+134:                 chapter_count: 0,
+135:             },
+136:         ]
+137:     }
+138: 
+139:     #[test]
+140:     fn test_sort_by_recent_default() {
+141:         let ids = sort_library_entries_internal(sample_entries(), None);
+142:         assert_eq!(ids, vec!["m-1", "m-10", "m-2"]);
+143:     }
+144: 
+145:     #[test]
+146:     fn test_sort_by_title_numeric_case_insensitive() {
+147:         let ids = sort_library_entries_internal(sample_entries(), Some("title"));
+148:         assert_eq!(ids, vec!["m-1", "m-2", "m-10"]);
+149:     }
+150: 
+151:     #[test]
+152:     fn test_sort_by_added_desc() {
+153:         let ids = sort_library_entries_internal(sample_entries(), Some("added"));
+154:         assert_eq!(ids, vec!["m-2", "m-1", "m-10"]);
+155:     }
+156: 
+157:     #[test]
+158:     fn test_sort_by_progress_desc() {
+159:         let ids = sort_library_entries_internal(sample_entries(), Some("progress"));
+160:         assert_eq!(ids, vec!["m-2", "m-10", "m-1"]);
+161:     }
+162: 
+163:     #[test]
+164:     fn test_tie_breakers_title_then_id() {
+165:         let entries = vec![
+166:             SortableSummary {
+167:                 id: "id-10".into(),
+168:                 title: "Same".into(),
+169:                 added_at: 100.0,
+170:                 updated_at: 100.0,
+171:                 chapters_read: 1,
+172:                 chapter_count: 2,
+173:             },
+174:             SortableSummary {
+175:                 id: "id-2".into(),
+176:                 title: "Same".into(),
+177:                 added_at: 100.0,
+178:                 updated_at: 100.0,
+179:                 chapters_read: 1,
+180:                 chapter_count: 2,
+181:             },
+182:         ];
+183:         let ids = sort_library_entries_internal(entries, Some("recent"));
+184:         assert_eq!(ids, vec!["id-2", "id-10"]);
+185:     }
+186: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src-tauri\src\commands\window.rs ===
 1: use tauri::WebviewWindow;
 2: use tauri::window::{ProgressBarState, ProgressBarStatus};
@@ -27412,173 +27676,174 @@
 110:             commands::geometry::calculate_page_dimensions,
 111:             commands::geometry::compute_offsets,
 112:             commands::geometry::get_window_range,
-113:         ])
-114:         .on_window_event(|window, event| {
-115:             match event {
-116:                 tauri::WindowEvent::CloseRequested { api, .. } => {
-117:                     let app = window.app_handle();
-118:                     if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
-119:                         if config_state.get().window_preferences.close_to_tray {
-120:                             api.prevent_close();
-121:                             let _ = window.hide();
-122:                         }
-123:                     }
-124:                 }
-125:                 tauri::WindowEvent::Resized(_) => {
-126:                     let app = window.app_handle();
-127:                     if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
-128:                         if config_state.get().window_preferences.minimize_to_tray {
-129:                             if let Ok(true) = window.is_minimized() {
-130:                                 let _ = window.hide();
-131:                             }
-132:                         }
-133:                     }
-134:                 }
-135:                 tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
-136:                     let app = window.app_handle();
-137:                     if let Some(allowed) = app.try_state::<commands::fs::AllowedRoots>() {
-138:                         for path in paths {
-139:                             if path.parent().is_none() {
-140:                                 continue; // drive root
-141:                             }
-142:                             allowed.add_root(path.clone());
-143:                         }
-144:                         commands::fs::save_persisted_roots(app, &allowed);
-145:                     }
-146:                     let path_strings: Vec<String> =
-147:                         paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
-148:                     let _ = window.emit("native-drag-drop", path_strings);
-149:                 }
-150:                 _ => {}
-151:             }
-152:         })
-153:         .setup(|app| {
-154:             let handle = app.handle();
-155:             let initial_roots = commands::fs::init_allowed_roots(handle);
-156:             let config_state = commands::config::AppConfigState::new(handle);
-157:             app.manage(initial_roots);
-158:             app.manage(commands::fs::ScanManager::default());
-159:             app.manage(commands::fs::DiscoveryState::default());
-160:             app.manage(config_state);
-161:             app.manage(commands::diagnostics::DiagnosticsState::default());
-162: 
-163:             app.manage(commands::indexing::BackgroundQueueState::default());
-164: 
-165:             // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)
-166:             let db_path = handle
-167:                 .path()
-168:                 .app_data_dir()
-169:                 .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
-170:                 .join("library.db");
-171:             if let Some(parent) = db_path.parent() {
-172:                 let _ = std::fs::create_dir_all(parent);
-173:             }
-174:             let writer_conn = rusqlite::Connection::open(&db_path)
-175:                 .map_err(|e| format!("Failed to open SQLite database for writing at {:?}: {e}", db_path))?;
-176:             writer_conn
-177:                 .busy_timeout(std::time::Duration::from_millis(5000))
-178:                 .map_err(|e| format!("Failed to set writer busy timeout: {e}"))?;
-179:             db::init_db(&writer_conn)
-180:                 .map_err(|e| format!("Failed to initialize SQLite schema: {e}"))?;
-181: 
-182:             let reader_conn = rusqlite::Connection::open_with_flags(
-183:                 &db_path,
-184:                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-185:             )
-186:             .map_err(|e| format!("Failed to open SQLite database for reading at {:?}: {e}", db_path))?;
-187:             reader_conn
-188:                 .busy_timeout(std::time::Duration::from_millis(5000))
-189:                 .map_err(|e| format!("Failed to set reader busy timeout: {e}"))?;
-190:             reader_conn
-191:                 .execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;")
-192:                 .map_err(|e| format!("Failed to configure reader connection: {e}"))?;
-193: 
-194:             app.manage(db::DbState::new(reader_conn, writer_conn));
-195: 
-196:             // System tray menu & icon
-197:             let show_item = MenuItem::with_id(app, "show", "Show Manga Reader", true, None::<&str>)?;
-198:             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-199:             let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-200: 
-201:             let mut tray_builder = TrayIconBuilder::new().menu(&tray_menu).show_menu_on_left_click(false);
-202:             if let Some(icon) = app.default_window_icon() {
-203:                 tray_builder = tray_builder.icon(icon.clone());
-204:             }
-205: 
-206:             let _tray = tray_builder
-207:                 .on_menu_event(|app, event| match event.id.as_ref() {
-208:                     "show" => {
-209:                         if let Some(window) = app.get_webview_window("main") {
-210:                             let _ = window.unminimize();
-211:                             let _ = window.show();
-212:                             let _ = window.set_focus();
-213:                         }
-214:                     }
-215:                     "quit" => {
-216:                         app.exit(0);
-217:                     }
-218:                     _ => {}
-219:                 })
-220:                 .on_tray_icon_event(|tray, event| {
-221:                     if let TrayIconEvent::Click {
-222:                         button: MouseButton::Left,
-223:                         button_state: MouseButtonState::Up,
-224:                         ..
-225:                     } = event
-226:                     {
-227:                         let app = tray.app_handle();
-228:                         if let Some(window) = app.get_webview_window("main") {
-229:                             let _ = window.unminimize();
-230:                             let _ = window.show();
-231:                             let _ = window.set_focus();
-232:                         }
-233:                     }
-234:                 })
-235:                 .build(app)?;
-236: 
-237:             app.handle().plugin(
-238:                 tauri_plugin_log::Builder::default()
-239:                     .level(if cfg!(debug_assertions) {
-240:                         log::LevelFilter::Info
-241:                     } else {
-242:                         log::LevelFilter::Warn
-243:                     })
-244:                     .build(),
-245:             )?;
-246: 
-247:             let win_cfg = app
-248:                 .config()
-249:                 .app
-250:                 .windows
-251:                 .iter()
-252:                 .find(|w| w.label == "main")
-253:                 .ok_or_else(|| "main window config not found".to_string())?;
-254: 
-255:             let window = tauri::WebviewWindowBuilder::from_config(app, win_cfg)?
-256:                 .initialization_script(commands::window::INIT_SCRIPT)
-257:                 .build()?;
-258: 
-259:             // Reveal the window on frontend ready event (eliminates cold start white flash)
-260:             let w_clone = window.clone();
-261:             window.listen("app-ready", move |_| {
-262:                 let _ = w_clone.show();
-263:                 let _ = w_clone.set_focus();
-264:             });
-265: 
-266:             // Fallback: reveal window after 4s if frontend event is delayed or in headless mode
-267:             let w_fallback = window.clone();
-268:             tauri::async_runtime::spawn(async move {
-269:                 tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
-270:                 if let Ok(false) = w_fallback.is_visible() {
-271:                     let _ = w_fallback.show();
-272:                 }
-273:             });
-274: 
-275:             Ok(())
-276:         })
-277:         .run(tauri::generate_context!())
-278:         .expect("error while building tauri application");
-279: }
+113:             commands::sort::sort_library_entries,
+114:         ])
+115:         .on_window_event(|window, event| {
+116:             match event {
+117:                 tauri::WindowEvent::CloseRequested { api, .. } => {
+118:                     let app = window.app_handle();
+119:                     if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
+120:                         if config_state.get().window_preferences.close_to_tray {
+121:                             api.prevent_close();
+122:                             let _ = window.hide();
+123:                         }
+124:                     }
+125:                 }
+126:                 tauri::WindowEvent::Resized(_) => {
+127:                     let app = window.app_handle();
+128:                     if let Some(config_state) = app.try_state::<commands::config::AppConfigState>() {
+129:                         if config_state.get().window_preferences.minimize_to_tray {
+130:                             if let Ok(true) = window.is_minimized() {
+131:                                 let _ = window.hide();
+132:                             }
+133:                         }
+134:                     }
+135:                 }
+136:                 tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+137:                     let app = window.app_handle();
+138:                     if let Some(allowed) = app.try_state::<commands::fs::AllowedRoots>() {
+139:                         for path in paths {
+140:                             if path.parent().is_none() {
+141:                                 continue; // drive root
+142:                             }
+143:                             allowed.add_root(path.clone());
+144:                         }
+145:                         commands::fs::save_persisted_roots(app, &allowed);
+146:                     }
+147:                     let path_strings: Vec<String> =
+148:                         paths.iter().map(|p| p.to_string_lossy().to_string()).collect();
+149:                     let _ = window.emit("native-drag-drop", path_strings);
+150:                 }
+151:                 _ => {}
+152:             }
+153:         })
+154:         .setup(|app| {
+155:             let handle = app.handle();
+156:             let initial_roots = commands::fs::init_allowed_roots(handle);
+157:             let config_state = commands::config::AppConfigState::new(handle);
+158:             app.manage(initial_roots);
+159:             app.manage(commands::fs::ScanManager::default());
+160:             app.manage(commands::fs::DiscoveryState::default());
+161:             app.manage(config_state);
+162:             app.manage(commands::diagnostics::DiagnosticsState::default());
+163: 
+164:             app.manage(commands::indexing::BackgroundQueueState::default());
+165: 
+166:             // Initialize SQLite library database with dedicated reader and writer connections (WAL mode)
+167:             let db_path = handle
+168:                 .path()
+169:                 .app_data_dir()
+170:                 .map_err(|e| format!("Failed to resolve app data dir: {e}"))?
+171:                 .join("library.db");
+172:             if let Some(parent) = db_path.parent() {
+173:                 let _ = std::fs::create_dir_all(parent);
+174:             }
+175:             let writer_conn = rusqlite::Connection::open(&db_path)
+176:                 .map_err(|e| format!("Failed to open SQLite database for writing at {:?}: {e}", db_path))?;
+177:             writer_conn
+178:                 .busy_timeout(std::time::Duration::from_millis(5000))
+179:                 .map_err(|e| format!("Failed to set writer busy timeout: {e}"))?;
+180:             db::init_db(&writer_conn)
+181:                 .map_err(|e| format!("Failed to initialize SQLite schema: {e}"))?;
+182: 
+183:             let reader_conn = rusqlite::Connection::open_with_flags(
+184:                 &db_path,
+185:                 rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+186:             )
+187:             .map_err(|e| format!("Failed to open SQLite database for reading at {:?}: {e}", db_path))?;
+188:             reader_conn
+189:                 .busy_timeout(std::time::Duration::from_millis(5000))
+190:                 .map_err(|e| format!("Failed to set reader busy timeout: {e}"))?;
+191:             reader_conn
+192:                 .execute_batch("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON; PRAGMA query_only = ON;")
+193:                 .map_err(|e| format!("Failed to configure reader connection: {e}"))?;
+194: 
+195:             app.manage(db::DbState::new(reader_conn, writer_conn));
+196: 
+197:             // System tray menu & icon
+198:             let show_item = MenuItem::with_id(app, "show", "Show Manga Reader", true, None::<&str>)?;
+199:             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+200:             let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+201: 
+202:             let mut tray_builder = TrayIconBuilder::new().menu(&tray_menu).show_menu_on_left_click(false);
+203:             if let Some(icon) = app.default_window_icon() {
+204:                 tray_builder = tray_builder.icon(icon.clone());
+205:             }
+206: 
+207:             let _tray = tray_builder
+208:                 .on_menu_event(|app, event| match event.id.as_ref() {
+209:                     "show" => {
+210:                         if let Some(window) = app.get_webview_window("main") {
+211:                             let _ = window.unminimize();
+212:                             let _ = window.show();
+213:                             let _ = window.set_focus();
+214:                         }
+215:                     }
+216:                     "quit" => {
+217:                         app.exit(0);
+218:                     }
+219:                     _ => {}
+220:                 })
+221:                 .on_tray_icon_event(|tray, event| {
+222:                     if let TrayIconEvent::Click {
+223:                         button: MouseButton::Left,
+224:                         button_state: MouseButtonState::Up,
+225:                         ..
+226:                     } = event
+227:                     {
+228:                         let app = tray.app_handle();
+229:                         if let Some(window) = app.get_webview_window("main") {
+230:                             let _ = window.unminimize();
+231:                             let _ = window.show();
+232:                             let _ = window.set_focus();
+233:                         }
+234:                     }
+235:                 })
+236:                 .build(app)?;
+237: 
+238:             app.handle().plugin(
+239:                 tauri_plugin_log::Builder::default()
+240:                     .level(if cfg!(debug_assertions) {
+241:                         log::LevelFilter::Info
+242:                     } else {
+243:                         log::LevelFilter::Warn
+244:                     })
+245:                     .build(),
+246:             )?;
+247: 
+248:             let win_cfg = app
+249:                 .config()
+250:                 .app
+251:                 .windows
+252:                 .iter()
+253:                 .find(|w| w.label == "main")
+254:                 .ok_or_else(|| "main window config not found".to_string())?;
+255: 
+256:             let window = tauri::WebviewWindowBuilder::from_config(app, win_cfg)?
+257:                 .initialization_script(commands::window::INIT_SCRIPT)
+258:                 .build()?;
+259: 
+260:             // Reveal the window on frontend ready event (eliminates cold start white flash)
+261:             let w_clone = window.clone();
+262:             window.listen("app-ready", move |_| {
+263:                 let _ = w_clone.show();
+264:                 let _ = w_clone.set_focus();
+265:             });
+266: 
+267:             // Fallback: reveal window after 4s if frontend event is delayed or in headless mode
+268:             let w_fallback = window.clone();
+269:             tauri::async_runtime::spawn(async move {
+270:                 tokio::time::sleep(std::time::Duration::from_millis(4000)).await;
+271:                 if let Ok(false) = w_fallback.is_visible() {
+272:                     let _ = w_fallback.show();
+273:                 }
+274:             });
+275: 
+276:             Ok(())
+277:         })
+278:         .run(tauri::generate_context!())
+279:         .expect("error while building tauri application");
+280: }
 === FILE: C:\Users\VKPs\Documents\manga-reader\src-tauri\src\main.rs ===
 1: // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 2: #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
