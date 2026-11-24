@@ -1,8 +1,8 @@
-use rusqlite::{Connection, OptionalExtension};
-use std::sync::{Arc, Mutex};
 use super::error::{DbError, DbResult};
 use super::models::MangaRecord;
 use super::queries::{get_manga, save_manga};
+use rusqlite::{Connection, OptionalExtension};
+use std::sync::{Arc, Mutex};
 
 #[derive(Clone)]
 pub struct DbState {

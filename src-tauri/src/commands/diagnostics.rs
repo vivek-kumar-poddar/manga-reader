@@ -225,12 +225,16 @@ mod tests {
             retryable: Some(true),
             duration_ms: Some(45),
         };
-        let r1 = state.record_with_timestamp(valid_entry.clone(), 1000).unwrap();
+        let r1 = state
+            .record_with_timestamp(valid_entry.clone(), 1000)
+            .unwrap();
         assert_eq!(r1.id, "diag-1");
         assert_eq!(r1.safe_identifier.as_deref(), Some("Berserk/ch1.jpg"));
 
         // Duplicate within 2000ms returns the same record without adding a second entry
-        let r2 = state.record_with_timestamp(valid_entry.clone(), 2500).unwrap();
+        let r2 = state
+            .record_with_timestamp(valid_entry.clone(), 2500)
+            .unwrap();
         assert_eq!(r2.id, "diag-1");
         assert_eq!(state.get_all().len(), 1);
 

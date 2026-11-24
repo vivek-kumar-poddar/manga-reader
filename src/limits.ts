@@ -21,7 +21,7 @@ export const limits = Object.freeze({
   coverTimeoutMs: 10_000,
   ioTimeoutMs: 20_000,
   updateTimeoutMs: 10_000,
-  warmChapters: 5,
+  warmChapters: 20,
 });
 
 export class LimitError extends Error {

@@ -209,7 +209,13 @@ pub fn resize_image_fir(
     target_height: u32,
 ) -> Result<Vec<u8>, String> {
     let rgba = src_img.to_rgba8();
-    resize_rgba_fir(rgba.as_raw(), rgba.width(), rgba.height(), target_width, target_height)
+    resize_rgba_fir(
+        rgba.as_raw(),
+        rgba.width(),
+        rgba.height(),
+        target_width,
+        target_height,
+    )
 }
 
 /// Creates a neutral placeholder image in WebP format when requested.

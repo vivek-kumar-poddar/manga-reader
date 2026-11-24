@@ -1323,7 +1323,35 @@ interface BackgroundJob {
   id: string;
   revision?: number;
   updatedAt: number;
+  priorityChapter?: number;
   controller: AbortController;
+}
+
+export function computeChapterIndexOrder(chapterCount: number, priority?: number): number[] {
+  if (chapterCount <= 0) return [];
+  const order: number[] = [];
+  const visited = new Uint8Array(chapterCount);
+  if (priority !== undefined && priority >= 0 && priority < chapterCount) {
+    order.push(priority);
+    visited[priority] = 1;
+    for (let step = 1; step <= 10; step++) {
+      if (priority + step < chapterCount && !visited[priority + step]) {
+        order.push(priority + step);
+        visited[priority + step] = 1;
+      }
+      if (priority >= step && !visited[priority - step]) {
+        order.push(priority - step);
+        visited[priority - step] = 1;
+      }
+    }
+  }
+  for (let i = 0; i < chapterCount; i++) {
+    if (!visited[i]) {
+      order.push(i);
+      visited[i] = 1;
+    }
+  }
+  return order;
 }
 
 const backgroundJobs = new Map<string, BackgroundJob>();
@@ -1346,17 +1374,21 @@ onMangaDelete((id) => {
   else stopAllBackground();
 });
 
-export function scheduleBackground(manga: Manga) {
-  if (
-    backgroundJobs.has(manga.id) ||
-    !manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))
-  )
+export function scheduleBackground(manga: Manga, priorityChapter?: number) {
+  if (!manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))) return;
+  const existing = backgroundJobs.get(manga.id);
+  if (existing) {
+    if (priorityChapter !== undefined) {
+      existing.priorityChapter = priorityChapter;
+    }
     return;
+  }
   if (backgroundJobs.size >= limits.queuedJobs) return;
   backgroundJobs.set(manga.id, {
     id: manga.id,
     revision: manga.revision,
     updatedAt: manga.updatedAt,
+    priorityChapter,
     controller: new AbortController(),
   });
   void drainBackground();
@@ -1368,33 +1400,22 @@ async function runDrainPass() {
     const [id, job] = backgroundJobs.entries().next().value!;
     try {
       const initial = await getManga(id);
-      if (
-        !initial ||
-        initial.updatedAt !== job.updatedAt ||
-        (job.revision !== undefined && initial.revision !== job.revision)
-      ) {
+      if (!initial) {
         continue;
       }
-      for (let i = 0; i < initial.chapters.length; i++) {
+      const order = computeChapterIndexOrder(initial.chapters.length, job.priorityChapter);
+      for (const i of order) {
         alive(job.controller.signal);
-        if (!initial.chapters[i].pages.some((p) => p.dimensionsPending)) continue;
-        await new Promise<void>((r) => setTimeout(r, 100));
+        if (!initial.chapters[i]?.pages.some((p) => p.dimensionsPending)) continue;
+        await new Promise<void>((r) => setTimeout(r, 50));
         alive(job.controller.signal);
         if (!(await access(initial))) break;
         const stored = await getManga(id);
-        if (
-          !stored ||
-          stored.updatedAt !== job.updatedAt ||
-          (job.revision !== undefined && stored.revision !== job.revision)
-        ) {
-          break;
-        }
-        const issues = await prepareChapter(stored, i, { signal: job.controller.signal });
+        if (!stored) break;
+        if (!stored.chapters[i]?.pages.some((p) => p.dimensionsPending)) continue;
+        await prepareChapter(stored, i, { signal: job.controller.signal });
         job.updatedAt = stored.updatedAt;
         job.revision = stored.revision;
-        if (issues.length > 0 && stored.chapters[i]?.pages.some((p) => p.dimensionsPending)) {
-          break;
-        }
       }
     } catch {
       /* Interrupted jobs remain pending in saved metadata and can resume later. */

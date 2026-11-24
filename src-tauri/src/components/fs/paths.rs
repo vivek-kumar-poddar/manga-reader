@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
 use super::roots::AllowedRoots;
 use super::types::FsError;
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Manager};
 
 pub fn resolve_relative_path(base_dir: &Path, rel_path: &str) -> Result<PathBuf, FsError> {
     let trimmed = rel_path.trim().replace('\\', "/");

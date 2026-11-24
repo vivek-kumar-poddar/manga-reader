@@ -170,7 +170,10 @@ pub fn decode_dimensions_from_bytes(bytes: &[u8]) -> Result<Option<HeaderDimensi
 
 /// Generates a fitted WebP thumbnail (max 1024x1024) from raw image bytes.
 /// Returns `Ok(None)` if header dimensions exceed thumbnail pixel/side limits.
-pub fn thumbnail_from_bytes_internal(bytes: &[u8], quality: f32) -> Result<Option<Vec<u8>>, String> {
+pub fn thumbnail_from_bytes_internal(
+    bytes: &[u8],
+    quality: f32,
+) -> Result<Option<Vec<u8>>, String> {
     if bytes.is_empty() {
         return Err("Empty file.".into());
     }
@@ -323,9 +326,8 @@ pub async fn downscale_image_bytes(
     let quality = header_f32(&request, "x-quality", "quality").unwrap_or(0.8);
 
     let encoded = tauri::async_runtime::spawn_blocking(move || {
-        IMAGE_RESIZE_POOL.install(|| {
-            downscale_bytes_internal(&bytes, target_width, target_height, quality)
-        })
+        IMAGE_RESIZE_POOL
+            .install(|| downscale_bytes_internal(&bytes, target_width, target_height, quality))
     })
     .await
     .map_err(|e| format!("Downscale task join error: {e}"))??;

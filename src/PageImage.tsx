@@ -91,7 +91,7 @@ function PageImage({
             setRetry((r) => r + 1);
             return;
           }
-        } catch { }
+        } catch {}
       }
       try {
         const file = await fileFor(m, page);
@@ -113,13 +113,11 @@ function PageImage({
   }, [dimensionsPending, mangaLocalPath, pagePath, index, onDimensionsResolved, m, page]);
 
   useEffect(() => {
-    if (dimensionsPending) return;
     const taskKey = `${mangaId}:${mangaUpdatedAt}:${pagePath}:${lowQuality ? 'low' : 'full'}`;
     reprioritizeImage(taskKey, priority);
-  }, [mangaId, mangaUpdatedAt, pagePath, lowQuality, priority, dimensionsPending]);
+  }, [mangaId, mangaUpdatedAt, pagePath, lowQuality, priority]);
 
   useEffect(() => {
-    if (dimensionsPending) return;
     let live = true,
       wanted = false,
       cancelTask: CancelHandle | null = null,
@@ -137,33 +135,33 @@ function PageImage({
       const cleanLocal = mangaLocalPath.replace(/[\\/]+$/, '');
       const nativeSrc = desktopAPI.getPageImageUrl
         ? desktopAPI.getPageImageUrl({
-          mangaId,
-          pagePath,
-          version: mangaUpdatedAt,
-          transform,
-          localPath: cleanLocal,
-        })
+            mangaId,
+            pagePath,
+            version: mangaUpdatedAt,
+            transform,
+            localPath: cleanLocal,
+          })
         : desktopAPI.convertFileSrc!(
-          cleanLocal +
-          sep +
-          pagePath
-            .replace(/^[/\\]+/, '')
-            .split('/')
-            .join(sep),
-          'mangaimg',
-        );
+            cleanLocal +
+              sep +
+              pagePath
+                .replace(/^[/\\]+/, '')
+                .split('/')
+                .join(sep),
+            'mangaimg',
+          );
 
       const stop = host.current
         ? observe(host.current, (visible) => {
-          if (!live) return;
-          if (visible) {
-            setUrl(nativeSrc);
-            setError('');
-          } else {
-            setUrl('');
-          }
-        })
-        : () => { };
+            if (!live) return;
+            if (visible) {
+              setUrl(nativeSrc);
+              setError('');
+            } else {
+              setUrl('');
+            }
+          })
+        : () => {};
 
       return () => {
         live = false;
@@ -242,7 +240,7 @@ function PageImage({
                   }
                   return;
                 }
-              } catch { }
+              } catch {}
             }
 
             let blob: Blob = await fileFor(m, page);
@@ -252,7 +250,7 @@ function PageImage({
               const targetHeight = Math.max(1, Math.round((pageHeight * 1000) / pageWidth));
               try {
                 blob = await downscaleImage(blob, 1000, targetHeight, signal);
-              } catch { }
+              } catch {}
             }
 
             if (live && wanted && !signal.aborted) {
@@ -301,11 +299,11 @@ function PageImage({
 
     const stop = host.current
       ? observe(host.current, (v) => {
-        wanted = v;
-        if (v) load();
-        else release();
-      })
-      : () => { };
+          wanted = v;
+          if (v) load();
+          else release();
+        })
+      : () => {};
 
     return () => {
       live = false;
@@ -335,17 +333,13 @@ function PageImage({
       className="reader-page"
       style={
         {
-          aspectRatio: `${page.width}/${page.height}`,
-          '--native-width': page.width + 'px',
-          '--page-ratio': page.width / page.height,
+          aspectRatio: page.width && page.height ? `${page.width}/${page.height}` : '3/4',
+          '--native-width': (page.width || 800) + 'px',
+          '--page-ratio': page.width && page.height ? page.width / page.height : 0.75,
         } as CSSProperties
       }
     >
-      {page.dimensionsPending ? (
-        <button className="btn page-retry" onClick={retryPreparation}>
-          Page {index + 1}: Dimensions unavailable. Retry preparation.
-        </button>
-      ) : error ? (
+      {error ? (
         <button
           className="btn page-retry"
           onClick={() => {
@@ -362,6 +356,15 @@ function PageImage({
           alt={`Page ${index + 1}: ${page.name}`}
           draggable={false}
           decoding="async"
+          onLoad={(e) => {
+            if (page.dimensionsPending || !page.width || !page.height) {
+              const nw = e.currentTarget.naturalWidth;
+              const nh = e.currentTarget.naturalHeight;
+              if (nw > 0 && nh > 0) {
+                onDimensionsResolved?.(index, nw, nh);
+              }
+            }
+          }}
           onError={() => {
             if (!useBlobFallback && desktopAPI.isDesktop && mangaLocalPath) {
               setUseBlobFallback(true);

@@ -9,7 +9,7 @@ use crate::commands::fs::{ALLOWED_IMAGE_EXTENSIONS, AllowedRoots, MAX_FILE_READ_
 
 use super::cache::{is_explicit_cache_artifact, safe_name, try_find_and_generate_cover};
 use super::types::{
-    apply_cors, error_response, get_mime_type, matches_if_none_match, MAX_RANGE_CHUNK_BYTES,
+    MAX_RANGE_CHUNK_BYTES, apply_cors, error_response, get_mime_type, matches_if_none_match,
 };
 use super::urls::{
     decode_request_path, parse_cover_resource_uri, parse_fit_dimensions, parse_page_resource_uri,

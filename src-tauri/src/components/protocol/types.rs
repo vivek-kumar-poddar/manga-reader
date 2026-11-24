@@ -88,7 +88,11 @@ pub fn get_mime_type(ext: &str) -> &'static str {
     }
 }
 
-pub fn error_response(status: StatusCode, message: &str, req: &Request<Vec<u8>>) -> Response<Vec<u8>> {
+pub fn error_response(
+    status: StatusCode,
+    message: &str,
+    req: &Request<Vec<u8>>,
+) -> Response<Vec<u8>> {
     let mut builder = Response::builder()
         .status(status)
         .header("Content-Type", "text/plain; charset=utf-8");

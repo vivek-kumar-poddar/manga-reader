@@ -1,19 +1,16 @@
+use super::types::HEADER_READ_LIMIT;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use super::types::HEADER_READ_LIMIT;
 
 pub struct ScanHandle {
     pub receiver: tokio::sync::watch::Receiver<bool>,
     pub flag: Arc<AtomicBool>,
 }
 
-pub type ActiveScanEntry = (
-    tokio::sync::watch::Sender<bool>,
-    Arc<AtomicBool>,
-);
+pub type ActiveScanEntry = (tokio::sync::watch::Sender<bool>, Arc<AtomicBool>);
 pub type ActiveScanMap = std::collections::HashMap<String, ActiveScanEntry>;
 
 #[derive(Default)]

@@ -23,13 +23,13 @@ export function stopAllBackground(): void {
   webStopAllBackground();
 }
 
-export function scheduleBackground(manga: Manga): void {
+export function scheduleBackground(manga: Manga, priorityChapter?: number): void {
   if (desktopAPI.isDesktop && desktopAPI.scheduleBackground) {
     if (!manga.chapters.some((c) => c.pages.some((p) => p.dimensionsPending))) return;
-    void desktopAPI.scheduleBackground(manga.id);
+    void desktopAPI.scheduleBackground(manga.id, priorityChapter);
     return;
   }
-  webScheduleBackground(manga);
+  webScheduleBackground(manga, priorityChapter);
 }
 
 export async function resumeBackground(): Promise<void> {

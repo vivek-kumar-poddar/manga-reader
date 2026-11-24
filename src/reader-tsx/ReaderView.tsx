@@ -78,53 +78,59 @@ export function ReaderView({ manga }: { manga: Manga }) {
   }
   const pageStore = pageStoreRef.current;
 
-  const [prepared, setPrepared] = useState(
-    chapter.pages.some((p) => p.dimensionsPending) ? -1 : ci,
-  );
+  const [prepared, setPrepared] = useState(ci);
   const [preparation, setPreparation] = useState({ done: 0, total: 0 });
   const [preparationAttempt, setPreparationAttempt] = useState(0);
   const retryPreparation = () => setPreparationAttempt((attempt) => attempt + 1);
 
   useEffect(() => {
-    stopBackground(manga.id);
     if (!allowed) return;
-    if (!manga.chapters[ci].pages.some((p) => p.dimensionsPending)) {
-      setPrepared(ci);
-      return;
+
+    // Check window: previous 10 and next 10 chapters around ci
+    const start = Math.max(0, ci - 10);
+    const end = Math.min(manga.chapters.length - 1, ci + 10);
+    let hasUnindexedInWindow = false;
+    for (let i = start; i <= end; i++) {
+      const ch = manga.chapters[i];
+      if (ch && ch.pages.some((p) => p.dimensionsPending || p.width === 0 || p.height === 0)) {
+        hasUnindexedInWindow = true;
+        break;
+      }
     }
-    const controller = new AbortController();
-    setFailure('');
-    setPrepared(-1);
-    setReady(false);
-    setPreparation({
-      done: 0,
-      total: manga.chapters[ci].pages.filter((p) => p.dimensionsPending).length,
-    });
-    void prepareChapter(manga, ci, {
-      signal: controller.signal,
-      update: (state) => setPreparation({ done: state.done, total: state.total }),
-    })
-      .then((issues) => {
-        if (!controller.signal.aborted) {
-          if (issues.length)
-            setFailure(
-              `${issues.length} page(s) could not be prepared. ` +
-                issues
-                  .slice(0, 3)
-                  .map((issue) => `${issue.path}: ${issue.reason}`)
-                  .join(' ') +
-                (issues.length > 3 ? ' More affected pages are marked below.' : ''),
-            );
-          setPrepared(ci);
-        }
+
+    // If index is not available for all previous and next 10 chapters,
+    // start indexing it at that point with 1+1 chapter indexing without notifying the user
+    if (hasUnindexedInWindow) {
+      scheduleBackground(manga, ci);
+    }
+
+    // Seamlessly prepare current chapter ci if it has pending dimensions, without blocking gate or notification
+    const currentChapter = manga.chapters[ci];
+    if (
+      currentChapter &&
+      currentChapter.pages.some((p) => p.dimensionsPending || p.width === 0 || p.height === 0)
+    ) {
+      const controller = new AbortController();
+      void prepareChapter(manga, ci, {
+        signal: controller.signal,
+        update: (state) => setPreparation({ done: state.done, total: state.total }),
       })
-      .catch((e) => {
-        if (!controller.signal.aborted) {
-          setFailure(errorMessage(e));
-          setPrepared(ci);
-        }
-      });
-    return () => controller.abort();
+        .then(() => {
+          if (!controller.signal.aborted) {
+            setPrepared(ci);
+            setDimRevision((v) => v + 1);
+            actions.current.measure(false);
+          }
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setPrepared(ci);
+          }
+        });
+      return () => controller.abort();
+    } else {
+      setPrepared(ci);
+    }
   }, [manga, ci, allowed, preparationAttempt]);
 
   const edgeProgress = useRef<HTMLSpanElement>(null);
@@ -802,11 +808,6 @@ export function ReaderView({ manga }: { manga: Manga }) {
             .catch((e) => notify(errorMessage(e)))
         }
       />
-    );
-
-  if (prepared !== ci)
-    return (
-      <PreparingGate chapterName={chapter.name} done={preparation.done} total={preparation.total} />
     );
 
   const currentPage = s.mode === 'single' ? singlePage : pageStore.getPage();

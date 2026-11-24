@@ -2,8 +2,8 @@ use std::collections::HashSet;
 
 use super::path::{assert_image_dimensions, validate_relative_path};
 use super::types::{
-    now_ms, LIMIT_BOOKMARKS_PER_CHAPTER, LIMIT_CHAPTERS_PER_TITLE, LIMIT_PAGES_PER_TITLE,
-    ValidatedChapter, ValidatedManga, ValidatedPage, ValidatedPosition, ValidatedSummary,
+    LIMIT_BOOKMARKS_PER_CHAPTER, LIMIT_CHAPTERS_PER_TITLE, LIMIT_PAGES_PER_TITLE, ValidatedChapter,
+    ValidatedManga, ValidatedPage, ValidatedPosition, ValidatedSummary, now_ms,
 };
 
 pub fn matching_position_internal(

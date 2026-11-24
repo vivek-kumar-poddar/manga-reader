@@ -1,6 +1,6 @@
-use rusqlite::{Connection, Transaction, params};
 use super::error::{DbError, DbResult};
-use super::models::{derive_chapter_id, LegacyBackupPayload, MangaRecord};
+use super::models::{LegacyBackupPayload, MangaRecord, derive_chapter_id};
+use rusqlite::{Connection, Transaction, params};
 
 pub fn init_db(conn: &Connection) -> DbResult<()> {
     conn.execute_batch(
@@ -434,7 +434,10 @@ pub fn insert_or_replace_manga(tx: &Transaction<'_>, m: &MangaRecord) -> DbResul
 
     // 4. Diff and upsert bookmarks keyed by stable chapter_id
     {
-        let existing_bookmarks: std::collections::HashMap<String, Vec<super::models::PositionRecord>> = {
+        let existing_bookmarks: std::collections::HashMap<
+            String,
+            Vec<super::models::PositionRecord>,
+        > = {
             let mut bm_stmt = tx.prepare(
                 "SELECT chapter_id, page, path, fraction, manga_bookmark, timestamp FROM bookmarks WHERE manga_id = ?1 ORDER BY id ASC",
             )?;

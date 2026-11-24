@@ -1,8 +1,8 @@
+use super::atomic::write_atomic;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 use tauri::{AppHandle, Manager};
-use super::atomic::write_atomic;
 
 #[derive(Default)]
 pub struct AllowedRoots {

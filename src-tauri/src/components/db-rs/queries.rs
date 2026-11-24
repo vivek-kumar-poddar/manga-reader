@@ -1,10 +1,10 @@
-use rusqlite::{Connection, OptionalExtension, params};
 use super::error::DbResult;
 use super::models::{
     BookmarkCardDto, BookmarkCardsQuery, BookmarkCardsResult, BookmarkedIdsResponse, ChapterRecord,
     MangaRecord, PageRecord, PositionRecord, SummaryRecord,
 };
 use super::schema::insert_or_replace_manga;
+use rusqlite::{Connection, OptionalExtension, params};
 
 pub fn list_library(conn: &Connection) -> DbResult<Vec<SummaryRecord>> {
     let mut stmt = conn.prepare(

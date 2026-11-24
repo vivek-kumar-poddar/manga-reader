@@ -351,17 +351,33 @@ Verification battery:
 - **Blob-Last Pattern (`src/PageImage.tsx`)**:
   - Requests native image variant URL first on desktop; only falls back to reading original image bytes via `fileFor` if the native variant request fails.
 
+### Background Indexing Completion and Seamless 1+1 Priority Window Indexing (Step 44)
+
+- **20-Chapter Initial Warming**:
+  - `src/limits.ts`: `warmChapters` upgraded from 5 to 20.
+  - `src-tauri/src/commands/indexing.rs`: Default `opts.warm_chapters.unwrap_or(20)`. Initial import parses dimensions for the first 20 chapters directly.
+- **Resilient Full-Manga Background Completion**:
+  - `src-tauri/src/commands/indexing.rs` & `src/web/importScan.ts`: Removed premature `break` on `stored.updated_at` / `stored.revision` changes and on individual page decode errors.
+  - `BackgroundQueueState`: Tracks `active_manga` with dynamic `ActiveJobPriority`.
+  - Background worker continues indexing chapter by chapter to 100% completion even if the user reads the current manga or another manga, saves progress, or adds bookmarks.
+- **Priority 1+1 Window Indexing**:
+  - `compute_chapter_index_order`: Computes an alternating sequence around a priority chapter `ci` (`ci`, `ci + 1`, `ci - 1`, ..., `ci + 10`, `ci - 10`), followed by all remaining unvisited chapters of the manga.
+  - When the user opens/clicks chapter `ci`, `ReaderView.tsx` checks whether any chapter in `[ci - 10, ci + 10]` has pending dimensions. If so, `scheduleBackground(manga, ci)` prioritizes that window immediately with 1+1 alternating order.
+- **Seamless Unblocked Reading Experience**:
+  - Removed `stopBackground(manga.id)` from chapter lifecycle.
+  - `ReaderView.tsx`: Initialized `prepared` state to `ci`; removed the blocking `<PreparingGate>` modal screen and failure notification banners.
+  - `src/PageImage.tsx`: Removed the blocking `dimensionsPending` error button ("Dimensions unavailable. Retry preparation"). Images load immediately with fallback aspect ratio (`0.75`), and page dimensions resolve smoothly on image load or via background task without interrupting the user.
+
 ---
 
 ## 3. Command Reference & Acceptance Benchmarks
 
-| Command                                                                     | Target             | Purpose / Invariant                                                                            |
-| --------------------------------------------------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
-| `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`                 | Backend            | Enforces standard Rust formatting.                                                             |
-| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 65 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.      |
-| `cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings` | Backend            | Zero Clippy warnings across whole crate.                                                       |
-| `npm run test:validation`                                                   | Frontend / Unit    | Runs 121 Playwright unit & acceptance tests across storage, validation, lifecycle, and images. |
-| `npm run typecheck`                                                         | Frontend           | Runs `tsc -b && tsc -p tsconfig.desktop.json --noEmit` with zero errors across platforms.      |
-| `npm run build`                                                             | Web Production     | Builds production client with PWA service worker.                                              |
-| `npm run build:desktop`                                                     | Desktop Production | Compiles desktop bundle with tree-shaken desktop modules (`dist/assets/index-*.js` ~98 kB).    |
-| `npm run format:check`                                                      | Repository         | Enforces Prettier code formatting rules.                                                       |
+| Command                                                                     | Target             | Purpose / Invariant                                                                         |
+| --------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------- |
+| `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`                 | Backend            | Enforces standard Rust formatting.                                                          |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 87 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.   |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings` | Backend            | Zero Clippy warnings across whole crate.                                                    |
+| `npm run typecheck`                                                         | Frontend           | Runs `tsc -b && tsc -p tsconfig.desktop.json --noEmit` with zero errors across platforms.   |
+| `npm run build`                                                             | Web Production     | Builds production client with PWA service worker.                                           |
+| `npm run build:desktop`                                                     | Desktop Production | Compiles desktop bundle with tree-shaken desktop modules (`dist/assets/index-*.js` ~98 kB). |
+| `npm run format:check`                                                      | Repository         | Enforces Prettier code formatting rules.                                                    |

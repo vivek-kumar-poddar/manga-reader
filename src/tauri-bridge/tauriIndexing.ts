@@ -156,9 +156,12 @@ export async function previewChapters(
   return await invokeCommand('preview_chapters', { paths });
 }
 
-export async function scheduleBackground(mangaId: string): Promise<boolean> {
+export async function scheduleBackground(
+  mangaId: string,
+  priorityChapter?: number,
+): Promise<boolean> {
   try {
-    return await invokeCommand('schedule_background', { mangaId });
+    return await invokeCommand('schedule_background', { mangaId, priorityChapter });
   } catch {
     return false;
   }

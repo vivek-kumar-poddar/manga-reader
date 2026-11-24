@@ -1,23 +1,24 @@
-use rayon::prelude::*;
-use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
-use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_dialog::DialogExt;
 use super::roots::{AllowedRoots, save_persisted_roots};
 use super::scanner::{ScanHandle, ScanManager, parse_image_dimensions};
 use super::sorting::natural_order;
 use super::types::{
     ALLOWED_IMAGE_EXTENSIONS, CandidateEntry, DiscoveredChapter, DiscoveredPage, DiscoveredTitle,
-    DiscoveryState, FolderEntry, FsError, IGNORED_FOLDER_NAMES, LibraryDiscovery,
-    MAX_DEPTH, MAX_FILE_READ_BYTES, MAX_SCAN_FILES, SCAN_BATCH_SIZE, ScanProgressPayload,
+    DiscoveryState, FolderEntry, FsError, IGNORED_FOLDER_NAMES, LibraryDiscovery, MAX_DEPTH,
+    MAX_FILE_READ_BYTES, MAX_SCAN_FILES, SCAN_BATCH_SIZE, ScanProgressPayload,
 };
+use rayon::prelude::*;
+use std::path::{Path, PathBuf};
+use std::time::UNIX_EPOCH;
+use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::DialogExt;
 
 #[tauri::command]
 pub async fn select_folder(app: AppHandle) -> Result<Option<String>, FsError> {
     let app_clone = app.clone();
-    let folder = tokio::task::spawn_blocking(move || app_clone.dialog().file().blocking_pick_folder())
-        .await
-        .map_err(|e| FsError::Io(format!("Dialog task join error: {e}")))?;
+    let folder =
+        tokio::task::spawn_blocking(move || app_clone.dialog().file().blocking_pick_folder())
+            .await
+            .map_err(|e| FsError::Io(format!("Dialog task join error: {e}")))?;
     if let Some(ref path) = folder {
         let pb = PathBuf::from(path.to_string());
         let allowed = app.state::<AllowedRoots>();

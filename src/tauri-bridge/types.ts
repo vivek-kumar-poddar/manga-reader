@@ -395,7 +395,7 @@ export interface TauriCommands {
     args: { paths: string[] };
     return: Array<{ name: string; pageCount: number }>;
   };
-  schedule_background: { args: { mangaId: string }; return: boolean };
+  schedule_background: { args: { mangaId: string; priorityChapter?: number }; return: boolean };
   stop_background: { args: { mangaId: string }; return: void };
   stop_all_background: { args: Record<string, never>; return: void };
   resume_background: { args: Record<string, never>; return: number };
@@ -438,7 +438,6 @@ export interface TauriCommands {
     };
     return: string[];
   };
-
 }
 
 export interface DesktopAPI {
@@ -553,7 +552,7 @@ export interface DesktopAPI {
   ): Promise<PrepareChapterDto>;
 
   previewChapters?(paths: string[]): Promise<Array<{ name: string; pageCount: number }>>;
-  scheduleBackground?(mangaId: string): Promise<boolean>;
+  scheduleBackground?(mangaId: string, priorityChapter?: number): Promise<boolean>;
   stopBackground?(mangaId: string): Promise<void>;
   stopAllBackground?(): Promise<void>;
   resumeBackground?(): Promise<number>;

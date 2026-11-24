@@ -1,14 +1,13 @@
 use super::backup::{export_backup_json, restore_backup_tx};
 use super::error::DbError;
 use super::models::{
-    BookmarkCardsQuery, ChapterRecord, LegacyBackupPayload, MangaRecord, PageRecord,
-    PositionRecord,
+    BookmarkCardsQuery, ChapterRecord, LegacyBackupPayload, MangaRecord, PageRecord, PositionRecord,
 };
 use super::queries::{
-    add_bookmark, get_bookmarked_ids, get_manga, get_settings, list_library,
-    query_bookmark_cards, remove_bookmark, save_manga, save_progress, save_settings,
+    add_bookmark, get_bookmarked_ids, get_manga, get_settings, list_library, query_bookmark_cards,
+    remove_bookmark, save_manga, save_progress, save_settings,
 };
-use super::schema::{init_db, import_legacy_library_tx, is_migrated, run_migrations, set_migrated};
+use super::schema::{import_legacy_library_tx, init_db, is_migrated, run_migrations, set_migrated};
 use super::state::DbState;
 use rusqlite::{Connection, OptionalExtension};
 

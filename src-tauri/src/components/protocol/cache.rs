@@ -81,7 +81,9 @@ pub fn try_find_and_generate_cover(
     ] {
         let candidate = base_dir.join(name);
         if candidate.is_file() {
-            return crate::commands::image::generate_sized_thumbnail_direct(app, &candidate, manga_id, size);
+            return crate::commands::image::generate_sized_thumbnail_direct(
+                app, &candidate, manga_id, size,
+            );
         }
     }
 
@@ -97,7 +99,9 @@ pub fn try_find_and_generate_cover(
         for path in files {
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 if ALLOWED_IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()) {
-                    return crate::commands::image::generate_sized_thumbnail_direct(app, &path, manga_id, size);
+                    return crate::commands::image::generate_sized_thumbnail_direct(
+                        app, &path, manga_id, size,
+                    );
                 }
             }
         }

@@ -145,17 +145,35 @@ pub struct ChapterPreviewDto {
 
 pub const MAX_QUEUED_JOBS: usize = 64;
 
+#[derive(Debug, Clone)]
+pub struct BackgroundJob {
+    pub manga_id: String,
+    pub priority_chapter: Option<usize>,
+}
+
+pub type ActiveJobPriority = Arc<Mutex<Option<usize>>>;
+pub type ActiveMangaEntry = (String, ActiveJobPriority);
+pub type PoppedBackgroundJob = (String, Arc<AtomicBool>, ActiveJobPriority);
+
 #[derive(Default)]
 pub struct BackgroundQueueState {
-    queue: Mutex<VecDeque<String>>,
+    queue: Mutex<VecDeque<BackgroundJob>>,
     cancelled: Mutex<HashMap<String, Arc<AtomicBool>>>,
     running: AtomicBool,
+    active_manga: Mutex<Option<ActiveMangaEntry>>,
 }
 
 impl BackgroundQueueState {
     pub fn stop(&self, id: &str) {
         if let Ok(mut q) = self.queue.lock() {
-            q.retain(|item| item != id);
+            q.retain(|item| item.manga_id != id);
+        }
+        if let Ok(mut active) = self.active_manga.lock() {
+            if let Some((ref cur_id, _)) = *active {
+                if cur_id == id {
+                    *active = None;
+                }
+            }
         }
         if let Ok(mut c) = self.cancelled.lock() {
             if let Some(flag) = c.remove(id) {
@@ -168,6 +186,9 @@ impl BackgroundQueueState {
         if let Ok(mut q) = self.queue.lock() {
             q.clear();
         }
+        if let Ok(mut active) = self.active_manga.lock() {
+            *active = None;
+        }
         if let Ok(mut c) = self.cancelled.lock() {
             for (_, flag) in c.drain() {
                 flag.store(true, Ordering::Relaxed);
@@ -175,7 +196,21 @@ impl BackgroundQueueState {
         }
     }
 
-    pub fn enqueue(&self, id: String) -> bool {
+    pub fn enqueue(&self, id: String, priority_chapter: Option<usize>) -> bool {
+        // If this manga is currently running, update its active priority chapter directly!
+        if let Ok(active) = self.active_manga.lock() {
+            if let Some((ref cur_id, ref prio_arc)) = *active {
+                if cur_id == &id {
+                    if let Some(prio) = priority_chapter {
+                        if let Ok(mut p) = prio_arc.lock() {
+                            *p = Some(prio);
+                        }
+                    }
+                    return true;
+                }
+            }
+        }
+
         let mut q = match self.queue.lock() {
             Ok(g) => g,
             Err(_) => return false,
@@ -184,23 +219,58 @@ impl BackgroundQueueState {
             Ok(g) => g,
             Err(_) => return false,
         };
-        if c.contains_key(&id) || q.contains(&id) || c.len() >= MAX_QUEUED_JOBS {
+
+        let already_in_q = q.iter().position(|j| j.manga_id == id);
+        if let Some(pos) = already_in_q {
+            if let Some(prio) = priority_chapter {
+                q.remove(pos);
+                q.push_front(BackgroundJob {
+                    manga_id: id,
+                    priority_chapter: Some(prio),
+                });
+            }
+            return true;
+        }
+
+        if c.len() >= MAX_QUEUED_JOBS {
             return false;
         }
-        c.insert(id.clone(), Arc::new(AtomicBool::new(false)));
-        q.push_back(id);
+
+        c.entry(id.clone())
+            .or_insert_with(|| Arc::new(AtomicBool::new(false)));
+
+        let job = BackgroundJob {
+            manga_id: id,
+            priority_chapter,
+        };
+        if priority_chapter.is_some() {
+            q.push_front(job);
+        } else {
+            q.push_back(job);
+        }
         true
     }
 
-    fn pop_next(&self) -> Option<(String, Arc<AtomicBool>)> {
+    fn pop_next(&self) -> Option<PoppedBackgroundJob> {
         let mut q = self.queue.lock().ok()?;
-        let id = q.pop_front()?;
+        let job = q.pop_front()?;
         let c = self.cancelled.lock().ok()?;
-        let flag = c.get(&id)?.clone();
-        Some((id, flag))
+        let flag = c.get(&job.manga_id)?.clone();
+        let prio_arc = Arc::new(Mutex::new(job.priority_chapter));
+        if let Ok(mut active) = self.active_manga.lock() {
+            *active = Some((job.manga_id.clone(), prio_arc.clone()));
+        }
+        Some((job.manga_id, flag, prio_arc))
     }
 
     fn finish_job(&self, id: &str, flag: &Arc<AtomicBool>) {
+        if let Ok(mut active) = self.active_manga.lock() {
+            if let Some((ref cur_id, _)) = *active {
+                if cur_id == id {
+                    *active = None;
+                }
+            }
+        }
         if let Ok(mut c) = self.cancelled.lock() {
             if let Some(existing) = c.get(id) {
                 if Arc::ptr_eq(existing, flag) {
@@ -254,6 +324,41 @@ pub fn preview_chapters(paths: Vec<String>) -> Vec<ChapterPreviewDto> {
     compute_chapter_previews(&paths)
 }
 
+/// Computes chapter processing order. If priority `ci` is given, it alternates +1/-1
+/// outward for 10 chapters around `ci`, and then completes the remaining chapters of the manga.
+pub fn compute_chapter_index_order(chapter_count: usize, priority: Option<usize>) -> Vec<usize> {
+    if chapter_count == 0 {
+        return Vec::new();
+    }
+    let mut order = Vec::with_capacity(chapter_count);
+    let mut visited = vec![false; chapter_count];
+
+    if let Some(ci) = priority.filter(|&c| c < chapter_count) {
+        order.push(ci);
+        visited[ci] = true;
+
+        for step in 1..=10 {
+            if ci + step < chapter_count && !visited[ci + step] {
+                order.push(ci + step);
+                visited[ci + step] = true;
+            }
+            if ci >= step && !visited[ci - step] {
+                order.push(ci - step);
+                visited[ci - step] = true;
+            }
+        }
+    }
+
+    for (i, is_visited) in visited.iter_mut().enumerate() {
+        if !*is_visited {
+            order.push(i);
+            *is_visited = true;
+        }
+    }
+
+    order
+}
+
 fn spawn_background_drain(app: AppHandle) {
     let bg_state = match app.try_state::<BackgroundQueueState>() {
         Some(s) => s,
@@ -276,12 +381,12 @@ fn spawn_background_drain(app: AppHandle) {
                 state.pop_next()
             };
 
-            let (manga_id, cancel_flag) = match next_job {
+            let (manga_id, cancel_flag, prio_arc) = match next_job {
                 Some(job) => job,
                 None => break,
             };
 
-            process_background_manga(&app_clone, &manga_id, &cancel_flag).await;
+            process_background_manga(&app_clone, &manga_id, &cancel_flag, prio_arc).await;
 
             {
                 let state = app_clone.state::<BackgroundQueueState>();
@@ -302,7 +407,12 @@ fn spawn_background_drain(app: AppHandle) {
     });
 }
 
-async fn process_background_manga(app: &AppHandle, manga_id: &str, cancel_flag: &Arc<AtomicBool>) {
+async fn process_background_manga(
+    app: &AppHandle,
+    manga_id: &str,
+    cancel_flag: &Arc<AtomicBool>,
+    active_prio: Arc<Mutex<Option<usize>>>,
+) {
     let db_state = match app.try_state::<crate::db::DbState>() {
         Some(s) => s,
         None => return,
@@ -317,85 +427,118 @@ async fn process_background_manga(app: &AppHandle, manga_id: &str, cancel_flag: 
         _ => return,
     };
 
-    let mut expected_updated_at = initial.updated_at;
-    let mut expected_revision = initial.revision;
     let chapter_count = initial.chapters.len();
+    if chapter_count == 0 {
+        return;
+    }
 
-    for i in 0..chapter_count {
+    let mut completed_chapters: HashSet<usize> = HashSet::with_capacity(chapter_count);
+
+    loop {
         if cancel_flag.load(Ordering::Relaxed) {
             break;
         }
 
-        let has_pending = initial
-            .chapters
-            .get(i)
-            .map(|c| {
-                c.pages.iter().any(|p| {
-                    p.dimensions_pending.unwrap_or(false) || p.width == 0 || p.height == 0
-                })
-            })
-            .unwrap_or(false);
+        let current_prio = active_prio.lock().ok().and_then(|p| *p);
+        let order = compute_chapter_index_order(chapter_count, current_prio);
 
-        if !has_pending {
-            continue;
-        }
+        let mut processed_any = false;
+        let mut prio_changed = false;
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        if cancel_flag.load(Ordering::Relaxed) {
-            break;
-        }
+        for ch_idx in order {
+            if cancel_flag.load(Ordering::Relaxed) {
+                break;
+            }
 
-        let id_check = manga_id.to_string();
-        let stored = match db_state
-            .read(move |conn| crate::db::get_manga(conn, &id_check))
-            .await
-        {
-            Ok(Some(m)) => m,
-            _ => break,
-        };
-
-        if (stored.updated_at - expected_updated_at).abs() > 0.001
-            || stored.revision != expected_revision
-        {
-            break;
-        }
-
-        let local_path_str = match stored.local_path.as_ref() {
-            Some(lp) if !lp.trim().is_empty() => lp.trim().to_string(),
-            _ => break,
-        };
-
-        let root_path = match dunce::canonicalize(Path::new(&local_path_str)) {
-            Ok(p) if p.is_dir() => p,
-            _ => break,
-        };
-
-        let allowed = app.state::<AllowedRoots>();
-        if !allowed.is_allowed(&root_path) {
-            break;
-        }
-
-        match prepare_chapter_core(app, manga_id, i, None, None, Some(cancel_flag.clone())).await {
-            Ok(dto) => {
-                expected_updated_at = dto.updated_at;
-                expected_revision = Some(dto.revision);
-                if !dto.issues.is_empty() && dto.pages.iter().any(|p| p.dimensions_pending) {
+            if let Ok(p) = active_prio.lock() {
+                if *p != current_prio {
+                    prio_changed = true;
                     break;
                 }
             }
-            Err(_) => break,
+
+            if completed_chapters.contains(&ch_idx) {
+                continue;
+            }
+
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            if cancel_flag.load(Ordering::Relaxed) {
+                break;
+            }
+
+            let id_check = manga_id.to_string();
+            let stored = match db_state
+                .read(move |conn| crate::db::get_manga(conn, &id_check))
+                .await
+            {
+                Ok(Some(m)) => m,
+                _ => return,
+            };
+
+            let has_pending = stored
+                .chapters
+                .get(ch_idx)
+                .map(|c| {
+                    c.pages.iter().any(|p| {
+                        p.dimensions_pending.unwrap_or(false) || p.width == 0 || p.height == 0
+                    })
+                })
+                .unwrap_or(false);
+
+            if !has_pending {
+                completed_chapters.insert(ch_idx);
+                continue;
+            }
+
+            let local_path_str = match stored.local_path.as_ref() {
+                Some(lp) if !lp.trim().is_empty() => lp.trim().to_string(),
+                _ => return,
+            };
+
+            let root_path = match dunce::canonicalize(Path::new(&local_path_str)) {
+                Ok(p) if p.is_dir() => p,
+                _ => return,
+            };
+
+            let allowed = app.state::<AllowedRoots>();
+            if !allowed.is_allowed(&root_path) {
+                return;
+            }
+
+            let _ =
+                prepare_chapter_core(app, manga_id, ch_idx, None, None, Some(cancel_flag.clone()))
+                    .await;
+
+            completed_chapters.insert(ch_idx);
+            processed_any = true;
+        }
+
+        if cancel_flag.load(Ordering::Relaxed) {
+            break;
+        }
+
+        if prio_changed {
+            continue;
+        }
+
+        if !processed_any || completed_chapters.len() >= chapter_count {
+            break;
         }
     }
 }
 
 #[tauri::command]
-pub async fn schedule_background(app: AppHandle, manga_id: String) -> Result<bool, String> {
+pub async fn schedule_background(
+    app: AppHandle,
+    manga_id: String,
+    priority_chapter: Option<usize>,
+) -> Result<bool, String> {
     let trimmed = manga_id.trim().to_string();
     if trimmed.is_empty() {
         return Ok(false);
     }
     let bg_state = app.state::<BackgroundQueueState>();
-    let enqueued = bg_state.enqueue(trimmed);
+    let enqueued = bg_state.enqueue(trimmed, priority_chapter);
     if enqueued {
         spawn_background_drain(app.clone());
     }
@@ -431,7 +574,10 @@ pub async fn resume_background(app: AppHandle) -> Result<usize, String> {
     let mut scheduled = 0;
     for summary in summaries {
         let id = summary.id.clone();
-        if let Ok(Some(m)) = db_state.read(move |conn| crate::db::get_manga(conn, &id)).await {
+        if let Ok(Some(m)) = db_state
+            .read(move |conn| crate::db::get_manga(conn, &id))
+            .await
+        {
             let has_pending = m.chapters.iter().any(|c| {
                 c.pages
                     .iter()
@@ -445,7 +591,7 @@ pub async fn resume_background(app: AppHandle) -> Result<usize, String> {
                     let allowed = app.state::<AllowedRoots>();
                     if canonical.is_dir() && allowed.is_allowed(&canonical) {
                         let bg_state = app.state::<BackgroundQueueState>();
-                        if bg_state.enqueue(m.id) {
+                        if bg_state.enqueue(m.id, None) {
                             scheduled += 1;
                         }
                     }
@@ -792,7 +938,7 @@ pub async fn index_title(
 
     let opts = options.unwrap_or_default();
     let sort_mode = opts.sort.unwrap_or_else(|| "natural".to_string());
-    let warm_count = opts.warm_chapters.unwrap_or(5);
+    let warm_count = opts.warm_chapters.unwrap_or(20);
 
     if let Some(ref tid) = opts.target_id {
         if let Some(bg) = app.try_state::<BackgroundQueueState>() {
@@ -851,10 +997,7 @@ pub async fn index_title(
             let target_id = opts.target_id.clone();
             let root_str = root_path.to_string_lossy().to_string();
             if let Ok(Some(prev_rec)) = tauri::async_runtime::spawn_blocking(move || {
-                db_clone.get_previous_manga_for_indexing_sync(
-                    target_id.as_deref(),
-                    Some(&root_str),
-                )
+                db_clone.get_previous_manga_for_indexing_sync(target_id.as_deref(), Some(&root_str))
             })
             .await
             {
@@ -1416,9 +1559,7 @@ pub async fn index_title(
         .unwrap_or(0)
         .min(final_chapters.len().saturating_sub(1));
 
-    let final_cover_path = cover_abs
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+    let final_cover_path = cover_abs.as_ref().map(|p| p.to_string_lossy().to_string());
 
     let chapter_count = final_chapters.len();
     let page_count = final_chapters.iter().map(|c| c.pages.len()).sum();
@@ -2020,5 +2161,57 @@ mod tests {
         assert_eq!(title_name, "Confirmed Manga Title");
         assert_eq!(generate_slug(&title_name), "confirmed-manga-title");
         assert_eq!(opts.job_id.as_deref(), Some("job-custom-123"));
+    }
+
+    #[test]
+    fn test_compute_chapter_index_order_no_priority() {
+        let order = compute_chapter_index_order(5, None);
+        assert_eq!(order, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_compute_chapter_index_order_with_priority_alternating() {
+        // For chapter 32 in a 50-chapter manga:
+        // Priority order starts at 32, then alternates +1/-1 up to 10 chapters outward:
+        // 32, 33, 31, 34, 30, 35, 29, 36, 28, 37, 27, 38, 26, 39, 25, 40, 24, 41, 23, 42, 22
+        // followed by all remaining unvisited chapters from 0..50
+        let order = compute_chapter_index_order(50, Some(32));
+        assert_eq!(order.len(), 50);
+        assert_eq!(order[0], 32);
+        assert_eq!(order[1], 33);
+        assert_eq!(order[2], 31);
+        assert_eq!(order[3], 34);
+        assert_eq!(order[4], 30);
+        assert_eq!(order[5], 35);
+        assert_eq!(order[6], 29);
+        assert_eq!(order[19], 42);
+        assert_eq!(order[20], 22);
+
+        // Verify every chapter from 0..50 is included exactly once
+        let mut set = HashSet::new();
+        for ch in &order {
+            assert!(set.insert(*ch));
+        }
+        assert_eq!(set.len(), 50);
+    }
+
+    #[test]
+    fn test_compute_chapter_index_order_boundary_conditions() {
+        // Priority near start (chapter 1 out of 6)
+        let order = compute_chapter_index_order(6, Some(1));
+        assert_eq!(order[0], 1);
+        assert_eq!(order[1], 2);
+        assert_eq!(order[2], 0);
+        assert_eq!(order[3], 3);
+        assert_eq!(order[4], 4);
+        assert_eq!(order[5], 5);
+
+        // Priority out of bounds falls back to 0..N
+        let order = compute_chapter_index_order(5, Some(999));
+        assert_eq!(order, vec![0, 1, 2, 3, 4]);
+
+        // Zero chapters
+        let order = compute_chapter_index_order(0, Some(0));
+        assert!(order.is_empty());
     }
 }

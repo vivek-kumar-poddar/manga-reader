@@ -1,8 +1,8 @@
-use rusqlite::Connection;
 use super::error::{DbError, DbResult};
 use super::models::MangaRecord;
 use super::queries::{get_manga, get_settings, list_library};
 use super::schema::insert_or_replace_manga;
+use rusqlite::Connection;
 
 pub fn export_backup_json(conn: &Connection) -> DbResult<String> {
     let summaries = list_library(conn)?;
