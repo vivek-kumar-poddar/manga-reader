@@ -142,7 +142,7 @@ export const ACCESS_CACHE_TTL_MS = 7500;
 export interface AccessCacheEntry {
   granted: boolean;
   timestamp: number;
-  expiresAt?: number;
+  expiresAt: number;
 }
 
 export const accessCache = new Map<string, AccessCacheEntry>();
@@ -239,40 +239,40 @@ function getWebDb(): Promise<IDBPDatabase<MangaDB>> {
     dbInstance =
       typeof indexedDB !== 'undefined'
         ? openDB<MangaDB>('manga-reader', 2, {
-          async upgrade(
-            d: IDBPDatabase<MangaDB>,
-            old: number,
-            _new: number | null,
-            tx: IDBPTransaction<MangaDB, StoreNames<MangaDB>[], 'versionchange'>,
-          ) {
-            if (old < 1) {
-              d.createObjectStore('manga', { keyPath: 'id' });
-              d.createObjectStore('settings');
-            }
-            if (old < 2) {
-              d.createObjectStore('summaries', { keyPath: 'id' });
-              d.createObjectStore('covers');
-              const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
-              p.createIndex('mangaId', 'mangaId');
-              try {
-                await migrateV1ToV2(tx, d);
-              } catch (err) {
-                console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
-                tx.abort();
-                throw err;
+            async upgrade(
+              d: IDBPDatabase<MangaDB>,
+              old: number,
+              _new: number | null,
+              tx: IDBPTransaction<MangaDB, StoreNames<MangaDB>[], 'versionchange'>,
+            ) {
+              if (old < 1) {
+                d.createObjectStore('manga', { keyPath: 'id' });
+                d.createObjectStore('settings');
               }
-            }
-          },
-          blocking() {
-            void dbInstance?.then((d: IDBPDatabase<MangaDB>) => d.close());
-          },
-          blocked() {
-            if (typeof window !== 'undefined') {
-              window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
-            }
-          },
-        })
-        : new Promise<IDBPDatabase<MangaDB>>(() => { });
+              if (old < 2) {
+                d.createObjectStore('summaries', { keyPath: 'id' });
+                d.createObjectStore('covers');
+                const p = d.createObjectStore('progress', { keyPath: ['mangaId', 'chapter'] });
+                p.createIndex('mangaId', 'mangaId');
+                try {
+                  await migrateV1ToV2(tx, d);
+                } catch (err) {
+                  console.error('[db upgrade] Migration v1->v2 failed, aborting upgrade:', err);
+                  tx.abort();
+                  throw err;
+                }
+              }
+            },
+            blocking() {
+              void dbInstance?.then((d: IDBPDatabase<MangaDB>) => d.close());
+            },
+            blocked() {
+              if (typeof window !== 'undefined') {
+                window.dispatchEvent(new CustomEvent('reader-storage-blocked'));
+              }
+            },
+          })
+        : new Promise<IDBPDatabase<MangaDB>>(() => {});
   }
   return dbInstance!;
 }
@@ -350,7 +350,7 @@ export async function getCoverIdb(id: string): Promise<Blob | undefined> {
         void blob
           .arrayBuffer()
           .then((ab) => desktopAPI.saveThumbnail?.(id, ab))
-          .catch(() => { });
+          .catch(() => {});
       }
       return blob;
     }
@@ -394,8 +394,8 @@ export async function getMangaIdb(id: string): Promise<Manga | undefined> {
         position: p?.position ? parsePosition(p.position, c.pages) : undefined,
         bookmarks: Array.isArray(p?.bookmarks)
           ? p.bookmarks
-            .map((bm: Position) => parsePosition(bm, c.pages))
-            .filter((bm: Position | undefined): bm is Position => Boolean(bm))
+              .map((bm: Position) => parsePosition(bm, c.pages))
+              .filter((bm: Position | undefined): bm is Position => Boolean(bm))
           : c.bookmarks || [],
       };
     }),
@@ -415,7 +415,7 @@ export async function saveMangaIdb(m: Manga): Promise<void> {
   const existing = (await tx.objectStore('summaries').get(m.id)) as Summary | undefined;
   if (!existing && (await tx.objectStore('summaries').count()) >= limits.titles) {
     tx.abort();
-    await tx.done.catch(() => { });
+    await tx.done.catch(() => {});
     throw new LimitError(
       `Library title limit is ${limits.titles}. Remove a title before importing.`,
     );
@@ -510,11 +510,11 @@ export async function saveProgressIdb(
     ...s,
     ...(updateLast
       ? {
-        lastChapter: index,
-        lastChapterName: chapter.name,
-        hasProgress: true,
-        updatedAt: Date.now(),
-      }
+          lastChapter: index,
+          lastChapterName: chapter.name,
+          hasProgress: true,
+          updatedAt: Date.now(),
+        }
       : {}),
     chaptersRead: s.chaptersRead + (!old?.read && isRead ? 1 : 0),
   });
@@ -527,11 +527,11 @@ export async function saveProgressIdb(
         ...cur,
         ...(updateLast
           ? {
-            lastChapter: index,
-            lastChapterName: chapter.name,
-            hasProgress: true,
-            updatedAt: Date.now(),
-          }
+              lastChapter: index,
+              lastChapterName: chapter.name,
+              hasProgress: true,
+              updatedAt: Date.now(),
+            }
           : {}),
         chaptersRead: cur.chaptersRead + (!old?.read && isRead ? 1 : 0),
       };
@@ -851,7 +851,7 @@ export async function restoreBackupIdb(backup: {
     } catch (err) {
       try {
         tx.abort();
-      } catch { }
+      } catch {}
       throw err;
     }
 
@@ -897,7 +897,7 @@ export async function resetProgressIdb(): Promise<void> {
   } catch (err) {
     try {
       tx.abort();
-    } catch { }
+    } catch {}
     throw err;
   }
 }
@@ -1219,22 +1219,54 @@ export async function access(
   }
 
   const queryOrRequest = async (): Promise<boolean> => {
-    let handle = m.handle;
-    if (!handle) {
-      if (sessionFiles.has(m.id)) return true;
-      const full = await getManga(m.id);
-      handle = full?.handle;
-    }
-    if (!handle) return sessionFiles.has(m.id);
     try {
-      const res = await withinTime(
-        request
-          ? handle.requestPermission({ mode: 'read' })
-          : handle.queryPermission({ mode: 'read' }),
-        limits.ioTimeoutMs,
-        'Checking folder access',
-      );
-      return res === 'granted';
+      let handle = m.handle;
+      if (!handle) {
+        if (sessionFiles.has(m.id)) return true;
+        const full = await getManga(m.id);
+        handle = full?.handle;
+        if (handle) {
+          (m as any).handle = handle;
+        }
+      }
+      if (!handle) return sessionFiles.has(m.id);
+
+      if (request) {
+        if (typeof handle.requestPermission === 'function') {
+          const res = await withinTime(
+            handle.requestPermission({ mode: 'read' }),
+            limits.ioTimeoutMs,
+            'Requesting folder access',
+          );
+          return res === 'granted';
+        }
+        return false;
+      }
+
+      if (typeof handle.queryPermission === 'function') {
+        const res = await withinTime(
+          handle.queryPermission({ mode: 'read' }),
+          1000,
+          'Checking folder access',
+        );
+        if (res === 'granted') {
+          return true;
+        }
+      }
+
+      // If queryPermission returned 'prompt' or is unsupported, probe whether the directory
+      // handle is actually readable right now (e.g. if origin or browser permission was already given).
+      try {
+        if (typeof handle.values === 'function') {
+          const iter = handle.values();
+          await withinTime(iter.next(), 1000, 'Probing folder access');
+          return true;
+        }
+      } catch {
+        // Handle is not readable without user prompt
+      }
+
+      return false;
     } catch {
       return false;
     }
@@ -1243,7 +1275,12 @@ export async function access(
   if (request) {
     accessInFlight.delete(m.id);
     const granted = await queryOrRequest();
-    accessCache.set(m.id, { granted, timestamp: Date.now() });
+    const finishNow = Date.now();
+    accessCache.set(m.id, {
+      granted,
+      timestamp: finishNow,
+      expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+    });
     return granted;
   }
 
@@ -1251,8 +1288,21 @@ export async function access(
   accessInFlight.set(m.id, task);
   try {
     const granted = await task;
-    accessCache.set(m.id, { granted, timestamp: Date.now() });
+    const finishNow = Date.now();
+    accessCache.set(m.id, {
+      granted,
+      timestamp: finishNow,
+      expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+    });
     return granted;
+  } catch {
+    const finishNow = Date.now();
+    accessCache.set(m.id, {
+      granted: false,
+      timestamp: finishNow,
+      expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+    });
+    return false;
   } finally {
     accessInFlight.delete(m.id);
   }

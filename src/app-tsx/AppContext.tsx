@@ -7,6 +7,7 @@ export interface Context {
   openSettings: () => void;
   notify: (s: string) => void;
   pick: (m?: Summary | Manga) => Promise<void>;
+  relink: (m: Summary | Manga) => Promise<boolean>;
   library: Summary[];
   refresh: () => Promise<void>;
 }

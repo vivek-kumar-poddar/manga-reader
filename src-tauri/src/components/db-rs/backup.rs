@@ -30,9 +30,10 @@ pub fn export_backup_json(conn: &Connection) -> DbResult<String> {
             "spread": false,
             "singleCover": true,
             "endAction": "next",
-            "fontSizeTitle": 15,
+            "fontSizeTitle": 28,
             "fontSizeUi": 15,
-            "fontSizeButton": 15,
+            "fontSizeButton": 14,
+            "fontSizeScale": 1.0,
             "confirmDelete": false
         })
     });

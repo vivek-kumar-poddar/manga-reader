@@ -19,6 +19,10 @@ import {
   scheduleBackground,
   prepareChapter,
   access,
+  accessCache,
+  sessionFiles,
+  fileFor,
+  syncChannel,
   saveManga,
   addBookmark,
   removeBookmark,
@@ -48,7 +52,7 @@ export function ReaderView({ manga }: { manga: Manga }) {
   const { chapterSegment, mangaId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { settings: s, setSettings, openSettings, notify, pick, refresh } = useApp();
+  const { settings: s, setSettings, openSettings, notify, pick, relink, refresh } = useApp();
   const ci = chapterIndex(
     chapterSegment,
     manga.chapters.length,
@@ -61,7 +65,12 @@ export function ReaderView({ manga }: { manga: Manga }) {
     if (location.pathname !== canonical || location.search) navigate(canonical, { replace: true });
   }, [manga.slug, ci, location.pathname, location.search, navigate]);
 
-  const [allowed, setAllowed] = useState<boolean | null>(null);
+  const [allowed, setAllowed] = useState<boolean | null>(() => {
+    if (sessionFiles.has(manga.id)) return true;
+    if (desktopAPI.isDesktop && manga.localPath) return true;
+    const cached = accessCache.get(manga.id);
+    return cached ? cached.granted : null;
+  });
   const [bars, setBars] = useState({ top: true, bottom: true });
   const [singlePage, setSinglePage] = useState(0);
   const [ready, setReady] = useState(false);
@@ -199,11 +208,35 @@ export function ReaderView({ manga }: { manga: Manga }) {
 
   useEffect(() => {
     let live = true;
-    void access(manga).then((v) => live && setAllowed(v));
+    const fallbackTimer = setTimeout(() => {
+      if (live) {
+        setAllowed((prev) => (prev === null ? false : prev));
+      }
+    }, 1500);
+
+    const verify = async () => {
+      try {
+        const ok = await access(manga);
+        if (live) setAllowed(ok);
+      } catch {
+        if (live) setAllowed(false);
+      } finally {
+        clearTimeout(fallbackTimer);
+      }
+    };
+    void verify();
+    const onSync = (e: MessageEvent) => {
+      if (!e.data?.id || e.data.id === manga.id) {
+        void verify();
+      }
+    };
+    syncChannel?.addEventListener('message', onSync);
     return () => {
       live = false;
+      clearTimeout(fallbackTimer);
+      syncChannel?.removeEventListener('message', onSync);
     };
-  }, [manga]);
+  }, [manga.id, manga.updatedAt]);
 
   const { dirty, lastSave, snapshotRevision, flush, capture } = useProgressSave({
     metadata,
@@ -802,11 +835,16 @@ export function ReaderView({ manga }: { manga: Manga }) {
     return (
       <RelinkGate
         manga={manga}
-        onRelink={() =>
-          void access(manga, true)
-            .then((ok) => (ok ? setAllowed(true) : pick(manga)))
-            .catch((e) => notify(errorMessage(e)))
-        }
+        onRelink={async () => {
+          try {
+            const ok = await relink(manga);
+            if (ok) {
+              setAllowed(true);
+            }
+          } catch (e) {
+            notify(errorMessage(e));
+          }
+        }}
       />
     );
 
@@ -882,7 +920,7 @@ export function ReaderView({ manga }: { manga: Manga }) {
       {failure && (
         <div className="reader-error" role="alert">
           {failure}{' '}
-          <button className="btn" onClick={() => void pick(manga)}>
+          <button className="btn" onClick={() => void relink(manga)}>
             Re-link
           </button>
           {chapter.pages.some((p) => p.dimensionsPending) && (

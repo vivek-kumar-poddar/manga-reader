@@ -50,7 +50,7 @@ export function Library({
   drop: (items: DataTransferItem[]) => void;
   cancel: () => void;
 }) {
-  const { library, pick, notify, refresh, openSettings, settings, setSettings } = useApp();
+  const { library, pick, relink, notify, refresh, openSettings, settings, setSettings } = useApp();
   const shelfSort = settings.shelfSort || 'recent';
   const [sortedIds, setSortedIds] = useState<string[]>([]);
 
@@ -364,12 +364,17 @@ export function Library({
             </div>
             <div className="manga-grid">
               {sortedLibrary.map((m) => {
-                const openManga = () =>
+                const openManga = async () => {
+                  if (needs.has(m.id)) {
+                    const ok = await relink(m);
+                    if (!ok) return;
+                  }
                   void getManga(m.id)
                     .then((latest) => {
                       if (latest) nav(mangaPath(latest));
                     })
                     .catch((error) => notify(errorMessage(error)));
+                };
 
                 return (
                   <article className="manga-card" key={m.id}>
@@ -449,7 +454,7 @@ export function Library({
                             onClick={async (e) => {
                               e.stopPropagation();
                               try {
-                                const allowed = await access(m, true);
+                                const allowed = await relink(m);
                                 if (allowed) {
                                   setNeeds((prev) => {
                                     const next = new Set(prev);
@@ -457,12 +462,10 @@ export function Library({
                                     return next;
                                   });
                                   await refresh();
-                                  return;
                                 }
-                              } catch {
-                                // Fall through to folder picker
+                              } catch (err) {
+                                notify(errorMessage(err));
                               }
-                              void pick(m);
                             }}
                             title="Grant access or re-link folder"
                           >
@@ -495,7 +498,7 @@ export function Library({
                         <CardMenu
                           title={m.title}
                           needsRelink={needs.has(m.id)}
-                          onRelink={() => void pick(m)}
+                          onRelink={() => void relink(m)}
                           onMarkRead={() =>
                             void mark(m.id, true).catch((e) => notify(errorMessage(e)))
                           }

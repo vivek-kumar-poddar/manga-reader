@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
-import { BookOpen, BookMarked, Home, Search, Settings } from 'lucide-react';
+import { BookOpen, BookMarked, Home, Search, Settings, FolderSync } from 'lucide-react';
 import { Cover, IconButton, ThemeButton, useApp } from './App';
 import Dropdown from './Dropdown';
-import { getManga, errorMessage, syncChannel, type Manga } from './data';
+import { getManga, errorMessage, syncChannel, access, type Manga } from './data';
 import { mangaPath } from './paths';
 
 type ChapterSort = 'first' | 'last' | 'unread';
@@ -11,7 +11,7 @@ type ChapterSort = 'first' | 'last' | 'unread';
 export default function MangaDetails() {
   const { slug } = useParams();
   const nav = useNavigate();
-  const { library, openSettings } = useApp();
+  const { library, openSettings, relink, notify } = useApp();
   const summary = library.find((entry) => entry.slug === slug);
   const [manga, setManga] = useState<Manga>();
   const [loading, setLoading] = useState(true);
@@ -19,6 +19,21 @@ export default function MangaDetails() {
   const [sort, setSort] = useState<ChapterSort>('first');
   const [chapterQuery, setChapterQuery] = useState('');
   const [retry, setRetry] = useState(0);
+  const [needsRelink, setNeedsRelink] = useState(false);
+
+  const checkFolderAccess = useCallback(
+    async (target?: Manga | typeof summary) => {
+      const item = target || manga || summary;
+      if (!item) return;
+      try {
+        const allowed = await access(item);
+        setNeedsRelink(!allowed);
+      } catch {
+        setNeedsRelink(true);
+      }
+    },
+    [manga, summary],
+  );
 
   useEffect(() => {
     if (slug === 'index.html') {
@@ -38,6 +53,7 @@ export default function MangaDetails() {
         if (live && request === revision) {
           setManga(result);
           setFailure('');
+          if (result) void checkFolderAccess(result);
         }
       } catch (error) {
         if (live && request === revision) setFailure(errorMessage(error));
@@ -46,14 +62,19 @@ export default function MangaDetails() {
       }
     };
     const visible = () => {
-      if (!document.hidden) void load();
+      if (!document.hidden) {
+        void load();
+        void checkFolderAccess();
+      }
     };
     const onSync = (e: MessageEvent) => {
       if (!e.data?.id || e.data.id === summary?.id) {
         void load();
+        void checkFolderAccess();
       }
     };
     void load();
+    void checkFolderAccess();
     window.addEventListener('focus', visible);
     document.addEventListener('visibilitychange', visible);
     syncChannel?.addEventListener('message', onSync);
@@ -63,7 +84,21 @@ export default function MangaDetails() {
       document.removeEventListener('visibilitychange', visible);
       syncChannel?.removeEventListener('message', onSync);
     };
-  }, [summary, retry]);
+  }, [summary, retry, checkFolderAccess]);
+
+  const handleRelink = async () => {
+    const target = manga || summary;
+    if (!target) return;
+    try {
+      const ok = await relink(target);
+      if (ok) {
+        setNeedsRelink(false);
+        notify('Folder access restored.');
+      }
+    } catch (e) {
+      notify(errorMessage(e));
+    }
+  };
 
   const chapters = useMemo(() => {
     const entries = manga?.chapters.map((chapter, index) => ({ chapter, index })) || [];
@@ -143,7 +178,36 @@ export default function MangaDetails() {
                     </dd>
                   </div>
                 </dl>
-                <Link className="btn blue continue-reading" to={mangaPath(manga)}>
+                {needsRelink && (
+                  <div className="relink-banner" role="alert">
+                    <FolderSync size={20} className="relink-banner-icon" />
+                    <div className="relink-banner-text">
+                      <strong>Folder access needed</strong>
+                      <p>Re-link folder to continue reading from your saved progress.</p>
+                    </div>
+                    <button type="button" className="btn primary relink-btn" onClick={handleRelink}>
+                      Re-link folder
+                    </button>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  className="btn blue continue-reading"
+                  onClick={async () => {
+                    if (needsRelink) {
+                      const target = manga || summary;
+                      if (target) {
+                        const ok = await relink(target);
+                        if (ok) {
+                          setNeedsRelink(false);
+                          nav(mangaPath(manga));
+                        }
+                      }
+                      return;
+                    }
+                    nav(mangaPath(manga));
+                  }}
+                >
                   {hasProgress ? (
                     <>
                       Continue from{' '}
@@ -153,7 +217,7 @@ export default function MangaDetails() {
                   ) : (
                     'Start reading'
                   )}
-                </Link>
+                </button>
               </div>
             </section>
             <section aria-label="Chapters">
@@ -194,6 +258,19 @@ export default function MangaDetails() {
                     className="chapter-card"
                     key={chapter.name}
                     to={mangaPath(manga, index)}
+                    onClick={async (e) => {
+                      if (needsRelink) {
+                        e.preventDefault();
+                        const target = manga || summary;
+                        if (target) {
+                          const ok = await relink(target);
+                          if (ok) {
+                            setNeedsRelink(false);
+                            nav(mangaPath(manga, index));
+                          }
+                        }
+                      }
+                    }}
                     aria-current={hasProgress && index === manga.lastChapter ? 'true' : undefined}
                   >
                     <strong>{chapter.name}</strong>

@@ -21,6 +21,12 @@ import {
   fromDesktopFolder,
   droppedSources,
   errorMessage,
+  access,
+  accessCache,
+  clearDirHandleCache,
+  sessionFiles,
+  broadcastSync,
+  ACCESS_CACHE_TTL_MS,
   type Manga,
   type Summary,
   type Settings,
@@ -103,7 +109,7 @@ export default function App() {
             }
           }),
         ]);
-        void resumeBackground().catch(() => { });
+        void resumeBackground().catch(() => {});
       } catch (e) {
         notify(errorMessage(e));
       } finally {
@@ -139,18 +145,16 @@ export default function App() {
         settings.theme === 'dark' || (settings.theme === 'system' && media.matches),
       );
       document.documentElement.classList.toggle('reduced', settings.reduced);
-      document.documentElement.style.setProperty(
-        '--font-size-ui',
-        `${settings.fontSizeUi ?? 15}px`,
-      );
-      document.documentElement.style.setProperty(
-        '--font-size-title',
-        `${settings.fontSizeTitle ?? 15}px`,
-      );
-      document.documentElement.style.setProperty(
-        '--font-size-button',
-        `${settings.fontSizeButton ?? 15}px`,
-      );
+      const scale =
+        typeof settings.fontSizeScale === 'number' && Number.isFinite(settings.fontSizeScale)
+          ? settings.fontSizeScale
+          : 1;
+      const uiSize = settings.fontSizeUi ?? Math.round(15 * scale);
+      const titleSize = settings.fontSizeTitle ?? Math.round(28 * scale);
+      const buttonSize = settings.fontSizeButton ?? Math.round(14 * scale);
+      document.documentElement.style.setProperty('--font-size-ui', `${uiSize}px`);
+      document.documentElement.style.setProperty('--font-size-title', `${titleSize}px`);
+      document.documentElement.style.setProperty('--font-size-button', `${buttonSize}px`);
     };
     update();
     media.addEventListener('change', update);
@@ -196,6 +200,60 @@ export default function App() {
       if (navigator.userActivation?.isActive) standard();
       else notify('Direct folder selection is unavailable. Click again to use standard selection.');
     }
+  }
+
+  async function relink(m: Summary | Manga): Promise<boolean> {
+    if (busy) return false;
+    if (desktopAPI.isDesktop) {
+      if (m.localPath) {
+        const ok = await access(m, true);
+        if (ok) {
+          accessCache.set(m.id, {
+            granted: true,
+            timestamp: Date.now(),
+            expiresAt: Date.now() + ACCESS_CACHE_TTL_MS,
+          });
+          await refresh();
+          return true;
+        }
+      }
+      await pick(m);
+      return true;
+    }
+
+    const now = Date.now();
+    if (sessionFiles.has(m.id)) {
+      accessCache.set(m.id, {
+        granted: true,
+        timestamp: now,
+        expiresAt: now + ACCESS_CACHE_TTL_MS,
+      });
+      return true;
+    }
+
+    const handle = (m as any).handle;
+    if (handle && typeof handle.requestPermission === 'function') {
+      try {
+        const res = await handle.requestPermission({ mode: 'read' });
+        if (res === 'granted') {
+          const finishNow = Date.now();
+          accessCache.set(m.id, {
+            granted: true,
+            timestamp: finishNow,
+            expiresAt: finishNow + ACCESS_CACHE_TTL_MS,
+          });
+          clearDirHandleCache(m.id);
+          await refresh();
+          broadcastSync({ type: 'library', id: m.id });
+          return true;
+        }
+      } catch {
+        // Dismissed or denied, fallback directly to folder picker in same user gesture
+      }
+    }
+
+    await pick(m);
+    return false;
   }
 
   const drop = (items: DataTransferItem[]) => {
@@ -252,7 +310,7 @@ export default function App() {
         },
         { signal: lifecycle.signal },
       ),
-    ).catch(() => { });
+    ).catch(() => {});
     return () => lifecycle.abort();
   }, []);
 
@@ -279,6 +337,7 @@ export default function App() {
         refresh,
         notify,
         pick,
+        relink,
         openSettings: () => setSettingsOpen(true),
       }}
     >

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, useLocation } from 'react-router-dom';
 import { chapterIndex } from './paths';
 import { useApp } from './app-tsx';
-import { getManga, errorMessage, type Manga } from './data';
+import { getManga, errorMessage, syncChannel, type Manga } from './data';
 import { IndexingGate, LoadingGate, NotFoundGate, NoPagesGate, ReaderView } from './reader-tsx';
 
 // Re-export modular components and utilities for seamless backwards compatibility
@@ -80,8 +80,17 @@ export default function Reader({
         notify(errorMessage(e));
         if (live) setManga(null);
       });
+    const onSync = (e: MessageEvent) => {
+      if (!e.data?.id || e.data.id === stableId) {
+        void getManga(stableId || '').then((m) => {
+          if (live && m) setManga(m);
+        });
+      }
+    };
+    syncChannel?.addEventListener('message', onSync);
     return () => {
       live = false;
+      syncChannel?.removeEventListener('message', onSync);
     };
   }, [stableId, indexing]);
 

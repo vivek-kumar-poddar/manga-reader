@@ -151,14 +151,14 @@ export function errorMessage(e: unknown): string {
 export interface AccessCacheEntry {
   expiresAt: number;
   granted: boolean;
-  timestamp?: number;
+  timestamp: number;
 }
 
 export interface MangaDB {
   [key: string]: unknown;
 }
 
-export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> { }
+export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> {}
 
 export const ACCESS_CACHE_TTL_MS = 7500;
 export const dirHandleCache = new Map<string, any>();
@@ -286,7 +286,7 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
     if (res.status === 'failed') throw res.error;
     return [];
   }
-  async saveManga() { }
+  async saveManga() {}
   async saveProgress() {
     return 'saved' as const;
   }
@@ -302,9 +302,9 @@ export class IndexedDBLibraryRepo implements LibraryRepo {
   async removeBookmark() {
     return [];
   }
-  async deleteManga() { }
-  async clearLibrary() { }
-  async resetProgress() { }
+  async deleteManga() {}
+  async clearLibrary() {}
+  async resetProgress() {}
   async getStoredSettings() {
     const res = await readLegacyIndexedDB();
     if (res.status === 'data') return res.settings;

@@ -9,12 +9,31 @@ interface AppearanceTabProps {
   notify: (msg: string) => void;
 }
 
+const SCALE_OPTIONS = [0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0];
+
 export default function AppearanceTab({
   settings: s,
   setSettings,
   change,
   notify,
 }: AppearanceTabProps) {
+  const currentScale =
+    typeof s.fontSizeScale === 'number' && Number.isFinite(s.fontSizeScale)
+      ? Math.round(s.fontSizeScale * 10) / 10
+      : typeof s.fontSizeUi === 'number' && Number.isFinite(s.fontSizeUi)
+        ? Math.round((s.fontSizeUi / 15) * 10) / 10
+        : 1.0;
+
+  const handleScaleChange = (scale: number) => {
+    setSettings({
+      ...s,
+      fontSizeScale: scale,
+      fontSizeUi: Math.round(15 * scale),
+      fontSizeButton: Math.round(14 * scale),
+      fontSizeTitle: Math.round(28 * scale),
+    });
+  };
+
   return (
     <>
       <section>
@@ -32,56 +51,28 @@ export default function AppearanceTab({
           </Dropdown>
         </label>
         <label>
-          Headings & titles font size
+          Text &amp; UI font scaling
           <Dropdown
-            aria-label="Headings and titles font size"
-            value={s.fontSizeTitle}
-            onChange={(e) => change('fontSizeTitle', Number(e.target.value))}
+            aria-label="Text and UI font scaling"
+            value={currentScale}
+            onChange={(e) => handleScaleChange(Number(e.target.value))}
           >
-            {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
-              <option key={size} value={size}>
-                {size}px{size === 15 ? ' (Default)' : ''}
+            {SCALE_OPTIONS.map((scale) => (
+              <option key={scale} value={scale}>
+                {Math.round(scale * 100)}% ({scale.toFixed(1)}x){scale === 1.0 ? ' (Default)' : ''}
               </option>
             ))}
-            {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeTitle) && (
-              <option value={s.fontSizeTitle}>{s.fontSizeTitle}px</option>
+            {!SCALE_OPTIONS.some((opt) => Math.abs(opt - currentScale) < 0.01) && (
+              <option value={currentScale}>
+                {Math.round(currentScale * 100)}% ({currentScale.toFixed(1)}x)
+              </option>
             )}
           </Dropdown>
         </label>
-        <label>
-          UI font size
-          <Dropdown
-            aria-label="UI font size"
-            value={s.fontSizeUi}
-            onChange={(e) => change('fontSizeUi', Number(e.target.value))}
-          >
-            {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
-              <option key={size} value={size}>
-                {size}px{size === 15 ? ' (Default)' : ''}
-              </option>
-            ))}
-            {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeUi) && (
-              <option value={s.fontSizeUi}>{s.fontSizeUi}px</option>
-            )}
-          </Dropdown>
-        </label>
-        <label>
-          Button font size
-          <Dropdown
-            aria-label="Button font size"
-            value={s.fontSizeButton}
-            onChange={(e) => change('fontSizeButton', Number(e.target.value))}
-          >
-            {[12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].map((size) => (
-              <option key={size} value={size}>
-                {size}px{size === 15 ? ' (Default)' : ''}
-              </option>
-            ))}
-            {![12, 13, 14, 15, 16, 17, 18, 19, 20, 22, 24].includes(s.fontSizeButton) && (
-              <option value={s.fontSizeButton}>{s.fontSizeButton}px</option>
-            )}
-          </Dropdown>
-        </label>
+        <p className="subtle">
+          Scales all interface text together up to 2x in 10% steps. At 100%: 15px UI text, 14px
+          buttons, 28px headings and titles.
+        </p>
         <label>
           Auto-hide reader bars
           <input
@@ -91,8 +82,8 @@ export default function AppearanceTab({
           />
         </label>
         <p className="subtle">
-          Turn off to keep reader controls visible. When enabled, move or tap near the top
-          or bottom edge to reveal them.
+          Turn off to keep reader controls visible. When enabled, move or tap near the top or bottom
+          edge to reveal them.
         </p>
         <label>
           Reduce interface motion
@@ -103,8 +94,8 @@ export default function AppearanceTab({
           />
         </label>
         <p className="subtle">
-          Your system’s reduced-motion preference is also respected. Auto-scroll remains
-          available when you explicitly start it.
+          Your system’s reduced-motion preference is also respected. Auto-scroll remains available
+          when you explicitly start it.
         </p>
       </section>
       <section>
@@ -118,9 +109,9 @@ export default function AppearanceTab({
           />
         </label>
         <p className="subtle">
-          When supported, large pages are displayed at up to 1,000 pixels wide on narrow
-          screens. Original files are never changed. Nearby pages load as you read;
-          distant images are released from memory.
+          When supported, large pages are displayed at up to 1,000 pixels wide on narrow screens.
+          Original files are never changed. Nearby pages load as you read; distant images are
+          released from memory.
         </p>
       </section>
       <section>
@@ -129,9 +120,7 @@ export default function AppearanceTab({
           className="btn secondary"
           onClick={() => {
             setSettings(defaults);
-            notify(
-              'Default preferences restored. Your library and progress are unchanged.',
-            );
+            notify('Default preferences restored. Your library and progress are unchanged.');
           }}
         >
           <RefreshCw size={16} /> Restore default preferences

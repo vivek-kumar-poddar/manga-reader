@@ -1,6 +1,7 @@
 use super::backup::validate_backup_json;
 use super::path::validate_relative_path;
 use super::settings::normalize_settings;
+use super::types::ValidatedSettings;
 
 #[test]
 fn test_validate_relative_path_traversal() {
@@ -202,6 +203,43 @@ fn test_backup_preserves_all_supported_fields_and_pending_dimensions() {
     assert_eq!(norm["fontSizeTitle"], 24);
     assert_eq!(norm["fontSizeUi"], 18);
     assert_eq!(norm["fontSizeButton"], 16);
+    assert_eq!(norm["fontSizeScale"], 1.0);
     assert_eq!(norm["confirmDelete"], true);
     assert_eq!(norm["shelfSort"], "progress");
+}
+
+#[test]
+fn test_font_size_scale_and_multiplier_validation() {
+    let mut settings = ValidatedSettings::default();
+    settings.font_size_title = Some(56.0); // 28 * 2.0
+    settings.font_size_ui = Some(30.0); // 15 * 2.0
+    settings.font_size_button = Some(28.0); // 14 * 2.0
+    settings.font_size_scale = Some(2.0);
+
+    let norm = normalize_settings(&settings);
+    assert_eq!(norm["fontSizeTitle"], 56);
+    assert_eq!(norm["fontSizeUi"], 30);
+    assert_eq!(norm["fontSizeButton"], 28);
+    assert_eq!(norm["fontSizeScale"], 2.0);
+
+    // Test 1.5x multiplier scaling
+    let mut settings_150 = ValidatedSettings::default();
+    settings_150.font_size_title = Some(42.0);
+    settings_150.font_size_ui = Some(23.0);
+    settings_150.font_size_button = Some(21.0);
+    settings_150.font_size_scale = Some(1.5);
+
+    let norm_150 = normalize_settings(&settings_150);
+    assert_eq!(norm_150["fontSizeTitle"], 42);
+    assert_eq!(norm_150["fontSizeUi"], 23);
+    assert_eq!(norm_150["fontSizeButton"], 21);
+    assert_eq!(norm_150["fontSizeScale"], 1.5);
+
+    // Test default fallback values when None
+    let default_settings = ValidatedSettings::default();
+    let norm_default = normalize_settings(&default_settings);
+    assert_eq!(norm_default["fontSizeTitle"], 28);
+    assert_eq!(norm_default["fontSizeUi"], 15);
+    assert_eq!(norm_default["fontSizeButton"], 14);
+    assert_eq!(norm_default["fontSizeScale"], 1.0);
 }

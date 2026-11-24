@@ -152,6 +152,8 @@ pub struct ValidatedSettings {
     #[serde(default)]
     pub font_size_button: Option<f64>,
     #[serde(default)]
+    pub font_size_scale: Option<f64>,
+    #[serde(default)]
     pub confirm_delete: Option<bool>,
     #[serde(default)]
     pub shelf_sort: Option<String>,

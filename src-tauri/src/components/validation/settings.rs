@@ -58,18 +58,24 @@ pub fn normalize_settings(settings: &ValidatedSettings) -> serde_json::Value {
     let font_size_title = settings
         .font_size_title
         .filter(|f| f.is_finite())
-        .map(|f| f.round().clamp(10.0, 36.0) as u32)
-        .unwrap_or(15);
+        .map(|f| f.round().clamp(10.0, 72.0) as u32)
+        .unwrap_or(28);
     let font_size_ui = settings
         .font_size_ui
         .filter(|f| f.is_finite())
-        .map(|f| f.round().clamp(10.0, 36.0) as u32)
+        .map(|f| f.round().clamp(10.0, 48.0) as u32)
         .unwrap_or(15);
     let font_size_button = settings
         .font_size_button
         .filter(|f| f.is_finite())
-        .map(|f| f.round().clamp(10.0, 36.0) as u32)
-        .unwrap_or(15);
+        .map(|f| f.round().clamp(10.0, 48.0) as u32)
+        .unwrap_or(14);
+    let font_size_scale = settings
+        .font_size_scale
+        .filter(|f| f.is_finite())
+        .map(|f| (f * 10.0).round() / 10.0)
+        .map(|f| f.clamp(0.5, 3.0))
+        .unwrap_or(1.0);
     let confirm_delete = settings.confirm_delete.unwrap_or(false);
 
     let mut map = serde_json::Map::new();
@@ -91,6 +97,7 @@ pub fn normalize_settings(settings: &ValidatedSettings) -> serde_json::Value {
     map.insert("fontSizeTitle".into(), font_size_title.into());
     map.insert("fontSizeUi".into(), font_size_ui.into());
     map.insert("fontSizeButton".into(), font_size_button.into());
+    map.insert("fontSizeScale".into(), font_size_scale.into());
     map.insert("confirmDelete".into(), confirm_delete.into());
 
     if let Some(sort) = &settings.shelf_sort {

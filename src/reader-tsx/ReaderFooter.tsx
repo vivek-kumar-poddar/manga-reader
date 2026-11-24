@@ -4,8 +4,6 @@ import {
   ChevronRight,
   Check,
   ChevronDown,
-  Minus,
-  Plus,
   Play,
   Pause,
   MoreHorizontal,
@@ -39,6 +37,22 @@ export interface ReaderFooterProps {
   onStep: (dir: number) => void;
   onBeforeNavigate: () => Promise<void>;
   onFocusBars: () => void;
+}
+
+export function extractChapterNumber(name: string, index: number): string {
+  if (!name) return String(index + 1);
+  const cleaned = name.replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
+  const chMatch = cleaned.match(/(?:chapter|ch\.?|ep\.?|c)\s*(\d+(?:\.\d+)?)/i);
+  if (chMatch) {
+    const num = parseFloat(chMatch[1]);
+    if (!Number.isNaN(num)) return String(num);
+  }
+  const numMatch = cleaned.match(/\b\d+(?:\.\d+)?\b/) || cleaned.match(/\d+(?:\.\d+)?/);
+  if (numMatch) {
+    const num = parseFloat(numMatch[0]);
+    if (!Number.isNaN(num)) return String(num);
+  }
+  return String(index + 1);
 }
 
 export function ReaderFooter({
@@ -84,6 +98,9 @@ export function ReaderFooter({
         >
           <ChevronLeft size={20} />
         </button>
+        <span className="chapter-prefix-label" aria-hidden="true">
+          Ch.
+        </span>
         <Dropdown
           className="chapter-select"
           aria-label="Chapter"
@@ -92,9 +109,8 @@ export function ReaderFooter({
           onChange={(e) => onGoChapter(Number(e.target.value))}
         >
           {manga.chapters.map((c, i) => (
-            <option key={c.id || `${i}:${c.name}`} value={i}>
-              {manga.chapters[i].read ? '✓ ' : ''}
-              {c.name}
+            <option key={c.id || `${i}:${c.name}`} value={i} title={c.name}>
+              {extractChapterNumber(c.name, i)}
             </option>
           ))}
         </Dropdown>
@@ -126,40 +142,31 @@ export function ReaderFooter({
         <span className="control-divider" aria-hidden="true" />
         <details className="bar-popover zoom-menu" name="reader-controls">
           <summary className="zoom-trigger" aria-label="Image zoom" title="Image zoom">
-            {Math.round(zoom * 100)}%<ChevronDown size={12} />
+            <span className="zoom-value">{Math.round(zoom * 100)}%</span>
+            <ChevronDown size={12} />
           </summary>
-          <div className="bar-popover-panel">
-            <h3>Image zoom</h3>
-            <div className="zoom-adjustment">
+          <div className="bar-popover-panel zoom-popover-panel">
+            <div className="zoom-panel-header">
               <button
-                className="btn icon"
-                aria-label="Zoom out"
-                disabled={zoom <= 0.5}
-                onClick={() => onChangeZoom(zoom - 0.25)}
+                className="btn secondary zoom-reset-btn"
+                onClick={() => onChangeZoom(1)}
+                disabled={zoom === 1}
+                title="Reset zoom to 100%"
               >
-                <Minus size={16} />
+                Reset
               </button>
-              <input
-                type="range"
-                aria-label="Image zoom percentage"
-                min={50}
-                max={300}
-                step={25}
-                value={zoom * 100}
-                onChange={(e) => onChangeZoom(Number(e.target.value) / 100)}
-              />
-              <button
-                className="btn icon"
-                aria-label="Zoom in"
-                disabled={zoom >= 3}
-                onClick={() => onChangeZoom(zoom + 0.25)}
-              >
-                <Plus size={16} />
-              </button>
+              <span className="zoom-current-val">{Math.round(zoom * 100)}%</span>
             </div>
-            <button className="btn secondary" onClick={() => onChangeZoom(1)}>
-              Reset to 100%
-            </button>
+            <input
+              type="range"
+              className="zoom-slider-strip"
+              aria-label="Image zoom percentage"
+              min={50}
+              max={300}
+              step={5}
+              value={Math.round(zoom * 100)}
+              onChange={(e) => onChangeZoom(Math.round(Number(e.target.value)) / 100)}
+            />
           </div>
         </details>
         <span className="control-divider" aria-hidden="true" />

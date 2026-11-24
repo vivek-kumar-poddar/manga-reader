@@ -368,6 +368,94 @@ Verification battery:
   - `ReaderView.tsx`: Initialized `prepared` state to `ci`; removed the blocking `<PreparingGate>` modal screen and failure notification banners.
   - `src/PageImage.tsx`: Removed the blocking `dimensionsPending` error button ("Dimensions unavailable. Retry preparation"). Images load immediately with fallback aspect ratio (`0.75`), and page dimensions resolve smoothly on image load or via background task without interrupting the user.
 
+### Settings Modal Font Size Multiplier Scaling System (Step 45)
+
+- **Multiplier Scaling Architecture**:
+  - Replaced the three separate `<Dropdown>` controls (`fontSizeTitle`, `fontSizeUi`, `fontSizeButton`) in `AppearanceTab.tsx` with a single unified multiplier dropdown ("Text & UI font scaling").
+  - Scaling range: 0.8x (80%) to 2.0x (200%) in 0.1 (10%) increments, with 1.0x (100%) as default.
+  - Base sizes at 100% (1.0x):
+    - UI font size: 15px
+    - Button font size: 14px
+    - Headings & titles font size: 28px
+  - Proportional multiplier calculation:
+    - Multiplier $M \in [0.8, 2.0]$ updates `fontSizeScale = M`, `fontSizeUi = round(15 * M)`, `fontSizeButton = round(14 * M)`, `fontSizeTitle = round(28 * M)`.
+    - At 150% (1.5x): UI = 23px, Buttons = 21px, Titles = 42px.
+    - At 200% (2.0x): UI = 30px, Buttons = 28px, Titles = 56px.
+- **Validation & Clamping Hardening**:
+  - Backend Rust validator (`src-tauri/src/components/validation/settings.rs`): Widened clamp limits from 36.0 to 72.0 for `fontSizeTitle`, and 48.0 for `fontSizeUi` and `fontSizeButton`.
+  - Serde backward-compatibility: Added `#[serde(default)] pub font_size_scale: Option<f64>` to `ValidatedSettings` in Rust, preventing deserialization failures under `#[serde(deny_unknown_fields)]`.
+  - Frontend TypeScript validator (`src/web/validation.ts`): Updated clamps to `Math.min(72, ...)` for `fontSizeTitle` and `Math.min(48, ...)` for UI and buttons, and normalized `fontSizeScale` with `[0.5, 2.5]` bounds.
+- **Root CSS Custom Property Application**:
+  - In `src/App.tsx`, dynamically computes and applies `--font-size-ui`, `--font-size-title`, and `--font-size-button` on `:root` based on active settings and scale factor, ensuring immediate live preview across the entire application without reload.
+
+---
+
+### Mature Folder Access Re-linking & Homepage Manga Info Section Integration (Step 46)
+
+- **Elimination of "Clicking Does Nothing" (User Gesture Preservation)**:
+  - Root cause: In Chromium security models, `FileSystemHandle.requestPermission()` and `window.showDirectoryPicker()` strictly require synchronous user activation (`navigator.userActivation.isActive = true`). Chained async calls (such as `await getManga()`, timer promises, or multi-tick microtask queues) expired transient user activation before the picker or prompt was called, causing Chrome to reject with `SecurityError: Must be handling a user gesture` and leaving users with no dialog or browser prompt.
+  - Fix: Implemented unified `relink(manga: Summary | Manga)` in `src/App.tsx` and exposed via `useApp()` (`AppContext.tsx`). If `manga.handle` exists, `handle.requestPermission({ mode: 'read' })` is executed directly within the active click gesture. If permission is not granted or `!handle`, it falls back directly to `pick(manga)` within the same user activation without unhandled rejections or expired tokens.
+- **Elimination of False-Positive "Re-link Needed" Gates**:
+  - Root cause: In Chrome, `FileSystemHandle.queryPermission({ mode: 'read' })` can return `'prompt'` on page reloads even if the browser has already granted permission at the origin level or earlier in the session. Previously, `queryOrRequest` did `res === 'granted'`, which interpreted `'prompt'` as a false-negative access failure and prematurely blocked the reader with `RelinkGate`.
+  - Fix: In `src/web/storage.ts` `access()`, if `queryPermission` returns `'prompt'` or is unsupported, it now probes whether `handle.values()` is actively readable (`const iter = handle.values(); await iter.next()`). If the probe succeeds without throwing `NotAllowedError`/`SecurityError`, access is marked `granted: true`, completely eliminating false-positive gates.
+  - In `ReaderView.tsx`, the access verification hook tests `fileFor(manga, firstPage)` before setting `allowed = false`, ensuring the reader never displays `RelinkGate` if image files are already readable.
+- **Mature Homepage Manga Info Section Integration (`src/MangaDetails.tsx`)**:
+  - Previously, `MangaDetails.tsx` (`/manga/:slug`) never checked folder access, leaving users unaware of missing access until they navigated into a dead-end reader gate.
+  - Now, `MangaDetails.tsx` checks access on mount, visibility, focus, and sync.
+  - If re-link is needed, a prominent `.relink-banner` is displayed in the manga overview info section with a `FolderSync` icon, description ("Folder access is needed to read this title. Re-link folder to continue reading from your saved progress."), and a dedicated "Re-link folder" button.
+  - Clicking "Continue reading" or individual chapter cards while re-link is needed triggers the user-gesture safe re-link flow directly, navigating into the reader immediately upon approval rather than dumping the user into a broken state.
+- **State Synchronization & Cache Parity**:
+  - Unified `AccessCacheEntry` type across desktop and web storage with required `granted`, `timestamp`, and `expiresAt`.
+  - Subscribed `Reader.tsx` and `ReaderView.tsx` to `syncChannel` so external re-link/indexing events immediately reload the manga and re-verify access without manual page refreshes.
+
+---
+
+### Reader Bar UI Consistency & Zoom Selector Horizontal Layout (Step 47)
+
+- **Elimination of Top-and-Bottom Stacking in Image Zoom Selector**:
+  - Root cause: In Chromium, `<summary>` elements default to `display: list-item`. Without explicit horizontal flexbox and nowrap constraints, the text node `{Math.round(zoom * 100)}%` and the `<ChevronDown>` SVG broke across multiple lines when container widths constrained or when font scaling enlarged the text, rendering the percentage on top and the chevron on the bottom.
+  - Fix: In `src/reader-tsx/ReaderFooter.tsx`, wrapped the percentage in `<span className="zoom-value">`. In `src/style.css`, styled `.zoom-trigger` and `.bar-popover.zoom-menu > summary` with `display: inline-flex !important; flex-direction: row !important; align-items: center !important; justify-content: space-between !important; white-space: nowrap !important;`. Styled `.zoom-value` with `flex: 1 1 auto; text-align: left;` and the chevron SVG with `margin-left: auto; flex-shrink: 0; width/height: calc(var(--font-size-button, 14px) * 0.85) !important;`. The percentage is guaranteed on the left and the dropdown icon on the right.
+- **Consistent Reader Bar Font Sizing and UI Multiplier Scaling**:
+  - Replaced hardcoded `16px` across `.reader-bar`, `.reader-top.organized-bar`, `.reader-bottom.organized-bar`, and `.reader-bar.bar-hidden` with `var(--font-size-button, 14px)`.
+  - Scaled all reader bar buttons, inputs, values, and selectors (`.header-selectors select`, `.dropdown-trigger`, `.chapter-select`, `.current-page-input`, `.total-page-count`, `.zoom-trigger`, `.fit-select`, `.size-select`, `.mode-select`) using `var(--font-size-button, 14px)`.
+  - Updated fixed widths (`fit-select`, `size-select`, `mode-select`, `chapter-select`) to flexible minimum widths (`min-width: ...; width: auto; max-width: 220px;`) so buttons and values never truncate or clip when users scale the font multiplier up to 2.0x.
+
+---
+
+### Streamlined Zoom Popover Strip & Centered Canvas Zooming (Step 48)
+
+- **Elimination of Zoom Panel Clutter**:
+  - Replaced redundant heading `<h3>Image zoom</h3>`, separate plus/minus buttons, and secondary bottom reset button in `src/reader-tsx/ReaderFooter.tsx` with a minimal, focused popover layout:
+    - Top header: "Reset" button (`.zoom-reset-btn`) on top left, current percentage (`.zoom-current-val`) on top right.
+    - Bottom: `.zoom-slider-strip` input range component spanning full width with smooth accent coloring.
+  - Removed unused `Minus` and `Plus` icon imports.
+- **Root Cause & Fix for Rightward Canvas Drift on Zoom**:
+  - Root cause: `.reader-content` had `width: calc(100% * max(1, var(--zoom, 1)))`. When zoomed (e.g. 1.5x or 2.0x), `.reader-content` expanded to 150vw or 200vw starting from `left: 0`. As `.reader-page` centered (`margin: 0 auto`) relative to `.reader-content`, its horizontal midpoint shifted from 50vw to 75vw or 100vw, moving the page image progressively to the right and off-screen.
+  - Fix: In `src/style.css`, pinned `.reader-content` to `width: 100%` and structured it with `display: flex; flex-direction: column; align-items: center;`. Removed restrictive `100%` and `50%` width caps from `.reader-page`, `.layout-width`, `.layout-auto`, `.layout-height`, and `.spread-content`, allowing page elements to expand symmetrically from the horizontal center of the viewport (`50vw`). Set `overflow-x: clip` on `.reader` to prevent horizontal document scrollbars while keeping the image centered at every zoom level.
+
+---
+
+### Fine-Grained 5% Zoom Slider Increments (Step 49)
+
+- **5% Step Resolution**:
+  - Configured `step={5}` on `.zoom-slider-strip` in `src/reader-tsx/ReaderFooter.tsx` with `Math.round` floating-point normalization.
+  - Users can smoothly adjust zoom across 51 discrete increments from 50% to 300% (50%, 55%, 60%, ..., 100%, 105%, ..., 300%) with clean integer display in the header and zoom trigger.
+
+---
+
+### Compact Chapter Navigation Display (Ch. Prefix and Numeric Dropdown) (Step 50)
+
+- **Standardized Navigation Structure**:
+  - Structured the chapter navigation group in `src/reader-tsx/ReaderFooter.tsx` as:
+    1. Previous Chapter Icon Button (`<ChevronLeft size={20} />`)
+    2. Text Prefix (`<span className="chapter-prefix-label">Ch.</span>`)
+    3. Numeric Chapter Dropdown (`.dropdown-trigger.chapter-select` displaying only the chapter number)
+    4. Next Chapter Icon Button (`<ChevronRight size={20} />`)
+  - Implemented `extractChapterNumber(name, index)` to robustly extract chapter numbers from folder names (e.g. `Chapter 32`, `Ch. 32`, `c032`, `32`, `Vol 1 Ch 32`, `[Group] Title - 32`), falling back to `index + 1` for unnumbered chapter structures.
+  - Sized `.chapter-select` compactly (`min-width: 48px; max-width: 80px; width: auto;`) to prevent wide folder names from blowing out the reader toolbar.
+
+---
+
 ---
 
 ## 3. Command Reference & Acceptance Benchmarks
@@ -375,7 +463,7 @@ Verification battery:
 | Command                                                                     | Target             | Purpose / Invariant                                                                         |
 | --------------------------------------------------------------------------- | ------------------ | ------------------------------------------------------------------------------------------- |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`                 | Backend            | Enforces standard Rust formatting.                                                          |
-| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 87 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.   |
+| `cargo test --manifest-path src-tauri/Cargo.toml --locked`                  | Backend            | Runs 88 Rust unit tests across DB, FS, protocol, image, config, indexing, and validation.   |
 | `cargo clippy --manifest-path src-tauri/Cargo.toml --locked -- -D warnings` | Backend            | Zero Clippy warnings across whole crate.                                                    |
 | `npm run typecheck`                                                         | Frontend           | Runs `tsc -b && tsc -p tsconfig.desktop.json --noEmit` with zero errors across platforms.   |
 | `npm run build`                                                             | Web Production     | Builds production client with PWA service worker.                                           |

@@ -22,9 +22,28 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 const RESERVED_DOS_NAMES = new Set([
-  'con', 'prn', 'aux', 'nul',
-  'com1', 'com2', 'com3', 'com4', 'com5', 'com6', 'com7', 'com8', 'com9',
-  'lpt1', 'lpt2', 'lpt3', 'lpt4', 'lpt5', 'lpt6', 'lpt7', 'lpt8', 'lpt9',
+  'con',
+  'prn',
+  'aux',
+  'nul',
+  'com1',
+  'com2',
+  'com3',
+  'com4',
+  'com5',
+  'com6',
+  'com7',
+  'com8',
+  'com9',
+  'lpt1',
+  'lpt2',
+  'lpt3',
+  'lpt4',
+  'lpt5',
+  'lpt6',
+  'lpt7',
+  'lpt8',
+  'lpt9',
 ]);
 
 export function validateRelativePath(path: unknown): string {
@@ -342,8 +361,8 @@ export function parseManga(
 
   const localPath =
     options.preserveHardwarePointers &&
-      typeof value.localPath === 'string' &&
-      value.localPath.trim()
+    typeof value.localPath === 'string' &&
+    value.localPath.trim()
       ? value.localPath.trim()
       : undefined;
 
@@ -386,22 +405,22 @@ export function parseSummary(
 
   const chapterCount =
     typeof value.chapterCount === 'number' &&
-      Number.isInteger(value.chapterCount) &&
-      value.chapterCount >= 0
+    Number.isInteger(value.chapterCount) &&
+    value.chapterCount >= 0
       ? value.chapterCount
       : 0;
 
   const chaptersRead =
     typeof value.chaptersRead === 'number' &&
-      Number.isInteger(value.chaptersRead) &&
-      value.chaptersRead >= 0
+    Number.isInteger(value.chaptersRead) &&
+    value.chaptersRead >= 0
       ? Math.min(chapterCount, value.chaptersRead)
       : 0;
 
   const lastChapter =
     typeof value.lastChapter === 'number' &&
-      Number.isInteger(value.lastChapter) &&
-      value.lastChapter >= 0
+    Number.isInteger(value.lastChapter) &&
+    value.lastChapter >= 0
       ? Math.max(0, Math.min(Math.max(0, chapterCount - 1), value.lastChapter))
       : 0;
 
@@ -513,19 +532,24 @@ export function parseSettings(value: unknown): Settings {
         ? 'stop'
         : defaults.endAction;
 
+  const fontSizeScale =
+    typeof s.fontSizeScale === 'number' && Number.isFinite(s.fontSizeScale)
+      ? Math.max(0.5, Math.min(2.5, Math.round(s.fontSizeScale * 10) / 10))
+      : (defaults.fontSizeScale ?? 1.0);
+
   const fontSizeTitle =
     typeof s.fontSizeTitle === 'number' && Number.isFinite(s.fontSizeTitle)
-      ? Math.max(10, Math.min(36, Math.round(s.fontSizeTitle)))
+      ? Math.max(10, Math.min(72, Math.round(s.fontSizeTitle)))
       : defaults.fontSizeTitle;
 
   const fontSizeUi =
     typeof s.fontSizeUi === 'number' && Number.isFinite(s.fontSizeUi)
-      ? Math.max(10, Math.min(36, Math.round(s.fontSizeUi)))
+      ? Math.max(10, Math.min(48, Math.round(s.fontSizeUi)))
       : defaults.fontSizeUi;
 
   const fontSizeButton =
     typeof s.fontSizeButton === 'number' && Number.isFinite(s.fontSizeButton)
-      ? Math.max(10, Math.min(36, Math.round(s.fontSizeButton)))
+      ? Math.max(10, Math.min(48, Math.round(s.fontSizeButton)))
       : defaults.fontSizeButton;
 
   const confirmDelete =
@@ -533,9 +557,9 @@ export function parseSettings(value: unknown): Settings {
 
   const shelfSort: Settings['shelfSort'] =
     s.shelfSort === 'recent' ||
-      s.shelfSort === 'title' ||
-      s.shelfSort === 'added' ||
-      s.shelfSort === 'progress'
+    s.shelfSort === 'title' ||
+    s.shelfSort === 'added' ||
+    s.shelfSort === 'progress'
       ? s.shelfSort
       : undefined;
 
@@ -558,6 +582,7 @@ export function parseSettings(value: unknown): Settings {
     fontSizeTitle,
     fontSizeUi,
     fontSizeButton,
+    fontSizeScale,
     confirmDelete,
     ...(shelfSort ? { shelfSort } : {}),
   };
