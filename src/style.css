@@ -240,6 +240,10 @@ label .dropdown-trigger {
   box-sizing: border-box;
 }
 
+html {
+  scrollbar-gutter: stable;
+}
+
 html,
 body {
   height: 100%;
@@ -247,6 +251,30 @@ body {
 
 body {
   margin: 0;
+}
+
+/* Neutralize scrollbar locking and layout shifting triggered by dropdowns and overlay primitives */
+html:root body[data-scroll-locked],
+html body[data-scroll-locked],
+body[data-scroll-locked][data-scroll-locked],
+html[data-scroll-locked],
+html:root body.with-scroll-bars-hidden,
+body.with-scroll-bars-hidden {
+  overflow: auto !important;
+  margin-right: 0 !important;
+  padding-right: 0 !important;
+  position: static !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+html:root .right-scroll-bar-position,
+.right-scroll-bar-position {
+  right: 0 !important;
+}
+
+html:root .width-before-scroll-bar,
+.width-before-scroll-bar {
+  margin-right: 0 !important;
 }
 
 #root {
@@ -353,14 +381,8 @@ button:not(:disabled):hover {
 /* Dark Theme Buttons: white in dark theme */
 :root.dark .btn,
 .dark .btn,
-:root.dark
-  button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(
-    .manga-bookmark-btn
-  ):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
-.dark
-  button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(
-    .manga-bookmark-btn
-  ):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) {
+:root.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button),
+.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button) {
   background: var(--btn-dark);
   color: var(--color-white);
   box-shadow: var(--shadow);
@@ -369,24 +391,14 @@ button:not(:disabled):hover {
 
 :root.dark .btn:not(:disabled):hover,
 .dark .btn:not(:disabled):hover,
-:root.dark
-  button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(
-    .manga-bookmark-btn
-  ):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover,
-.dark
-  button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(
-    .manga-bookmark-btn
-  ):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover {
+:root.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover,
+.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover {
   background: var(--btn-hover);
 }
 
 /* Flex Space Between for Buttons with Text and Icons */
-.btn:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(
-    .popover-menu-actions button
-  ),
-button:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(
-    .popover-menu-actions button
-  ) {
+.btn:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(.popover-menu-actions button),
+button:has(svg):not(.icon):not(.icon-button):not(.close-btn):not(.menu-popover button):not(.popover-menu-actions button) {
   justify-content: space-between;
 }
 
@@ -746,7 +758,7 @@ a.secondary.no-bookmark-browse-btn {
   color: var(--text);
 }
 
-.dropdown-trigger > span:first-child {
+.dropdown-trigger>span:first-child {
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
@@ -864,11 +876,11 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 /* Dropdown Context-Specific Adjustments */
-.settings-panel label > .dropdown-trigger {
+.settings-panel label>.dropdown-trigger {
   max-width: 200px;
 }
 
-.import-choice > .dropdown-trigger {
+.import-choice>.dropdown-trigger {
   max-width: 65%;
 }
 
@@ -1114,8 +1126,8 @@ input[type='checkbox'] {
   margin: 28px 0 0;
 }
 
-.upload-zone .upload-buttons > .btn,
-.upload-zone .upload-buttons > button {
+.upload-zone .upload-buttons>.btn,
+.upload-zone .upload-buttons>button {
   width: 100%;
   min-height: max(44px, calc(var(--font-size-button, 15px) * 2.8));
 }
@@ -1137,7 +1149,7 @@ input[type='checkbox'] {
   font-size: 27px;
 }
 
-.collection-heading > span {
+.collection-heading>span {
   font-size: 16px;
   color: var(--muted);
 }
@@ -1662,6 +1674,52 @@ summary.card-menu-trigger svg {
   right: 0;
 }
 
+.bar-center.header-selectors button {
+  color: var(--text);
+  background: transparent !important;
+  border: 2px solid rgba(0, 0, 0, .1) !important;
+  box-shadow: none !important;
+  transition: var(--transition) !important;
+}
+
+.bar-center.header-selectors button:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--soft) 95%, black 5%) !important;
+  border-color: color-mix(in srgb, var(--soft) 95%, black) !important;
+}
+
+:root.dark .bar-center.header-selectors button {
+  background: var(--soft) !important;
+}
+
+:root.dark .bar-center.header-selectors button:hover {
+  background: var(--btn-hover) !important;
+}
+
+button.dropdown-trigger.chapter-select {
+  color: var(--text);
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 0 auto !important;
+}
+
+button.dropdown-trigger.chapter-select:hover {
+  color: var(--text) !important;
+  background: var(--soft) !important;
+}
+
+button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn) {
+  background: var(--soft) !important;
+}
+
+button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
+  background: var(--soft) !important;
+}
+
+:root.dark button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
+  background: var(--btn-hover) !important;
+}
+
 /* ==========================================================================
    12. MODULE: BOOKMARKS AREA, FILTERS & HORIZONTAL SCROLL TRACKS
    ========================================================================== */
@@ -1689,7 +1747,7 @@ summary.card-menu-trigger svg {
   gap: 8px;
 }
 
-.bookmark-navigation > a {
+.bookmark-navigation>a {
   margin-right: 9px;
 }
 
@@ -2206,10 +2264,8 @@ summary.card-menu-trigger svg {
   margin: 0 auto;
   padding: 0;
   display: block;
-  width: min(
-    calc(var(--reading-width) * var(--zoom, 1)),
-    calc(var(--native-width) * var(--zoom, 1))
-  );
+  width: min(calc(var(--reading-width) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
   max-width: none;
   flex-shrink: 0;
   overflow: hidden;
@@ -2230,10 +2286,8 @@ summary.card-menu-trigger svg {
 
 .layout-height .reader-page,
 .reader-single.layout-auto .reader-page {
-  width: min(
-    calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
-    calc(var(--native-width) * var(--zoom, 1))
-  );
+  width: min(calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+      calc(var(--native-width) * var(--zoom, 1)));
 }
 
 .reader-page img {
@@ -2423,7 +2477,7 @@ summary.card-menu-trigger svg {
   gap: 7px;
 }
 
-.reader-top > select {
+.reader-top>select {
   max-width: 220px;
 }
 
@@ -2574,22 +2628,13 @@ summary.card-menu-trigger svg {
   gap: 5px !important;
 }
 
-.chapter-prefix-label {
-  font-family: inherit;
-  font-size: var(--font-size-button, 14px);
-  font-weight: 500;
-  color: var(--muted);
-  user-select: none;
-  flex-shrink: 0;
-  line-height: 1;
-}
-
 .organized-bar .chapter-navigation .chapter-select {
   width: auto;
-  min-width: 50px;
-  max-width: 80px;
+  min-width: 68px;
+  max-width: 140px;
   min-height: var(--control-size);
   height: auto;
+  gap: 6px;
   padding: 6px 8px;
   font-size: var(--font-size-button, 14px);
   font-variant-numeric: tabular-nums;
@@ -2646,11 +2691,9 @@ summary.card-menu-trigger svg {
   border-radius: 7px;
   margin: 0;
   box-shadow: none;
-  background: linear-gradient(
-    to right,
-    var(--accent) 0 var(--progress-fill),
-    var(--line) var(--progress-fill) 100%
-  );
+  background: linear-gradient(to right,
+      var(--accent) 0 var(--progress-fill),
+      var(--line) var(--progress-fill) 100%);
   cursor: pointer;
   touch-action: none;
 }
@@ -2710,18 +2753,18 @@ summary.card-menu-trigger svg {
   flex-shrink: 0;
 }
 
-.bar-popover > summary {
+.bar-popover>summary {
   list-style: none;
   cursor: pointer;
   user-select: none;
 }
 
-.bar-popover > summary::-webkit-details-marker {
+.bar-popover>summary::-webkit-details-marker {
   display: none;
 }
 
 .zoom-trigger,
-.bar-popover.zoom-menu > summary {
+.bar-popover.zoom-menu>summary {
   display: inline-flex !important;
   flex-direction: row !important;
   align-items: center !important;
@@ -2746,7 +2789,7 @@ summary.card-menu-trigger svg {
 }
 
 .zoom-trigger .zoom-value,
-.bar-popover.zoom-menu > summary .zoom-value {
+.bar-popover.zoom-menu>summary .zoom-value {
   flex: 1 1 auto;
   text-align: left;
   white-space: nowrap;
@@ -2754,7 +2797,7 @@ summary.card-menu-trigger svg {
 
 /* Svg Scaling Adjustment layer specifically inside Zoom Triggers */
 .zoom-trigger svg,
-.bar-popover.zoom-menu > summary svg {
+.bar-popover.zoom-menu>summary svg {
   flex-shrink: 0;
   margin-left: auto;
   width: calc(var(--font-size-button, 14px) * 0.85) !important;
@@ -2762,7 +2805,7 @@ summary.card-menu-trigger svg {
 }
 
 .zoom-trigger:hover,
-.bar-popover[open] > summary {
+.bar-popover[open]>summary {
   background: var(--soft);
   border-color: var(--line);
 }
@@ -2795,7 +2838,7 @@ summary.card-menu-trigger svg {
 }
 
 .bar-popover-panel label select,
-.bar-popover-panel label > .dropdown-trigger {
+.bar-popover-panel label>.dropdown-trigger {
   max-width: 135px;
 }
 
@@ -2893,7 +2936,7 @@ summary.card-menu-trigger svg {
   transition: opacity 180ms ease;
 }
 
-.edge-progress > span {
+.edge-progress>span {
   display: block;
   width: 100%;
   height: 100%;
@@ -2903,11 +2946,92 @@ summary.card-menu-trigger svg {
   transform-origin: left;
 }
 
-.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not(
-    :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])
-  )
-  .edge-progress {
+.reader:has(.reader-top.bar-hidden):has(.reader-bottom.bar-hidden):not( :has(.reader-bar:focus-within, .reader-bar details[open], .dropdown-trigger[data-state='open'])) .edge-progress {
   opacity: 1;
+}
+
+/* ==========================================================================
+   NEXT CHAPTER FLOATING NOTIFICATION
+   ========================================================================== */
+
+.next-chapter-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  transform: translate(-50%, 24px);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 25;
+  transition:
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.28s ease-out,
+    bottom 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.next-chapter-toast.visible {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.next-chapter-toast.bar-hidden {
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+}
+
+.next-chapter-toast .next-chapter-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 22px;
+  background: var(--btn-dark-blue, #2563eb) !important;
+  color: #ffffff !important;
+  font-family: var(--font-ui);
+  font-size: var(--font-size-button, 14px);
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.28),
+    0 2px 6px rgba(0, 0, 0, 0.16) !important;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+  transition:
+    transform 0.15s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.next-chapter-toast .next-chapter-btn:hover {
+  background: #1d4ed8 !important;
+  transform: scale(1.03);
+  box-shadow:
+    0 6px 22px rgba(0, 0, 0, 0.35),
+    0 3px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+.next-chapter-toast .next-chapter-btn svg {
+  width: calc(var(--font-size-button, 14px) * 1.15) !important;
+  height: calc(var(--font-size-button, 14px) * 1.15) !important;
+  stroke: currentColor;
+  color: #ffffff !important;
+  flex-shrink: 0;
+}
+
+:root.dark .next-chapter-toast .next-chapter-btn,
+.dark .next-chapter-toast .next-chapter-btn {
+  background: var(--btn-dark-blue, #2563eb) !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.35) !important;
+}
+
+:root.dark .next-chapter-toast .next-chapter-btn:hover,
+.dark .next-chapter-toast .next-chapter-btn:hover {
+  background: #1d4ed8 !important;
 }
 
 /* ==========================================================================
@@ -2948,7 +3072,7 @@ summary.card-menu-trigger svg {
   box-shadow: var(--floating-shadow);
 }
 
-.settings-panel > p {
+.settings-panel>p {
   font-size: 16px;
   color: var(--muted);
   margin: 6px 0 30px;
@@ -3010,7 +3134,7 @@ summary.card-menu-trigger svg {
   padding: 23px 27px 18px;
 }
 
-.modal-heading > p {
+.modal-heading>p {
   color: var(--muted);
   font-size: 16px;
   margin-top: 5px;
@@ -3061,7 +3185,7 @@ summary.card-menu-trigger svg {
   outline: none;
 }
 
-.settings-tab-body > section:first-child {
+.settings-tab-body>section:first-child {
   border-top: 0;
 }
 
@@ -3077,7 +3201,7 @@ summary.card-menu-trigger svg {
   padding: 4px 15px;
 }
 
-.storage-stats > div {
+.storage-stats>div {
   display: flex;
   justify-content: space-between;
   gap: 18px;
@@ -3086,7 +3210,7 @@ summary.card-menu-trigger svg {
   font-size: 16px;
 }
 
-.storage-stats > div:last-child {
+.storage-stats>div:last-child {
   border-bottom: 0;
 }
 
@@ -3106,7 +3230,7 @@ summary.card-menu-trigger svg {
   margin: 0;
 }
 
-.storage-notes li + li {
+.storage-notes li+li {
   margin-top: 12px;
 }
 
@@ -3170,7 +3294,7 @@ summary.card-menu-trigger svg {
   text-align: left;
 }
 
-.shortcuts-modal > p,
+.shortcuts-modal>p,
 .shortcuts-modal [data-radix-dialog-description],
 .import-modal [data-radix-dialog-description],
 .confirm-modal [data-radix-dialog-description] {
@@ -3219,7 +3343,7 @@ summary.card-menu-trigger svg {
   padding-right: 14px;
 }
 
-.shortcuts-modal > .subtle {
+.shortcuts-modal>.subtle {
   margin-top: 19px;
 }
 
@@ -3370,7 +3494,7 @@ summary.card-menu-trigger svg {
   margin: 10px 0;
 }
 
-.folder-tree > li > span {
+.folder-tree>li>span {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -3386,7 +3510,7 @@ summary.card-menu-trigger svg {
   color: var(--muted);
 }
 
-.example-body > .folder-tree {
+.example-body>.folder-tree {
   background: var(--soft);
   border: 0;
   border-radius: 7px;
@@ -3396,7 +3520,7 @@ summary.card-menu-trigger svg {
 
 /* Choices Custom Select Interfaces */
 .import-choice,
-.import-preview > label {
+.import-preview>label {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -3405,7 +3529,7 @@ summary.card-menu-trigger svg {
   margin: 15px 0;
 }
 
-.import-choice > span {
+.import-choice>span {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -3583,7 +3707,7 @@ summary.card-menu-trigger svg {
   gap: 14px;
 }
 
-.import-success-info dl > div {
+.import-success-info dl>div {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -3634,7 +3758,7 @@ summary.card-menu-trigger svg {
     max-width: 180px;
   }
 
-  .reader-top > select {
+  .reader-top>select {
     max-width: 150px;
   }
 }
@@ -3672,8 +3796,8 @@ summary.card-menu-trigger svg {
 
   .organized-bar .chapter-navigation .chapter-select {
     width: auto;
-    min-width: 50px;
-    max-width: 80px;
+    min-width: 68px;
+    max-width: 120px;
   }
 
   .organized-bar .header-identity {
@@ -3767,6 +3891,14 @@ summary.card-menu-trigger svg {
     padding: 8px 12px max(8px, env(safe-area-inset-bottom));
   }
 
+  .next-chapter-toast {
+    bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .next-chapter-toast.bar-hidden {
+    bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  }
+
   .organized-bar .page-progress-control {
     grid-area: progress;
     width: 100%;
@@ -3792,8 +3924,8 @@ summary.card-menu-trigger svg {
 
   .organized-bar .chapter-navigation .chapter-select {
     width: auto;
-    min-width: 44px;
-    max-width: 76px;
+    min-width: 60px;
+    max-width: 120px;
     flex-shrink: 0;
     gap: 4px;
     padding: 4px 6px;
@@ -3832,7 +3964,7 @@ summary.card-menu-trigger svg {
     overflow: auto;
   }
 
-  .settings-panel label > .dropdown-trigger {
+  .settings-panel label>.dropdown-trigger {
     max-width: 56%;
   }
 }
@@ -3881,8 +4013,8 @@ summary.card-menu-trigger svg {
     gap: 8px;
   }
 
-  .upload-buttons > .btn,
-  .upload-buttons > button {
+  .upload-buttons>.btn,
+  .upload-buttons>button {
     font-size: var(--font-size-button, 15px) !important;
     padding: 10px 12px;
   }
@@ -3899,7 +4031,7 @@ summary.card-menu-trigger svg {
     font-size: 26px;
   }
 
-  .collection-heading > span {
+  .collection-heading>span {
     font-size: 16px;
   }
 
@@ -3919,7 +4051,7 @@ summary.card-menu-trigger svg {
     padding: 17px 19px 12px;
   }
 
-  .modal-heading > p {
+  .modal-heading>p {
     font-size: 16px;
   }
 
@@ -3968,12 +4100,12 @@ summary.card-menu-trigger svg {
     padding-right: 5px;
   }
 
-  .reader-top > .btn.icon,
-  .reader-top > .icon-button {
+  .reader-top>.btn.icon,
+  .reader-top>.icon-button {
     width: 33px;
   }
 
-  .reader-top > select {
+  .reader-top>select {
     max-width: 110px;
     width: 27vw;
     font-size: var(--font-size-button, 14px);
@@ -4010,10 +4142,8 @@ summary.card-menu-trigger svg {
   }
 
   .layout-height .reader-page {
-    width: min(
-      calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
-      calc(var(--native-width) * var(--zoom, 1))
-    );
+    width: min(calc(100dvh * var(--page-ratio) * var(--zoom, 1)),
+        calc(var(--native-width) * var(--zoom, 1)));
   }
 
   .reader-error {
@@ -4107,7 +4237,7 @@ summary.card-menu-trigger svg {
 }
 
 @media (max-width: 480px) {
-  .import-choice > .dropdown-trigger {
+  .import-choice>.dropdown-trigger {
     max-width: 100%;
     width: 100%;
   }
@@ -4141,7 +4271,7 @@ summary.card-menu-trigger svg {
     gap: 4px;
   }
 
-  .bookmark-navigation > a {
+  .bookmark-navigation>a {
     margin-right: 4px;
   }
 
@@ -4195,6 +4325,7 @@ summary.card-menu-trigger svg {
 }
 
 @media (max-width: 359px) {
+
   .reader-top.organized-bar,
   .reader-bottom.organized-bar {
     padding-left: 6px;
@@ -4212,7 +4343,9 @@ summary.card-menu-trigger svg {
   }
 
   .organized-bar .chapter-navigation .chapter-select {
-    width: 52px;
+    width: auto;
+    min-width: 60px;
+    max-width: 96px;
   }
 
   .organized-bar .header-selectors {
@@ -4232,6 +4365,7 @@ summary.card-menu-trigger svg {
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
+
   *,
   *::before,
   *::after {

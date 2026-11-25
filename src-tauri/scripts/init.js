@@ -86,8 +86,47 @@
     true,
   );
 
+  // Diagnostic error capturing for webview
+  function reportDiagnostic(type, message, stack) {
+    if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
+      window.__TAURI_INTERNALS__.invoke('record_diagnostic', {
+        entry: {
+          operation: type,
+          level: 'error',
+          code: 'Error',
+          message: String(message),
+          safeIdentifier: stack ? String(stack) : 'no_stack',
+          durationMs: 0,
+          retryable: false,
+        },
+      });
+    }
+  }
+
+  window.addEventListener('error', function (e) {
+    var msg =
+      (e.message || 'Error') +
+      ' at ' +
+      (e.filename || '') +
+      ':' +
+      (e.lineno || '') +
+      ':' +
+      (e.colno || '');
+    reportDiagnostic('js_error', msg, e.error && e.error.stack);
+  });
+
+  window.addEventListener('unhandledrejection', function (e) {
+    var msg = 'Unhandled Rejection: ' + ((e.reason && (e.reason.message || e.reason)) || e);
+    reportDiagnostic('unhandled_rejection', msg, e.reason && e.reason.stack);
+  });
+
+  window.addEventListener('vite:preloadError', function (e) {
+    reportDiagnostic('vite_preload_error', String((e && e.payload) || 'Preload error'), 'preload');
+  });
+
   // Reveal window on frontend ready to prevent white flash
   function notifyReady() {
+    reportDiagnostic('webview_lifecycle', 'DOMContentLoaded/Ready at ' + window.location.href, '');
     if (window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke) {
       window.__TAURI_INTERNALS__.invoke('show_main_window');
     }

@@ -98,8 +98,12 @@ export async function sqliteGetBookmarkedMangaIds(): Promise<{
   try {
     const res = await invokeCommand('sqlite_get_bookmarked_manga_ids');
     return {
-      allBookmarkedIds: (res as any).allBookmarked || (res as any).allBookmarkedIds || [],
-      mangaBookmarkedIds: (res as any).mangaBookmarked || (res as any).mangaBookmarkedIds || [],
+      allBookmarkedIds: res
+        ? (res as any).allBookmarked || (res as any).allBookmarkedIds || []
+        : [],
+      mangaBookmarkedIds: res
+        ? (res as any).mangaBookmarked || (res as any).mangaBookmarkedIds || []
+        : [],
     };
   } catch (err) {
     console.warn('Tauri sqliteGetBookmarkedMangaIds failed:', err);

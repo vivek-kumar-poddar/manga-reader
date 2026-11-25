@@ -42,7 +42,7 @@ export interface ReaderFooterProps {
 export function extractChapterNumber(name: string, index: number): string {
   if (!name) return String(index + 1);
   const cleaned = name.replace(/\[[^\]]*\]|\([^)]*\)/g, '').trim();
-  const chMatch = cleaned.match(/(?:chapter|ch\.?|ep\.?|c)\s*(\d+(?:\.\d+)?)/i);
+  const chMatch = cleaned.match(/(?<![a-zA-Z])(?:chapter|ch\.?|ep\.?|c)\s*#?\s*(\d+(?:\.\d+)?)/i);
   if (chMatch) {
     const num = parseFloat(chMatch[1]);
     if (!Number.isNaN(num)) return String(num);
@@ -90,7 +90,7 @@ export function ReaderFooter({
     >
       <div className="bar-left chapter-navigation" role="group" aria-label="Chapter navigation">
         <button
-          className="btn icon"
+          className="btn icon prev-chapter-btn"
           disabled={ci === 0}
           aria-label="Previous chapter"
           title="Previous chapter"
@@ -98,9 +98,6 @@ export function ReaderFooter({
         >
           <ChevronLeft size={20} />
         </button>
-        <span className="chapter-prefix-label" aria-hidden="true">
-          Ch.
-        </span>
         <Dropdown
           className="chapter-select"
           aria-label="Chapter"
@@ -110,12 +107,12 @@ export function ReaderFooter({
         >
           {manga.chapters.map((c, i) => (
             <option key={c.id || `${i}:${c.name}`} value={i} title={c.name}>
-              {extractChapterNumber(c.name, i)}
+              {`Ch. ${extractChapterNumber(c.name, i)}`}
             </option>
           ))}
         </Dropdown>
         <button
-          className="btn icon"
+          className="btn icon next-chapter-btn"
           disabled={ci === manga.chapters.length - 1}
           aria-label="Next chapter"
           title="Complete this chapter and open the next"

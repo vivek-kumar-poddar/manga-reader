@@ -58,75 +58,40 @@ export type SourceFile = File | FileSystemFileHandle | { getFile(): Promise<File
 
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
 
-export type MangaDeleteListener = (id?: string) => void;
-var _deleteListeners: MangaDeleteListener[] | undefined;
-function getDeleteListeners(): MangaDeleteListener[] {
-  return (_deleteListeners ??= []);
-}
+import {
+  type MangaDeleteListener,
+  onMangaDelete,
+  notifyDelete,
+  type StorageSyncMessage,
+  syncChannel,
+  onStorageSync,
+  broadcastSync,
+} from '../sync';
+import {
+  type AccessCacheEntry,
+  ACCESS_CACHE_TTL_MS,
+  dirHandleCache,
+  accessCache,
+  accessInFlight,
+  clearAccessCache,
+  clearDirHandleCache,
+} from '../dirCache';
 
-export function onMangaDelete(listener: MangaDeleteListener): () => void {
-  getDeleteListeners().push(listener);
-  return () => {
-    const list = getDeleteListeners();
-    const idx = list.indexOf(listener);
-    if (idx >= 0) list.splice(idx, 1);
-  };
-}
-
-export function notifyDelete(id?: string) {
-  for (const fn of getDeleteListeners()) {
-    try {
-      fn(id);
-    } catch {
-      // Ignore listener errors during cleanup
-    }
-  }
-}
-
-export interface StorageSyncMessage {
-  type: 'library' | 'progress';
-  id?: string;
-}
-
-export const syncChannel =
-  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('manga-reader:sync') : null;
-
-var _localSyncListeners: Set<(msg: StorageSyncMessage) => void> | undefined;
-function getLocalSyncListeners(): Set<(msg: StorageSyncMessage) => void> {
-  return (_localSyncListeners ??= new Set());
-}
-
-export function onStorageSync(listener: (msg: StorageSyncMessage) => void): () => void {
-  const listeners = getLocalSyncListeners();
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-export function broadcastSync(msg: StorageSyncMessage): void {
-  for (const listener of getLocalSyncListeners()) {
-    try {
-      listener(msg);
-    } catch (e) {
-      console.warn('Error in local storage sync listener:', e);
-    }
-  }
-
-  if (syncChannel && typeof MessageEvent !== 'undefined') {
-    try {
-      syncChannel.dispatchEvent(new MessageEvent('message', { data: msg }));
-    } catch {
-      // Ignore dispatch failure
-    }
-  }
-
-  try {
-    syncChannel?.postMessage(msg);
-  } catch {
-    // Ignore postMessage failure
-  }
-}
+export {
+  type MangaDeleteListener,
+  onMangaDelete,
+  notifyDelete,
+  type StorageSyncMessage,
+  syncChannel,
+  onStorageSync,
+  broadcastSync,
+  type AccessCacheEntry,
+  ACCESS_CACHE_TTL_MS,
+  dirHandleCache,
+  accessCache,
+  clearAccessCache,
+  clearDirHandleCache,
+};
 
 let activeRepo: LibraryRepo | null = null;
 let cachedSummaries: Summary[] | null = null;
@@ -134,43 +99,7 @@ let cachedBookmarkedMangaIds: Set<string> | null = null;
 let cachedMangaBookmarkedIds: Set<string> | null = null;
 let bookmarkCachePromise: Promise<void> | null = null;
 let bookmarkGeneration = 0;
-
 const MAX_CACHED_DIR_HANDLES = 500;
-export const dirHandleCache = new Map<string, FileSystemDirectoryHandle>();
-export const ACCESS_CACHE_TTL_MS = 7500;
-
-export interface AccessCacheEntry {
-  granted: boolean;
-  timestamp: number;
-  expiresAt: number;
-}
-
-export const accessCache = new Map<string, AccessCacheEntry>();
-const accessInFlight = new Map<string, Promise<boolean>>();
-
-export function clearAccessCache(mangaId?: string): void {
-  if (mangaId) {
-    accessCache.delete(mangaId);
-    accessInFlight.delete(mangaId);
-  } else {
-    accessCache.clear();
-    accessInFlight.clear();
-  }
-}
-
-export function clearDirHandleCache(mangaId?: string): void {
-  clearAccessCache(mangaId);
-  if (mangaId) {
-    const prefix = `${mangaId}:`;
-    for (const key of dirHandleCache.keys()) {
-      if (key.startsWith(prefix)) {
-        dirHandleCache.delete(key);
-      }
-    }
-  } else {
-    dirHandleCache.clear();
-  }
-}
 
 export function invalidateSummaryCache(): void {
   cachedSummaries = null;
@@ -1111,15 +1040,16 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
 
     try {
       if (!h) {
-        h = m.handle;
+        if (!m.handle) throw new Error('Directory handle unavailable');
+        let currHandle: FileSystemDirectoryHandle = m.handle;
         let subPath = '';
         for (const part of dirParts) {
           subPath = subPath ? `${subPath}/${part}` : part;
           const subKey = `${m.id}:${m.updatedAt}:${subPath}`;
-          let subHandle = dirHandleCache.get(subKey);
+          let subHandle: FileSystemDirectoryHandle | undefined = dirHandleCache.get(subKey);
           if (!subHandle) {
             subHandle = await withinTime(
-              h.getDirectoryHandle(part),
+              currHandle.getDirectoryHandle(part),
               limits.ioTimeoutMs,
               'Opening folder',
             );
@@ -1129,14 +1059,16 @@ export async function fileFor(m: Manga, p: Page): Promise<File> {
             }
             dirHandleCache.set(subKey, subHandle);
           }
-          h = subHandle;
+          currHandle = subHandle;
         }
         if (dirHandleCache.size >= MAX_CACHED_DIR_HANDLES) {
           const oldest = dirHandleCache.keys().next().value;
           if (oldest) dirHandleCache.delete(oldest);
         }
-        dirHandleCache.set(cacheKey, h);
+        dirHandleCache.set(cacheKey, currHandle);
+        h = currHandle;
       }
+      if (!h) throw new Error('Directory handle unavailable');
       const handle = await withinTime(
         h.getFileHandle(parts.at(-1)!),
         limits.ioTimeoutMs,

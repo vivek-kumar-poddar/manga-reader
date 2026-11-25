@@ -152,6 +152,8 @@ pub fn record_diagnostic(
     state: State<'_, DiagnosticsState>,
     entry: DiagnosticInput,
 ) -> Option<DiagnosticRecord> {
+    log::warn!("[DIAGNOSTIC] {}: {} ({:?})", entry.operation, entry.message, entry.safe_identifier);
+    eprintln!("[DIAGNOSTIC] {}: {} ({:?})", entry.operation, entry.message, entry.safe_identifier);
     state.record(entry)
 }
 

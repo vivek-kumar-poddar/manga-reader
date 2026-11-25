@@ -250,8 +250,14 @@ export async function sortLibraryEntries(
   entries: SortableSummary[],
   shelfSort?: Settings['shelfSort'],
 ): Promise<string[]> {
-  return invokeCommand('sort_library_entries', {
-    entries,
-    shelfSort,
-  });
+  try {
+    const res = await invokeCommand('sort_library_entries', {
+      entries,
+      shelfSort,
+    });
+    return Array.isArray(res) ? res : entries.map((e) => e.id);
+  } catch (err) {
+    console.warn('Tauri sortLibraryEntries failed, falling back to identity order:', err);
+    return entries.map((e) => e.id);
+  }
 }

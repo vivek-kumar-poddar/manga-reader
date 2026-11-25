@@ -456,6 +456,87 @@ Verification battery:
 
 ---
 
+### Elimination of Layout Shifting & Scrollbar Removal on Dropdown Activation (Step 51)
+
+- **Root Cause Identification**:
+  - Radix UI Select components (`@radix-ui/react-select`) internally wrap dropdown menus in `react-remove-scroll` and `react-remove-scroll-bar`.
+  - When any dropdown opens (chapter selector, page layout, reading mode, size selector, autoplay presets, shelf sorting, or settings options), `react-remove-scroll-bar` dynamically attaches `data-scroll-locked` to `document.body` and injects a runtime `<style>` sheet setting `body[data-scroll-locked] { overflow: hidden !important; margin-right: <scrollbar_width>px !important; }`.
+  - This removes the standard 15-17px vertical scrollbar from the document window, changing `window.innerWidth` and causing centered elements (`margin: 0 auto`, `align-items: center`, flex and grid layouts) and fixed toolbars to visually jump horizontally by 8-17px, snapping back when the dropdown closes.
+- **Architectural Solution**:
+  - **Permanent Scrollbar Gutter Stabilization**: Added `scrollbar-gutter: stable;` to `html` in `src/style.css`, instructing the browser rendering engine to permanently reserve the scrollbar gutter space. Opening or closing any overlay never changes the document viewport layout width.
+  - **High-Specificity Scroll Lock Neutralization**:
+    - Created high-specificity CSS override rules (`html:root body[data-scroll-locked]`, `html body[data-scroll-locked]`, `body[data-scroll-locked][data-scroll-locked]`, `html[data-scroll-locked]`, `html:root body.with-scroll-bars-hidden`, and `body.with-scroll-bars-hidden`).
+    - Enforced `overflow: auto !important; margin-right: 0 !important; padding-right: 0 !important; position: static !important; --removed-body-scroll-bar-size: 0px !important;`.
+    - Enforced `right: 0 !important;` on `.right-scroll-bar-position` and `margin-right: 0 !important;` on `.width-before-scroll-bar`.
+    - These rules override the injected dynamic styles, completely preventing the scrollbar from being hidden and eliminating artificial body margins or padding shifts.
+- **Verification**:
+  - Verified across reader toolbar dropdowns, library sorting, and settings panels that opening and closing dropdowns causes zero scrollbar disappearance, zero page jitter, and zero layout shift.
+
+---
+
+### Chapter End Slideup Notification Button ("Read Next Ch. {number}") (Step 52)
+
+- **End-of-Chapter Detection Logic**:
+  - Implemented multi-mode detection in `src/reader-tsx/ReaderView.tsx`:
+    - Continuous vertical & webtoon mode: Implemented `checkContinuousEnd()` testing whether the reader has scrolled to the bottom of the last image via `window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 50`, last page offset (`offsets.current[last].bottom - 50`), and DOM element `getBoundingClientRect().bottom <= window.innerHeight + 50`.
+    - Single page & two-page spread mode: Evaluated `groupIndex >= groups.length - 1` reflecting active view of the final page or spread.
+- **Autoplay Suppression**:
+  - Computed `showNextChapterNotification = isAtChapterEnd && !playing && hasNextChapter`.
+  - When autoplay is actively running (`playing === true`), the notification button is completely suppressed.
+- **Smooth Slideup Floating Button**:
+  - Structured `.next-chapter-toast` fixed above `[class="reader-bar reader-bottom organized-bar"]` with horizontal centering (`left: 50%; transform: translate(-50%, 0)`).
+  - Smooth slideup entrance and exit via `cubic-bezier(0.16, 1, 0.3, 1)` transform and opacity transitions.
+  - Adaptive bottom clearance (`68px` desktop, `96px` mobile, and `18px` when reader bars auto-hide).
+  - Formatted button as a modern rounded pill with text `"Read Next Ch. {number}"` + chevron icon, styled with `var(--font-size-button, 14px)` to scale synchronously with the UI multiplier settings.
+- **Verification**:
+  - Tested navigation triggering `goChapter(ci + 1, true)` resetting position and scrolling to top.
+
+---
+
+### Fix Release Binary Blank Dark Page & TDZ Circular Storage Initialization (Step 53)
+
+- **Root Cause Analysis for Blank Dark Screen (`manga-reader.exe`)**:
+  - When opening `manga-reader.exe`, the window background initialized to dark `#18181b` as configured in `tauri.conf.json`, but no UI elements ever rendered into `#root`.
+  - Diagnostics with an automated headless browser uncovered the underlying fatal error:
+    `ReferenceError: Cannot access 'Y' before initialization at http://tauri.localhost/assets/index-*.js:2`
+  - Cause 1 (Circular Dependency & TDZ):
+    - `src/desktop/storage.ts` imported `syncChannel` from `src/web/storage.ts`.
+    - `src/web/storage.ts` imported `TauriSqliteLibraryRepo` from `src/repo.ts`.
+    - `src/repo.ts` imported `broadcastSync`, `clearDirHandleCache`, and `db` from `./storage` (aliased to `src/desktop/storage.ts`).
+    - This circular graph caused Rollup to hoist `syncChannel?.addEventListener(...)` in `desktop/storage.ts` ahead of `const syncChannel = ...` in `web/storage.ts`. At runtime, evaluating `index-*.js` crashed with a top-level `ReferenceError`, stopping module execution before React could mount.
+  - Cause 2 (Desktop Build Command Misalignment):
+    - `src-tauri/tauri.conf.json` had `"beforeBuildCommand": "npm run build"`.
+    - `npm run build` targeted web with PWA service worker and `BrowserRouter` instead of `npm run build:desktop` (`HashRouter` and Tauri native bridges).
+  - Cause 3 (Inline Script in CSP):
+    - `index.html` contained an inline `<script>` dynamically creating `<base href="...">` for GitHub Pages.
+    - Under Tauri's strict Content Security Policy (`default-src 'self'`), inline scripts are rejected without `'unsafe-inline'`.
+- **Architectural Solution**:
+  - **Zero-Dependency Shared Synchronization (`src/sync.ts`)**:
+    - Extracted `syncChannel`, `StorageSyncMessage`, `onStorageSync`, `broadcastSync`, `onMangaDelete`, `notifyDelete`, and `SaveProgressResult` into `src/sync.ts`.
+    - Decoupled both `desktop/storage.ts` and `web/storage.ts` from each other, importing and re-exporting from `src/sync.ts`.
+  - **Shared Directory Handle & Access Cache (`src/dirCache.ts`)**:
+    - Extracted `dirHandleCache`, `accessCache`, `accessInFlight`, `clearAccessCache`, and `clearDirHandleCache` into `src/dirCache.ts`.
+    - Both desktop and web adapters import and re-export without cross-adapter coupling.
+  - **Decoupled Repository (`src/repo.ts`)**:
+    - Removed circular import of `./storage` from `src/repo.ts`.
+    - Implemented self-contained raw IndexedDB cover fallback query using native `indexedDB.open('manga-reader')` without importing `db`.
+  - **Resilient IPC Callbacks (`src/tauri-bridge/tauriApp.ts` & `tauriDb.ts`)**:
+    - Guarded `sortLibraryEntries` to return identity order if IPC returns null or fails.
+    - Guarded `sqliteGetBookmarkedMangaIds` against null responses.
+  - **Tauri Build & CSP Alignment**:
+    - Configured `beforeBuildCommand: "npm run build:desktop"` in `src-tauri/tauri.conf.json`.
+    - Enabled `"devtools"` in `src-tauri/Cargo.toml` for release builds.
+    - Added desktop build plugin transform in `vite.config.ts` to strip the GitHub Pages inline `<script>` from `index.html` on desktop builds, ensuring strict CSP compliance.
+- **Verification**:
+  - `cargo test --manifest-path src-tauri/Cargo.toml`: 88/88 PASS.
+  - `cargo clippy -- -D warnings`: PASS (0 warnings).
+  - `npm run typecheck`: PASS (0 errors across web and desktop tsconfigs).
+  - `npm run build:desktop`: PASS (zero inline script, 0.44 kB `dist/index.html`).
+  - Headless browser automated verification: `dist/index.html` loaded cleanly with 0 errors and rendered 4,314 chars of complete `Reader.` UI.
+  - Native binary verification: `src-tauri\target\release\manga-reader.exe` (17.1 MB) launched cleanly with zero warnings/errors in `Manga Reader.log`.
+
+---
+
 ---
 
 ## 3. Command Reference & Acceptance Benchmarks

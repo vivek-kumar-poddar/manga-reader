@@ -2,7 +2,6 @@ import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { Route, Routes } from 'react-router-dom';
 import { LoaderCircle, X } from 'lucide-react';
 import BookmarksPage from './Bookmarks';
-import useInterfaceMotion from './useInterfaceMotion';
 import { useImport } from './useImport';
 import { ImportDialog } from './ImportDialogs';
 import { applyUpdate, hasUpdate } from './updates';
@@ -69,7 +68,6 @@ export default function App() {
   const imageInput = useRef<HTMLInputElement>(null);
   const pending = useRef<Summary | Manga | undefined>(undefined);
   const standardOnly = useRef(false);
-  useInterfaceMotion(settings.reduced);
   const refresh = async () => setLibrary(await listLibrary());
 
   const {

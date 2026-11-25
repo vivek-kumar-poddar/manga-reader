@@ -15,7 +15,16 @@ import {
   syncChannel,
   onStorageSync,
   broadcastSync,
-} from '../web/storage';
+} from '../sync';
+import {
+  type AccessCacheEntry,
+  ACCESS_CACHE_TTL_MS,
+  dirHandleCache,
+  accessCache,
+  accessInFlight,
+  clearAccessCache,
+  clearDirHandleCache,
+} from '../dirCache';
 
 export type SourceFile = File | { getFile(): Promise<File> };
 export const sessionFiles = new Map<string, Map<string, SourceFile>>();
@@ -28,6 +37,12 @@ export {
   syncChannel,
   onStorageSync,
   broadcastSync,
+  type AccessCacheEntry,
+  ACCESS_CACHE_TTL_MS,
+  dirHandleCache,
+  accessCache,
+  clearAccessCache,
+  clearDirHandleCache,
 };
 
 export function invalidateSummaryCache(): void {
@@ -148,46 +163,11 @@ export function errorMessage(e: unknown): string {
   return 'Unknown error occurred';
 }
 
-export interface AccessCacheEntry {
-  expiresAt: number;
-  granted: boolean;
-  timestamp: number;
-}
-
 export interface MangaDB {
   [key: string]: unknown;
 }
 
 export async function migrateV1ToV2(_tx?: unknown, _d?: unknown): Promise<void> {}
-
-export const ACCESS_CACHE_TTL_MS = 7500;
-export const dirHandleCache = new Map<string, any>();
-export const accessCache = new Map<string, AccessCacheEntry>();
-const accessInFlight = new Map<string, Promise<boolean>>();
-
-export function clearAccessCache(mangaId?: string): void {
-  if (mangaId) {
-    accessCache.delete(mangaId);
-    accessInFlight.delete(mangaId);
-  } else {
-    accessCache.clear();
-    accessInFlight.clear();
-  }
-}
-
-export function clearDirHandleCache(mangaId?: string): void {
-  clearAccessCache(mangaId);
-  if (mangaId) {
-    const prefix = `${mangaId}:`;
-    for (const key of dirHandleCache.keys()) {
-      if (key.startsWith(prefix)) {
-        dirHandleCache.delete(key);
-      }
-    }
-  } else {
-    dirHandleCache.clear();
-  }
-}
 
 export async function fileFor(m: Manga, p: Page): Promise<File> {
   if (!p.path) throw new Error('Desktop page is missing path');

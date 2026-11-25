@@ -7,9 +7,8 @@ import {
   type SaveProgressResult,
   broadcastSync,
   notifyDelete,
-  clearDirHandleCache,
-  db,
-} from './storage';
+} from './sync';
+import { clearDirHandleCache } from './dirCache';
 
 export interface LibraryRepo {
   listLibrary(): Promise<Summary[]>;
@@ -95,8 +94,31 @@ export class TauriSqliteLibraryRepo implements LibraryRepo {
     }
     try {
       if (typeof indexedDB !== 'undefined') {
-        const d = await db;
-        const blob = await d.get('covers', id);
+        const blob = await new Promise<Blob | undefined>((resolve) => {
+          try {
+            const req = indexedDB.open('manga-reader');
+            req.onsuccess = () => {
+              const idb = req.result;
+              if (!idb.objectStoreNames.contains('covers')) {
+                idb.close();
+                return resolve(undefined);
+              }
+              const tx = idb.transaction('covers', 'readonly');
+              const getReq = tx.objectStore('covers').get(id);
+              getReq.onsuccess = () => {
+                idb.close();
+                resolve(getReq.result instanceof Blob ? getReq.result : undefined);
+              };
+              getReq.onerror = () => {
+                idb.close();
+                resolve(undefined);
+              };
+            };
+            req.onerror = () => resolve(undefined);
+          } catch {
+            resolve(undefined);
+          }
+        });
         if (blob instanceof Blob) {
           if (desktopAPI.saveThumbnail) {
             void blob

@@ -8,7 +8,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { useSearchParams, useParams, useNavigate, useLocation } from 'react-router-dom';
-import { X } from 'lucide-react';
+import { ChevronRight, X } from 'lucide-react';
 import { mangaPath, chapterIndex } from '../paths';
 import { limits } from '../limits';
 import { desktopAPI } from '../tauriBridge';
@@ -39,7 +39,7 @@ import { useProgressSave } from '../useProgressSave';
 import { createPageStore, type PageStore } from './pageStore';
 import { LoadingGate, RelinkGate, PreparingGate } from './ReaderGates';
 import { ReaderHeader } from './ReaderHeader';
-import { ReaderFooter } from './ReaderFooter';
+import { ReaderFooter, extractChapterNumber } from './ReaderFooter';
 import { ReaderContent } from './ReaderContent';
 import { ChapterEnd } from './ChapterEnd';
 import { ShortcutsModal } from './ShortcutsModal';
@@ -629,6 +629,48 @@ export function ReaderView({ manga }: { manga: Manga }) {
     };
   }, [ready]);
 
+  const [continuousAtEnd, setContinuousAtEnd] = useState(false);
+
+  const checkContinuousEnd = useCallback(() => {
+    if (latest.current.s.mode !== 'continuous') return false;
+    const ch = metadata.current.chapters[chapterRef.current];
+    if (!ch || !ch.pages.length) return false;
+    const scrollBottom = window.scrollY + window.innerHeight;
+    const docHeight = document.documentElement.scrollHeight;
+    if (docHeight > 0) {
+      if (docHeight <= window.innerHeight + 10) return true;
+      if (scrollBottom >= docHeight - 50) return true;
+    }
+    const lastOffset = offsets.current[ch.pages.length - 1] || offsets.current.at(-1);
+    if (lastOffset && lastOffset.bottom > 0 && scrollBottom >= lastOffset.bottom - 50) {
+      return true;
+    }
+    const nodes = content.current?.querySelectorAll<HTMLElement>('[data-page]');
+    if (nodes && nodes.length > 0) {
+      const lastEl = nodes[nodes.length - 1];
+      if (lastEl && Number(lastEl.dataset.page) === ch.pages.length - 1) {
+        const rect = lastEl.getBoundingClientRect();
+        if (rect.bottom <= window.innerHeight + 50) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, []);
+
+  useEffect(() => {
+    if (s.mode === 'continuous') {
+      const update = () => {
+        setContinuousAtEnd(checkContinuousEnd());
+      };
+      update();
+      const timer = setTimeout(update, 150);
+      return () => clearTimeout(timer);
+    } else {
+      setContinuousAtEnd(false);
+    }
+  }, [ci, s.mode, checkContinuousEnd]);
+
   useEffect(() => {
     if (!ready) return;
     let frame = 0;
@@ -647,6 +689,10 @@ export function ReaderView({ manga }: { manga: Manga }) {
           }
           actions.current.capture();
           actions.current.updateWindow();
+          if (latest.current.s.mode === 'continuous') {
+            const isEnd = checkContinuousEnd();
+            setContinuousAtEnd((prev) => (prev !== isEnd ? isEnd : prev));
+          }
         });
     };
     const move = (e: PointerEvent) => {
@@ -861,6 +907,12 @@ export function ReaderView({ manga }: { manga: Manga }) {
     await flush();
   };
 
+  const hasNextChapter = ci < manga.chapters.length - 1;
+  const nextChapter = hasNextChapter ? manga.chapters[ci + 1] : null;
+  const nextChapterNumber = nextChapter ? extractChapterNumber(nextChapter.name, ci + 1) : '';
+  const isAtChapterEnd = s.mode === 'single' ? groupIndex >= groups.length - 1 : continuousAtEnd;
+  const showNextChapterNotification = isAtChapterEnd && !playing && hasNextChapter;
+
   return (
     <div
       className={'reader reader-' + s.mode + ' layout-' + s.layout}
@@ -958,6 +1010,24 @@ export function ReaderView({ manga }: { manga: Manga }) {
           onNextChapter={() => goChapter(ci + 1)}
           onReadAgain={() => goChapter(ci, true)}
         />
+      )}
+
+      {hasNextChapter && (
+        <div
+          className={`next-chapter-toast ${showNextChapterNotification ? 'visible' : ''} ${bars.bottom ? '' : 'bar-hidden'}`}
+          aria-hidden={!showNextChapterNotification}
+        >
+          <button
+            type="button"
+            className="next-chapter-btn"
+            onClick={() => void goChapter(ci + 1, true)}
+            tabIndex={showNextChapterNotification ? 0 : -1}
+            aria-label={`Read Next Chapter ${nextChapterNumber}`}
+          >
+            <span>Read Next Ch. {nextChapterNumber}</span>
+            <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </div>
       )}
 
       <ReaderFooter

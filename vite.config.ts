@@ -40,7 +40,11 @@ function platformEntryPlugin(desktop: boolean): Plugin {
     },
     transformIndexHtml(html) {
       const entry = desktop ? '/src/main.desktop.tsx' : '/src/main.web.tsx';
-      return html.replace('/src/main.tsx', entry);
+      let transformed = html.replace('/src/main.tsx', entry);
+      if (desktop) {
+        transformed = transformed.replace(/<script>[\s\S]*?appBase[\s\S]*?<\/script>/, '');
+      }
+      return transformed;
     },
   };
 }
