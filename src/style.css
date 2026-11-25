@@ -2270,9 +2270,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   flex-shrink: 0;
   overflow: hidden;
   background: var(--surface);
-  contain: layout paint;
-  content-visibility: auto;
-  contain-intrinsic-size: auto 1000px;
+  contain: layout style;
 }
 
 /* Adaptive Sizing Modes across the Viewports */
@@ -2432,8 +2430,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   display: flex;
   align-items: center;
   gap: 9px;
-  background: color-mix(in srgb, var(--surface) 96%, transparent);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--surface) 98%, transparent);
   transition:
     opacity 0.35s ease,
     transform 0.35s ease;
@@ -3837,10 +3834,6 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
     gap: 4px;
     padding-left: 7px;
     padding-right: 7px;
-  }
-
-  .reader-content .reader-page {
-    content-visibility: auto;
   }
 }
 

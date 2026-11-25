@@ -59,6 +59,8 @@ function PageImage({
   const currentActive = activePage ?? index;
   const distance = Math.abs(index - currentActive);
   const priority = Math.max(1, 100 - distance * 10);
+  const priorityRef = useRef(priority);
+  priorityRef.current = priority;
 
   const { path: pagePath, width: pageWidth, height: pageHeight, dimensionsPending } = page;
   const {
@@ -157,8 +159,6 @@ function PageImage({
             if (visible) {
               setUrl(nativeSrc);
               setError('');
-            } else {
-              setUrl('');
             }
           })
         : () => {};
@@ -198,7 +198,7 @@ function PageImage({
 
       const cancel = enqueueImage({
         key: taskKey,
-        priority,
+        priority: priorityRef.current,
         run: async (signal) => {
           try {
             if (!live || !wanted || signal.aborted) return;
@@ -323,7 +323,6 @@ function PageImage({
     lowQuality,
     retry,
     useBlobFallback,
-    priority,
   ]);
 
   return (
@@ -355,7 +354,6 @@ function PageImage({
           src={url}
           alt={`Page ${index + 1}: ${page.name}`}
           draggable={false}
-          decoding="async"
           onLoad={(e) => {
             if (page.dimensionsPending || !page.width || !page.height) {
               const nw = e.currentTarget.naturalWidth;
