@@ -124,9 +124,7 @@ export default function SettingsPanel({ open, onClose }: { open: boolean; onClos
                 </button>
               </Dialog.Close>
             </div>
-            <Dialog.Description>
-              Make yourself comfortable. Changes save automatically.
-            </Dialog.Description>
+            <Dialog.Description>Preferences save automatically.</Dialog.Description>
           </div>
           <div className="settings-tabs" role="tablist" aria-label="Settings categories">
             {tabs.map((name, i) => (

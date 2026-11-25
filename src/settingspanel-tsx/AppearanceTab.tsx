@@ -38,94 +38,137 @@ export default function AppearanceTab({
     <>
       <section>
         <h3>Appearance</h3>
-        <label>
-          Theme
-          <Dropdown
-            aria-label="Theme"
-            value={s.theme}
-            onChange={(e) => change('theme', e.target.value as Settings['theme'])}
-          >
-            <option value="system">System</option>
-            <option value="light">Light</option>
-            <option value="dark">Dark</option>
-          </Dropdown>
-        </label>
-        <label>
-          Text &amp; UI font scaling
-          <Dropdown
-            aria-label="Text and UI font scaling"
-            value={currentScale}
-            onChange={(e) => handleScaleChange(Number(e.target.value))}
-          >
-            {SCALE_OPTIONS.map((scale) => (
-              <option key={scale} value={scale}>
-                {Math.round(scale * 100)}% ({scale.toFixed(1)}x){scale === 1.0 ? ' (Default)' : ''}
-              </option>
-            ))}
-            {!SCALE_OPTIONS.some((opt) => Math.abs(opt - currentScale) < 0.01) && (
-              <option value={currentScale}>
-                {Math.round(currentScale * 100)}% ({currentScale.toFixed(1)}x)
-              </option>
-            )}
-          </Dropdown>
-        </label>
-        <p className="subtle">
-          Scales all interface text together up to 2x in 10% steps. At 100%: 15px UI text, 14px
-          buttons, 28px headings and titles.
-        </p>
-        <label>
-          Auto-hide reader bars
-          <input
-            type="checkbox"
-            checked={s.autoHideBars}
-            onChange={(e) => change('autoHideBars', e.target.checked)}
-          />
-        </label>
-        <p className="subtle">
-          Turn off to keep reader controls visible. When enabled, move or tap near the top or bottom
-          edge to reveal them.
-        </p>
-        <label>
-          Reduce interface motion
-          <input
-            type="checkbox"
-            checked={s.reduced}
-            onChange={(e) => change('reduced', e.target.checked)}
-          />
-        </label>
-        <p className="subtle">
-          Your system’s reduced-motion preference is also respected. Auto-scroll remains available
-          when you explicitly start it.
-        </p>
+        <div className="setting-row">
+          <div className="setting-info">
+            <label htmlFor="setting-theme" className="setting-title">
+              Theme
+            </label>
+          </div>
+          <div className="setting-control">
+            <Dropdown
+              id="setting-theme"
+              aria-label="Theme"
+              value={s.theme}
+              onChange={(e) => change('theme', e.target.value as Settings['theme'])}
+            >
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </Dropdown>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <label htmlFor="setting-font-scale" className="setting-title">
+              Text &amp; UI font scaling
+            </label>
+            <p className="subtle setting-desc">
+              Scales text, headings, and controls together (80%–200%).
+            </p>
+          </div>
+          <div className="setting-control">
+            <Dropdown
+              id="setting-font-scale"
+              aria-label="Text and UI font scaling"
+              value={currentScale}
+              onChange={(e) => handleScaleChange(Number(e.target.value))}
+            >
+              {SCALE_OPTIONS.map((scale) => (
+                <option key={scale} value={scale}>
+                  {Math.round(scale * 100)}% ({scale.toFixed(1)}x)
+                  {scale === 1.0 ? ' (Default)' : ''}
+                </option>
+              ))}
+              {!SCALE_OPTIONS.some((opt) => Math.abs(opt - currentScale) < 0.01) && (
+                <option value={currentScale}>
+                  {Math.round(currentScale * 100)}% ({currentScale.toFixed(1)}x)
+                </option>
+              )}
+            </Dropdown>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <label htmlFor="setting-auto-hide" className="setting-title">
+              Auto-hide reader bars
+            </label>
+            <p className="subtle setting-desc">
+              Hide reader controls while reading. Hover or tap screen edges to reveal.
+            </p>
+          </div>
+          <div className="setting-control">
+            <input
+              id="setting-auto-hide"
+              type="checkbox"
+              checked={s.autoHideBars}
+              onChange={(e) => change('autoHideBars', e.target.checked)}
+            />
+          </div>
+        </div>
+        <div className="setting-row">
+          <div className="setting-info">
+            <label htmlFor="setting-reduced-motion" className="setting-title">
+              Reduce interface motion
+            </label>
+            <p className="subtle setting-desc">
+              Minimizes UI animations while keeping manual auto-scroll available.
+            </p>
+          </div>
+          <div className="setting-control">
+            <input
+              id="setting-reduced-motion"
+              type="checkbox"
+              checked={s.reduced}
+              onChange={(e) => change('reduced', e.target.checked)}
+            />
+          </div>
+        </div>
       </section>
       <section>
         <h3>Image performance</h3>
-        <label>
-          Lower image resolution on mobile
-          <input
-            type="checkbox"
-            checked={s.lowQuality}
-            onChange={(e) => change('lowQuality', e.target.checked)}
-          />
-        </label>
-        <p className="subtle">
-          When supported, large pages are displayed at up to 1,000 pixels wide on narrow screens.
-          Original files are never changed. Nearby pages load as you read; distant images are
-          released from memory.
-        </p>
+        <div className="setting-row">
+          <div className="setting-info">
+            <label htmlFor="setting-low-quality" className="setting-title">
+              Lower image resolution on mobile
+            </label>
+            <p className="subtle setting-desc">
+              Downscales large pages to 1,000px wide on narrow screens. Originals are never
+              modified.
+            </p>
+          </div>
+          <div className="setting-control">
+            <input
+              id="setting-low-quality"
+              type="checkbox"
+              checked={s.lowQuality}
+              onChange={(e) => change('lowQuality', e.target.checked)}
+            />
+          </div>
+        </div>
       </section>
       <section>
-        <h3>Start fresh</h3>
-        <button
-          className="btn secondary"
-          onClick={() => {
-            setSettings(defaults);
-            notify('Default preferences restored. Your library and progress are unchanged.');
-          }}
-        >
-          <RefreshCw size={16} /> Restore default preferences
-        </button>
-        <p className="subtle">Resets appearance and reading preferences only.</p>
+        <h3>Reset</h3>
+        <div className="setting-row setting-row-actions">
+          <div className="setting-info">
+            <span className="setting-title">Restore default preferences</span>
+            <p className="subtle setting-desc">
+              Resets reading and appearance settings only. Your library stays intact.
+            </p>
+          </div>
+          <div className="setting-control">
+            <div className="button-row">
+              <button
+                className="btn secondary"
+                onClick={() => {
+                  setSettings(defaults);
+                  notify('Default preferences restored. Your library and progress are unchanged.');
+                }}
+              >
+                <RefreshCw size={16} /> Restore defaults
+              </button>
+            </div>
+          </div>
+        </div>
       </section>
     </>
   );

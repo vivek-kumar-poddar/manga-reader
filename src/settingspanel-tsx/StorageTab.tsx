@@ -70,176 +70,193 @@ export default function StorageTab({
           <div>
             <dt>Library</dt>
             <dd>
-              {library.length} titles · {library.reduce((n, m) => n + m.chapterCount, 0)}{' '}
-              chapters
+              {library.length} titles · {library.reduce((n, m) => n + m.chapterCount, 0)} chapters
             </dd>
           </div>
         </dl>
         {storageError && <p role="status">{storageError}</p>}
-        <p className="subtle">
-          {nativeStats
-            ? 'These statistics reflect your local SQLite database and cached thumbnails on disk. Manga files remain in their original folders.'
-            : 'These estimates cover the application database and cached thumbnails, not the size of your manga folders. Quota is an estimate, not reserved disk space.'}
-        </p>
-        <div className="button-row">
-          <button className="btn secondary" onClick={() => void updateStorage()}>
-            <RefreshCw size={16} /> Refresh details
-          </button>
+        <div className="setting-row setting-row-actions">
+          <div className="setting-info">
+            <p className="subtle setting-desc">
+              {nativeStats
+                ? 'Reflects the local database and cached thumbnails. Manga folders remain untouched.'
+                : 'Estimates database and cache usage only; manga folders stay in their original locations.'}
+            </p>
+          </div>
+          <div className="setting-control">
+            <div className="button-row">
+              <button className="btn secondary" onClick={() => void updateStorage()}>
+                <RefreshCw size={16} /> Refresh details
+              </button>
+            </div>
+          </div>
         </div>
       </section>
       <section>
         <h3>What is saved?</h3>
         <ul className="storage-notes">
           <li>
-            <strong>In the database:</strong> titles, chapter and page lists, image
-            dimensions, small cover previews, preferences, and supported folder handles.
-            Reading progress and bookmarks are saved separately in small updates.
+            <strong>Database:</strong> titles, chapter lists, page dimensions, cover previews,
+            preferences, progress, and bookmarks.
           </li>
           <li>
-            <strong>In the thumbnail cache:</strong> cover art and generated previews
-            stored on disk. Original manga pages are not copied into this cache.
+            <strong>Disk cache:</strong> generated cover and page previews. Original manga files are
+            never copied or modified.
           </li>
           <li>
-            <strong>In temporary memory:</strong> selected files and nearby page previews.
-            Standard folder selection needs re-linking after a reload.
+            <strong>Session memory:</strong> active folder handles and nearby page buffers.
           </li>
         </ul>
-        <p className="subtle">
-          Data belongs to this device installation. It does not sync across devices. Manga
-          files remain in their original folders.
-        </p>
+        <p className="subtle">Stored locally on this device only (no cloud sync).</p>
       </section>
       <section>
-        <h3>Backup & restore</h3>
-        <div className="button-row">
-          <button
-            className="btn secondary"
-            onClick={() =>
-              void exportData().catch(() => notify('Could not export backup.'))
-            }
-          >
-            <Download size={16} /> Export metadata
-          </button>
-          <button className="btn blue" onClick={() => inputRef.current?.click()}>
-            <Upload size={16} /> Import backup
-          </button>
-          <input
-            hidden
-            ref={inputRef}
-            type="file"
-            accept="application/json,.json"
-            onChange={(e) => {
-              void importData(e.target.files?.[0]);
-              e.target.value = '';
-            }}
-          />
+        <h3>Backup &amp; restore</h3>
+        <div className="setting-row setting-row-actions">
+          <div className="setting-info">
+            <p className="subtle setting-desc">
+              Saves library metadata, progress, bookmarks, and preferences (no images). Re-link
+              folders after restoring on another device.
+            </p>
+          </div>
+          <div className="setting-control">
+            <div className="button-row">
+              <button
+                className="btn secondary"
+                onClick={() => void exportData().catch(() => notify('Could not export backup.'))}
+              >
+                <Download size={16} /> Export metadata
+              </button>
+              <button className="btn blue" onClick={() => inputRef.current?.click()}>
+                <Upload size={16} /> Import backup
+              </button>
+              <input
+                hidden
+                ref={inputRef}
+                type="file"
+                accept="application/json,.json"
+                onChange={(e) => {
+                  void importData(e.target.files?.[0]);
+                  e.target.value = '';
+                }}
+              />
+            </div>
+          </div>
         </div>
-        <p className="subtle">
-          JSON backups include library metadata, progress, and preferences and
-          bookmarks—not manga images, covers, or folder permissions. Import adds missing
-          titles and replaces matching titles’ metadata. Re-link the original folders on
-          another device.
-        </p>
       </section>
       <section>
         <h3>Clear saved data</h3>
         {confirmAction ? (
-          <div className="inline-confirm" role="group" aria-label="Confirm data removal">
-            <p>
-              {confirmAction === 'progress'
-                ? 'Reset every saved reading position and read marker?'
-                : desktopAPI.isDesktop
-                  ? 'Remove every title, cover preview, and reading position from this application?'
-                  : 'Remove every title, cover preview, and reading position from this browser?'}{' '}
-              Original files stay untouched.
-            </p>
-            <div className="button-row">
-              <button
-                className="btn delete"
-                disabled={clearing}
-                onClick={() => void clear()}
-              >
-                {clearing ? 'Clearing…' : 'Confirm clear'}
-              </button>
-              <button
-                className="btn secondary"
-                disabled={clearing}
-                onClick={() => setConfirmAction(null)}
-              >
-                Cancel
-              </button>
+          <div
+            className="inline-confirm setting-row setting-row-actions"
+            role="group"
+            aria-label="Confirm data removal"
+          >
+            <div className="setting-info">
+              <p>
+                {confirmAction === 'progress'
+                  ? 'Reset every saved reading position and read marker?'
+                  : desktopAPI.isDesktop
+                    ? 'Remove every title, cover preview, and reading position from this application?'
+                    : 'Remove every title, cover preview, and reading position from this browser?'}{' '}
+                Original files stay untouched.
+              </p>
+            </div>
+            <div className="setting-control">
+              <div className="button-row">
+                <button className="btn delete" disabled={clearing} onClick={() => void clear()}>
+                  {clearing ? 'Clearing…' : 'Confirm clear'}
+                </button>
+                <button
+                  className="btn secondary"
+                  disabled={clearing}
+                  onClick={() => setConfirmAction(null)}
+                >
+                  Cancel
+                </button>
+              </div>
             </div>
           </div>
         ) : (
-          <div className="button-row">
-            <button className="btn delete" onClick={() => setConfirmAction('progress')}>
-              Clear reading progress
-            </button>
-            <button className="btn delete" onClick={() => setConfirmAction('all')}>
-              Clear all manga data
-            </button>
-            <button
-              className="btn delete"
-              onClick={async () => {
-                if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
-                  await desktopAPI.clearThumbnails();
-                  await updateStorage();
-                  notify('Thumbnail cache cleared.');
-                } else {
-                  notify('Thumbnail cache is managed by your browser storage.');
-                }
-              }}
-            >
-              Clear thumbnail cache
-            </button>
+          <div className="setting-row setting-row-actions">
+            <div className="setting-info">
+              <p className="subtle setting-desc">
+                Original manga files are never modified. Your preferences stay intact.
+              </p>
+            </div>
+            <div className="setting-control">
+              <div className="button-row">
+                <button className="btn delete" onClick={() => setConfirmAction('progress')}>
+                  Clear reading progress
+                </button>
+                <button
+                  className="btn delete"
+                  onClick={async () => {
+                    if (desktopAPI.isDesktop && desktopAPI.clearThumbnails) {
+                      await desktopAPI.clearThumbnails();
+                      await updateStorage();
+                      notify('Thumbnail cache cleared.');
+                    } else {
+                      notify('Thumbnail cache is managed by your browser storage.');
+                    }
+                  }}
+                >
+                  Clear thumbnail cache
+                </button>
+                <button className="btn delete" onClick={() => setConfirmAction('all')}>
+                  Clear all manga data
+                </button>
+              </div>
+            </div>
           </div>
         )}
-        <p className="subtle">
-          These actions leave your settings and thumbnail cache in place.
-        </p>
       </section>
       <section>
         <h3>Diagnostics</h3>
-        <div className="button-row">
-          <button
-            className="btn secondary"
-            onClick={async () => {
-              const logs = (await desktopAPI.getDiagnostics?.()) ?? [];
-              if (!logs.length) {
-                notify('No diagnostic entries recorded.');
-                return;
-              }
-              const text = logs
-                .map(
-                  (d) =>
-                    `[${new Date(d.timestamp).toISOString()}] [${d.level.toUpperCase()}] [${d.operation}] ${d.code ? `(${d.code}) ` : ''}${d.safeIdentifier ? `[${d.safeIdentifier}] ` : ''}${d.message}${d.durationMs ? ` (${d.durationMs}ms)` : ''}`,
-                )
-                .join('\n');
-              if (desktopAPI.isDesktop && desktopAPI.saveFileDialog) {
-                const saved = await desktopAPI.saveFileDialog(
-                  'manga-reader-diagnostics.txt',
-                  text,
-                );
-                if (saved) {
-                  notify('Diagnostic log saved.');
-                }
-                return;
-              }
-              const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = 'manga-reader-diagnostics.txt';
-              a.click();
-              setTimeout(() => URL.revokeObjectURL(url), 1000);
-            }}
-          >
-            <Download size={16} /> Export diagnostic log
-          </button>
+        <div className="setting-row setting-row-actions">
+          <div className="setting-info">
+            <p className="subtle setting-desc">
+              Saves up to 50 recent diagnostic events for troubleshooting without private file data.
+            </p>
+          </div>
+          <div className="setting-control">
+            <div className="button-row">
+              <button
+                className="btn secondary"
+                onClick={async () => {
+                  const logs = (await desktopAPI.getDiagnostics?.()) ?? [];
+                  if (!logs.length) {
+                    notify('No diagnostic entries recorded.');
+                    return;
+                  }
+                  const text = logs
+                    .map(
+                      (d) =>
+                        `[${new Date(d.timestamp).toISOString()}] [${d.level.toUpperCase()}] [${d.operation}] ${d.code ? `(${d.code}) ` : ''}${d.safeIdentifier ? `[${d.safeIdentifier}] ` : ''}${d.message}${d.durationMs ? ` (${d.durationMs}ms)` : ''}`,
+                    )
+                    .join('\n');
+                  if (desktopAPI.isDesktop && desktopAPI.saveFileDialog) {
+                    const saved = await desktopAPI.saveFileDialog(
+                      'manga-reader-diagnostics.txt',
+                      text,
+                    );
+                    if (saved) {
+                      notify('Diagnostic log saved.');
+                    }
+                    return;
+                  }
+                  const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = 'manga-reader-diagnostics.txt';
+                  a.click();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+              >
+                <Download size={16} /> Export diagnostic log
+              </button>
+            </div>
+          </div>
         </div>
-        <p className="subtle">
-          Keeps a bounded log of the last 50 operation events for troubleshooting without
-          retaining private files.
-        </p>
       </section>
     </>
   );
