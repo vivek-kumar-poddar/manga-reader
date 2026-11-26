@@ -201,7 +201,6 @@ button {
 }
 
 .modal-heading .dialog-heading h2,
-.bar-popover-panel h3,
 .manga-info h3,
 .bookmark-card h3 {
   font-size: var(--font-size-title, 15px) !important;
@@ -2819,19 +2818,19 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   position: absolute;
   bottom: calc(100% + 14px);
   right: 0;
-  width: 278px;
+  width: 272px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   background: var(--surface);
+  color: var(--text);
   border: 0 !important;
-  border-radius: 7px;
-  padding: 18px;
+  border-radius: var(--control-radius);
+  padding: 16px;
   box-shadow: var(--floating-shadow);
   white-space: normal;
   max-height: calc(100dvh - 145px);
   overflow: auto;
-}
-
-.bar-popover-panel h3 {
-  margin-bottom: 15px;
 }
 
 .bar-popover-panel label {
@@ -2839,21 +2838,31 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin: 12px 0;
+  min-height: 36px;
+  margin: 0;
+  font-size: var(--font-size-ui, 15px);
+  font-weight: 600;
+  color: var(--text);
 }
 
 .bar-popover-panel label select,
 .bar-popover-panel label>.dropdown-trigger {
-  max-width: 135px;
+  width: 128px;
+  min-width: 112px;
+  max-width: 140px;
+  flex-shrink: 0;
 }
 
 .bar-popover-panel input[type='number'] {
-  width: 80px;
+  width: 128px;
+  text-align: right;
+  flex-shrink: 0;
 }
 
 .zoom-popover-panel {
   width: 220px;
   padding: 12px 14px;
+  gap: 0;
 }
 
 .zoom-panel-header {
@@ -2898,33 +2907,48 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 
 .popover-menu-actions {
   border-top: 1px solid var(--line);
-  padding-top: 8px;
-  margin-top: 16px;
-}
-
-.popover-menu-actions button {
+  padding-top: 10px;
+  margin-top: 2px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  background: transparent;
-  border: 0;
-  padding: 10px 4px;
-  font-size: 16px;
-  width: 100%;
-  text-align: left;
-  border-radius: 4px;
-  margin: 2px 0;
-  box-shadow: none;
 }
 
-.popover-menu-actions button:hover {
+.popover-menu-actions .btn,
+:root.dark .popover-menu-actions .btn,
+.dark .popover-menu-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: var(--control-size);
+  padding: 8px 12px;
   background: var(--soft);
+  color: var(--text);
+  border: none !important;
+  border-radius: var(--control-radius);
+  font-size: var(--font-size-button, 14px);
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  transition: var(--transition);
+}
+
+.popover-menu-actions .btn:not(:disabled):hover,
+:root.dark .popover-menu-actions .btn:not(:disabled):hover,
+.dark .popover-menu-actions .btn:not(:disabled):hover {
+  background: var(--extra-soft);
+  color: var(--text);
+  box-shadow: none !important;
 }
 
 .popover-page-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   border-top: 1px solid var(--line);
-  margin-top: 7px;
-  padding-top: 7px;
+  padding-top: 10px;
+  margin-top: 2px;
 }
 
 /* Edge Progress Engine Layer */
@@ -2988,50 +3012,42 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 10px 22px;
-  background: var(--btn-dark-blue, #2563eb) !important;
-  color: #ffffff !important;
+  min-height: var(--control-size);
+  padding: 9px 16px;
+  background: var(--btn-dark-blue, #2953ed) !important;
+  color: var(--color-white, #ffffff) !important;
   font-family: var(--font-ui);
   font-size: var(--font-size-button, 14px);
   font-weight: 500;
-  line-height: 1.4;
-  border-radius: 9999px;
-  border: 1px solid rgba(255, 255, 255, 0.2) !important;
-  box-shadow:
-    0 4px 18px rgba(0, 0, 0, 0.28),
-    0 2px 6px rgba(0, 0, 0, 0.16) !important;
+  line-height: 1.35;
+  border-radius: var(--control-radius);
+  border: none !important;
+  box-shadow: var(--floating-shadow) !important;
   cursor: pointer;
   white-space: nowrap;
   user-select: none;
-  transition:
-    transform 0.15s ease,
-    background-color 0.2s ease,
-    box-shadow 0.2s ease;
+  transition: var(--transition);
 }
 
 .next-chapter-toast .next-chapter-btn:hover {
   background: #1d4ed8 !important;
-  transform: scale(1.03);
-  box-shadow:
-    0 6px 22px rgba(0, 0, 0, 0.35),
-    0 3px 8px rgba(0, 0, 0, 0.2) !important;
+  color: var(--color-white, #ffffff) !important;
+  box-shadow: var(--floating-shadow) !important;
 }
 
 .next-chapter-toast .next-chapter-btn svg {
   width: calc(var(--font-size-button, 14px) * 1.15) !important;
   height: calc(var(--font-size-button, 14px) * 1.15) !important;
   stroke: currentColor;
-  color: #ffffff !important;
+  color: var(--color-white, #ffffff) !important;
   flex-shrink: 0;
 }
 
 :root.dark .next-chapter-toast .next-chapter-btn,
 .dark .next-chapter-toast .next-chapter-btn {
-  background: var(--btn-dark-blue, #2563eb) !important;
-  color: #ffffff !important;
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.55),
-    0 2px 8px rgba(0, 0, 0, 0.35) !important;
+  background: var(--btn-dark-blue, #2953ed) !important;
+  color: var(--color-white, #ffffff) !important;
+  box-shadow: var(--floating-shadow) !important;
 }
 
 :root.dark .next-chapter-toast .next-chapter-btn:hover,

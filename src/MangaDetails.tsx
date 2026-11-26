@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { BookOpen, BookMarked, Home, Search, Settings, FolderSync } from 'lucide-react';
 import { Cover, IconButton, ThemeButton, useApp } from './App';
 import Dropdown from './Dropdown';
 import { getManga, errorMessage, syncChannel, access, type Manga } from './data';
-import { mangaPath } from './paths';
+import { folderSlug, mangaPath } from './paths';
 
 type ChapterSort = 'first' | 'last' | 'unread';
 
@@ -12,7 +12,8 @@ export default function MangaDetails() {
   const { slug } = useParams();
   const nav = useNavigate();
   const { library, openSettings, relink, notify } = useApp();
-  const summary = library.find((entry) => entry.slug === slug);
+  const summary = library.find((entry) => (entry.slug || folderSlug(entry.title)) === slug);
+  const summaryId = summary?.id;
   const [manga, setManga] = useState<Manga>();
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState('');
@@ -20,20 +21,21 @@ export default function MangaDetails() {
   const [chapterQuery, setChapterQuery] = useState('');
   const [retry, setRetry] = useState(0);
   const [needsRelink, setNeedsRelink] = useState(false);
+  const mangaRef = useRef(manga);
+  mangaRef.current = manga;
+  const summaryRef = useRef(summary);
+  summaryRef.current = summary;
 
-  const checkFolderAccess = useCallback(
-    async (target?: Manga | typeof summary) => {
-      const item = target || manga || summary;
-      if (!item) return;
-      try {
-        const allowed = await access(item);
-        setNeedsRelink(!allowed);
-      } catch {
-        setNeedsRelink(true);
-      }
-    },
-    [manga, summary],
-  );
+  const checkFolderAccess = useCallback(async (target?: Manga | typeof summary) => {
+    const item = target || mangaRef.current || summaryRef.current;
+    if (!item) return;
+    try {
+      const allowed = await access(item);
+      setNeedsRelink(!allowed);
+    } catch {
+      setNeedsRelink(true);
+    }
+  }, []);
 
   useEffect(() => {
     if (slug === 'index.html') {
@@ -44,12 +46,17 @@ export default function MangaDetails() {
   useEffect(() => {
     let live = true;
     let revision = 0;
+    if (!summaryId) {
+      setManga(undefined);
+      setLoading(false);
+      return;
+    }
     setManga(undefined);
     setLoading(true);
     const load = async () => {
       const request = ++revision;
       try {
-        const result = summary ? await getManga(summary.id) : undefined;
+        const result = await getManga(summaryId);
         if (live && request === revision) {
           setManga(result);
           setFailure('');
@@ -68,7 +75,7 @@ export default function MangaDetails() {
       }
     };
     const onSync = (e: MessageEvent) => {
-      if (!e.data?.id || e.data.id === summary?.id) {
+      if (!e.data?.id || e.data.id === summaryId) {
         void load();
         void checkFolderAccess();
       }
@@ -84,7 +91,7 @@ export default function MangaDetails() {
       document.removeEventListener('visibilitychange', visible);
       syncChannel?.removeEventListener('message', onSync);
     };
-  }, [summary, retry, checkFolderAccess]);
+  }, [summaryId, retry, checkFolderAccess]);
 
   const handleRelink = async () => {
     const target = manga || summary;

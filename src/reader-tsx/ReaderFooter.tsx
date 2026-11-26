@@ -185,9 +185,8 @@ export function ReaderFooter({
             <MoreHorizontal size={18} />
           </summary>
           <div className="bar-popover-panel">
-            <h3>Autoplay</h3>
             <label>
-              {s.mode === 'continuous' ? 'Seconds per screen' : 'Seconds per page'}
+              {s.mode === 'continuous' ? 'Sec / screen' : 'Sec / page'}
               <Dropdown
                 aria-label={
                   s.mode === 'continuous'
@@ -205,7 +204,7 @@ export function ReaderFooter({
               >
                 {[2, 3, 4, 5].map((n) => (
                   <option value={n} key={n}>
-                    {n} seconds
+                    {n}s
                   </option>
                 ))}
                 <option value="custom">Custom</option>
@@ -213,7 +212,7 @@ export function ReaderFooter({
             </label>
             {s.customSeconds && (
               <label>
-                Custom seconds
+                Custom
                 <input
                   aria-label={
                     s.mode === 'continuous'
@@ -234,11 +233,6 @@ export function ReaderFooter({
                 />
               </label>
             )}
-            <p className="subtle">
-              {s.mode === 'continuous'
-                ? 'Scrolls one screen height in this time, regardless of page length. More seconds means slower scrolling.'
-                : 'Turns to the next page or spread after this time.'}
-            </p>
             <label>
               Chapter end
               <Dropdown
@@ -258,30 +252,34 @@ export function ReaderFooter({
               </Dropdown>
             </label>
             <div className="popover-menu-actions">
-              <button className="btn" onClick={onToggleBookmark}>
+              <button className="btn secondary" onClick={onToggleBookmark}>
                 <Bookmark size={16} />
-                {bookmarked ? 'Remove this bookmark' : 'Bookmark this page'}
+                {bookmarked ? 'Remove bookmark' : 'Bookmark page'}
               </button>
               <button
-                className="btn"
+                className="btn secondary"
                 onClick={async () => {
                   await onBeforeNavigate();
                   navigate('/bookmarks');
                 }}
               >
-                <BookMarked size={16} /> View bookmarks
+                <BookMarked size={16} /> Bookmarks
               </button>
               {s.mode === 'single' && (
                 <div className="popover-page-buttons">
-                  <button className="btn" disabled={groupIndex === 0} onClick={() => onStep(-1)}>
-                    <ChevronLeft size={16} /> Previous page
+                  <button
+                    className="btn secondary"
+                    disabled={groupIndex === 0}
+                    onClick={() => onStep(-1)}
+                  >
+                    <ChevronLeft size={16} /> Prev
                   </button>
                   <button
-                    className="btn"
+                    className="btn secondary"
                     disabled={groupIndex === totalGroups - 1}
                     onClick={() => onStep(1)}
                   >
-                    Next page <ChevronRight size={16} />
+                    Next <ChevronRight size={16} />
                   </button>
                 </div>
               )}
