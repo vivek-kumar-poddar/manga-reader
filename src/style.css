@@ -368,9 +368,8 @@ button svg {
 
 .btn:not(:disabled):hover,
 button:not(:disabled):hover {
-  background: var(--btn-hover);
+  background: color-mix(in srgb, var(--btn-dark) 65%, #000);
   color: var(--color-white);
-  box-shadow: var(--card-hover-shadow);
 }
 
 /* Dark Theme Buttons: white in dark theme */
@@ -388,7 +387,8 @@ button:not(:disabled):hover {
 .dark .btn:not(:disabled):hover,
 :root.dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover,
 .dark button:not(.btn.icon):not(.icon-button):not(.btn.blue):not(.btn.delete):not(.close-btn):not(.manga-bookmark-btn):not(.manga-info-btn):not(.relink-needed-btn):not(.menu-popover button):not(:disabled):hover {
-  background: var(--btn-hover);
+  background: color-mix(in srgb, var(--btn-dark) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 /* Flex Space Between for Buttons with Text and Icons */
@@ -451,7 +451,7 @@ a.icon-button:focus-visible {
 .icon-button:focus-visible {
   background: transparent !important;
   box-shadow: none !important;
-  color: var(--text) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000) !important;
 }
 
 :root.dark .btn.icon,
@@ -473,7 +473,7 @@ a.icon-button:focus-visible {
 .dark .icon-button:focus-visible {
   background: transparent !important;
   box-shadow: none !important;
-  color: #ffffff !important;
+  color: color-mix(in srgb, var(--text) 25%, #fff) !important;
 }
 
 /* 5.3 Upload & Primary Action Buttons (.btn.blue) */
@@ -486,9 +486,8 @@ a.icon-button:focus-visible {
 }
 
 .btn.blue:not(:disabled):hover {
-  background: #1d4ed8 !important;
+  background: color-mix(in srgb, var(--btn-dark-blue, #2953ed) 82%, #000) !important;
   color: #ffffff !important;
-  box-shadow: var(--card-hover-shadow) !important;
 }
 
 .btn.blue svg {
@@ -505,9 +504,8 @@ a.icon-button:focus-visible {
 
 :root.dark .btn.blue:not(:disabled):hover,
 .dark .btn.blue:not(:disabled):hover {
-  background: #1d4ed8 !important;
-  color: #ffffff !important;
-  box-shadow: var(--card-hover-shadow) !important;
+  background: color-mix(in srgb, var(--btn-dark-blue, #2953ed) 84%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 20%, #fff) !important;
 }
 
 .btn.blue.is-open {
@@ -516,7 +514,7 @@ a.icon-button:focus-visible {
 }
 
 .btn.blue.is-open:not(:disabled):hover {
-  background: #a81f1f !important;
+  background: color-mix(in srgb, #c82828 82%, #000) !important;
 }
 
 :root.dark .btn.blue.is-open,
@@ -527,7 +525,8 @@ a.icon-button:focus-visible {
 
 :root.dark .btn.blue.is-open:not(:disabled):hover,
 .dark .btn.blue.is-open:not(:disabled):hover {
-  background: #ab2e2e !important;
+  background: color-mix(in srgb, #8f2424 82%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 20%, #fff) !important;
 }
 
 /* 5.4 Delete & Danger Action Buttons (.btn.delete) */
@@ -545,10 +544,9 @@ button.danger-text,
 .btn.delete:focus-visible,
 button.danger-text:not(:disabled):hover,
 button.danger-text:focus-visible {
-  background: #dc2626 !important;
-  border-color: #991b1b !important;
+  background: color-mix(in srgb, #dc2626 85%, #000) !important;
+  border-color: color-mix(in srgb, #dc2626 70%, #000) !important;
   color: #ffffff !important;
-  box-shadow: var(--shadow);
 }
 
 .btn.delete:not(:disabled):hover svg,
@@ -574,9 +572,9 @@ button.danger-text:focus-visible svg {
 .dark .btn.delete:focus-visible,
 :root.dark button.danger-text:not(:disabled):hover,
 .dark button.danger-text:not(:disabled):hover {
-  background: #b91c1c !important;
-  border-color: #7f1d1d !important;
-  color: #ffffff !important;
+  background: color-mix(in srgb, #b91c1c 82%, #fff) !important;
+  border-color: color-mix(in srgb, #b91c1c 75%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 20%, #fff) !important;
 }
 
 /* Icon-only delete button (e.g. Trash2 in bookmark cards) */
@@ -593,7 +591,7 @@ button.danger-text:focus-visible svg {
 .bookmark-remove:not(:disabled):hover,
 .bookmark-remove:focus-visible {
   background: transparent !important;
-  color: #dc2626 !important;
+  color: color-mix(in srgb, #dc2626 80%, #000) !important;
 }
 
 :root.dark .btn.delete.icon,
@@ -611,7 +609,7 @@ button.danger-text:focus-visible svg {
 :root.dark .bookmark-remove:not(:disabled):hover,
 .dark .bookmark-remove:not(:disabled):hover {
   background: transparent !important;
-  color: #ef4444 !important;
+  color: color-mix(in srgb, #ef4444 75%, #fff) !important;
 }
 
 /* 5.5 Secondary Buttons (.btn.secondary) */
@@ -626,8 +624,8 @@ button.danger-text:focus-visible svg {
 
 .btn.secondary:not(:disabled):hover,
 .secondary:not(:disabled):hover {
-  background: var(--extra-soft);
-  color: var(--text);
+  background: color-mix(in srgb, var(--soft) 98%, #000);
+  color: color-mix(in srgb, var(--text) 65%, #000);
 }
 
 :root.dark .btn.secondary,
@@ -642,8 +640,8 @@ button.danger-text:focus-visible svg {
 .dark .btn.secondary:not(:disabled):hover,
 :root.dark .secondary:not(:disabled):hover,
 .dark .secondary:not(:disabled):hover {
-  background: var(--soft);
-  color: var(--text);
+  background: color-mix(in srgb, var(--surface) 80%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 a.secondary.no-bookmark-browse-btn {
@@ -684,7 +682,7 @@ a.secondary.no-bookmark-browse-btn {
 .close-btn:focus-visible {
   background: transparent !important;
   box-shadow: none !important;
-  color: var(--text) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000) !important;
 }
 
 :root.dark .close-btn,
@@ -700,7 +698,7 @@ a.secondary.no-bookmark-browse-btn {
 .dark .close-btn:focus-visible {
   background: transparent !important;
   box-shadow: none !important;
-  color: #ffffff !important;
+  color: color-mix(in srgb, var(--text) 25%, #fff) !important;
 }
 
 /* 5.7 Text Buttons Reset */
@@ -716,7 +714,12 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .text-button:hover {
-  color: var(--text);
+  color: color-mix(in srgb, var(--text) 65%, #000);
+}
+
+:root.dark .text-button:hover,
+.dark .text-button:hover {
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 /* ==========================================================================
@@ -738,9 +741,8 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .dropdown-trigger:not(:disabled):hover {
-  background: var(--btn-hover);
+  background: color-mix(in srgb, var(--btn-dark) 65%, #000);
   color: var(--color-white);
-  box-shadow: var(--card-shadow);
 }
 
 .dark .dropdown-trigger {
@@ -749,8 +751,8 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .dark .dropdown-trigger:not(:disabled):hover {
-  background: var(--extra-soft);
-  color: var(--text);
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 .dropdown-trigger>span:first-child {
@@ -828,9 +830,15 @@ a.secondary.no-bookmark-browse-btn {
 }
 
 .dropdown-item[data-highlighted] {
-  background: var(--extra-soft);
-  color: var(--text);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+  color: color-mix(in srgb, var(--text) 65%, #000);
   outline: none;
+}
+
+:root.dark .dropdown-item[data-highlighted],
+.dark .dropdown-item[data-highlighted] {
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 .dropdown-item[data-state='checked'] {
@@ -1478,8 +1486,16 @@ summary.card-menu-trigger svg {
 
 .manga-bookmark-btn:hover,
 .manga-bookmark-btn:focus-visible {
-  color: var(--text);
-  background: var(--soft);
+  color: color-mix(in srgb, var(--text) 65%, #000);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+}
+
+:root.dark .manga-bookmark-btn:hover,
+.dark .manga-bookmark-btn:hover,
+:root.dark .manga-bookmark-btn:focus-visible,
+.dark .manga-bookmark-btn:focus-visible {
+  color: color-mix(in srgb, var(--text) 25%, #fff);
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
 }
 
 .manga-bookmark-btn.bookmarked {
@@ -1501,8 +1517,16 @@ summary.card-menu-trigger svg {
 
 .manga-info-btn:hover,
 .manga-info-btn:focus-visible {
-  color: var(--text);
-  background: var(--soft);
+  color: color-mix(in srgb, var(--text) 65%, #000);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+}
+
+:root.dark .manga-info-btn:hover,
+.dark .manga-info-btn:hover,
+:root.dark .manga-info-btn:focus-visible,
+.dark .manga-info-btn:focus-visible {
+  color: color-mix(in srgb, var(--text) 25%, #fff);
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
 }
 
 .relink-needed-btn {
@@ -1521,8 +1545,15 @@ summary.card-menu-trigger svg {
 
 .relink-needed-btn:hover,
 .relink-needed-btn:focus-visible {
-  color: var(--text);
+  color: color-mix(in srgb, var(--text) 65%, #000);
   text-decoration: underline;
+}
+
+:root.dark .relink-needed-btn:hover,
+.dark .relink-needed-btn:hover,
+:root.dark .relink-needed-btn:focus-visible,
+.dark .relink-needed-btn:focus-visible {
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 /* ==========================================================================
@@ -1634,7 +1665,14 @@ summary.card-menu-trigger svg {
 }
 
 .menu-popover button:hover {
-  background: var(--soft);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+  color: color-mix(in srgb, var(--text) 65%, #000);
+}
+
+:root.dark .menu-popover button:hover,
+.dark .menu-popover button:hover {
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 /* Tooltips Context Mechanics */
@@ -1690,8 +1728,8 @@ summary.card-menu-trigger svg {
 }
 
 .bar-center.header-selectors button:hover {
-  color: var(--text);
-  background: color-mix(in srgb, var(--soft) 95%, black 5%) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000);
+  background: color-mix(in srgb, var(--soft) 86%, #000) !important;
   border-color: color-mix(in srgb, var(--soft) 95%, black) !important;
 }
 
@@ -1699,8 +1737,10 @@ summary.card-menu-trigger svg {
   background: var(--soft) !important;
 }
 
-:root.dark .bar-center.header-selectors button:hover {
-  background: var(--btn-hover) !important;
+:root.dark .bar-center.header-selectors button:hover,
+.dark .bar-center.header-selectors button:hover {
+  background: color-mix(in srgb, var(--soft) 78%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 button.dropdown-trigger.chapter-select {
@@ -1711,20 +1751,29 @@ button.dropdown-trigger.chapter-select {
 }
 
 button.dropdown-trigger.chapter-select:hover {
-  color: var(--text) !important;
-  background: var(--soft) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000) !important;
+  background: color-mix(in srgb, var(--soft) 86%, #000) !important;
+}
+
+:root.dark button.dropdown-trigger.chapter-select:hover,
+.dark button.dropdown-trigger.chapter-select:hover {
+  color: color-mix(in srgb, var(--text) 25%, #fff) !important;
+  background: color-mix(in srgb, var(--soft) 78%, #fff) !important;
 }
 
 button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn) {
   background: var(--soft) !important;
 }
 
-button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
-  background: var(--soft) !important;
+button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
+  background: color-mix(in srgb, var(--soft) 86%, #000) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000) !important;
 }
 
-:root.dark button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
-  background: var(--btn-hover) !important;
+:root.dark button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover,
+.dark button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
+  background: color-mix(in srgb, var(--soft) 78%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 25%, #fff) !important;
 }
 
 /* ==========================================================================
@@ -1767,7 +1816,13 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 }
 
 .bookmark-navigation .btn.icon:hover {
-  background: var(--btn-hover) !important;
+  background: color-mix(in srgb, var(--btn-dark) 65%, #000) !important;
+}
+
+:root.dark .bookmark-navigation .btn.icon:hover,
+.dark .bookmark-navigation .btn.icon:hover {
+  background: color-mix(in srgb, var(--btn-dark) 78%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 25%, #fff) !important;
 }
 
 /* Horizontal Track Modules */
@@ -1967,13 +2022,14 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 }
 
 .bookmark-tab-button:hover {
-  color: var(--text);
-  background: rgba(0, 0, 0, 0.04) !important;
+  color: color-mix(in srgb, var(--text) 65%, #000);
+  background: color-mix(in srgb, var(--soft) 88%, #000) !important;
 }
 
-:root.dark .bookmark-tab-button:hover {
-  color: #ffffff;
-  background: rgba(255, 255, 255, 0.04) !important;
+:root.dark .bookmark-tab-button:hover,
+.dark .bookmark-tab-button:hover {
+  color: color-mix(in srgb, var(--text) 25%, #fff);
+  background: color-mix(in srgb, var(--soft) 80%, #fff) !important;
 }
 
 .bookmark-tab-button[aria-selected='true'] {
@@ -2810,8 +2866,17 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 
 .zoom-trigger:hover,
 .bar-popover[open]>summary {
-  background: var(--soft);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+  color: color-mix(in srgb, var(--text) 65%, #000);
   border-color: var(--line);
+}
+
+:root.dark .zoom-trigger:hover,
+.dark .zoom-trigger:hover,
+:root.dark .bar-popover[open]>summary,
+.dark .bar-popover[open]>summary {
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 .bar-popover-panel {
@@ -2934,12 +2999,15 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   transition: var(--transition);
 }
 
-.popover-menu-actions .btn:not(:disabled):hover,
+.popover-menu-actions .btn:not(:disabled):hover {
+  background: color-mix(in srgb, var(--soft) 84%, #000);
+  color: color-mix(in srgb, var(--text) 65%, #000);
+}
+
 :root.dark .popover-menu-actions .btn:not(:disabled):hover,
 .dark .popover-menu-actions .btn:not(:disabled):hover {
-  background: var(--extra-soft);
-  color: var(--text);
-  box-shadow: none !important;
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
 }
 
 .popover-page-buttons {
@@ -3030,9 +3098,8 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 }
 
 .next-chapter-toast .next-chapter-btn:hover {
-  background: #1d4ed8 !important;
+  background: color-mix(in srgb, var(--btn-dark-blue, #2953ed) 82%, #000) !important;
   color: var(--color-white, #ffffff) !important;
-  box-shadow: var(--floating-shadow) !important;
 }
 
 .next-chapter-toast .next-chapter-btn svg {
@@ -3052,7 +3119,8 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
 
 :root.dark .next-chapter-toast .next-chapter-btn:hover,
 .dark .next-chapter-toast .next-chapter-btn:hover {
-  background: #1d4ed8 !important;
+  background: color-mix(in srgb, var(--btn-dark-blue, #2953ed) 84%, #fff) !important;
+  color: color-mix(in srgb, var(--text) 20%, #fff) !important;
 }
 
 /* ==========================================================================
@@ -3283,11 +3351,16 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):hover {
   font-weight: 600;
 }
 
-.settings-tabs button.btn:hover,
+.settings-tabs button.btn:hover {
+  color: color-mix(in srgb, var(--text) 65%, #000);
+  background: color-mix(in srgb, var(--soft) 86%, #000);
+  box-shadow: none;
+}
+
 :root.dark .settings-tabs button.btn:hover,
 .dark .settings-tabs button.btn:hover {
-  color: var(--text);
-  background: var(--soft);
+  color: color-mix(in srgb, var(--text) 25%, #fff);
+  background: color-mix(in srgb, var(--soft) 78%, #fff);
   box-shadow: none;
 }
 
