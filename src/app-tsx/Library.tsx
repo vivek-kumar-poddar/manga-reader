@@ -293,7 +293,7 @@ export function Library({
               if (!busy && !desktopAPI.isDesktop) drop(Array.from(e.dataTransfer.items));
             }}
             className={
-              'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative transition-colors duration-300 cursor-pointer shadow ' +
+              'upload-zone group bg-white dark:bg-zinc-900 min-h-[350px] p-8 rounded w-full flex flex-col items-center justify-center relative cursor-pointer shadow ' +
               (drag ? 'dragging' : '')
             }
           >
@@ -319,10 +319,16 @@ export function Library({
                 <p>Drop manga folders here, or choose your files.</p>
                 <div className="upload-buttons">
                   <button className="btn blue" onClick={() => void pick()}>
-                    Choose a folder <UploadIcon size={16} />
+                    <span className="btn-label">Choose a folder</span>
+                    <span className="btn-icon-divider" aria-hidden="true">
+                      <UploadIcon size={16} />
+                    </span>
                   </button>
                   <button className="btn secondary" onClick={() => setSupported(true)}>
-                    <Info size={16} /> What’s supported
+                    <span className="btn-label">What’s supported</span>
+                    <span className="btn-icon-divider" aria-hidden="true">
+                      <Info size={16} />
+                    </span>
                   </button>
                 </div>
               </>

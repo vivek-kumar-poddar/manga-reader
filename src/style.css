@@ -438,8 +438,8 @@ a.icon-button:focus-visible {
   color: currentColor;
   stroke: currentColor;
   transition:
-    color 200ms ease,
-    stroke 200ms ease;
+    var(--transition),
+    stroke 300ms ease-in-out;
   width: calc(var(--font-size-button, 15px) * 1.15) !important;
   height: calc(var(--font-size-button, 15px) * 1.15) !important;
   flex-shrink: 0;
@@ -674,8 +674,8 @@ a.secondary.no-bookmark-browse-btn {
   color: currentColor;
   stroke: currentColor;
   transition:
-    color 200ms ease,
-    stroke 200ms ease;
+    var(--transition),
+    stroke 300ms ease-in-out;
 }
 
 .close-btn:hover,
@@ -902,7 +902,9 @@ a.secondary.no-bookmark-browse-btn {
 
 /* Standard Controls Structure (Select/Inputs) */
 select,
-input[type='number'] {
+input[type='number'],
+input[type='text'],
+input[type='search'] {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
@@ -911,18 +913,22 @@ input[type='number'] {
   font-size: 16px;
   max-width: 100%;
   min-height: 35px;
+  transition: var(--transition);
 }
 
 select {
   outline: none !important;
   box-shadow: none !important;
   transition:
-    border-color 0.35s ease,
-    border-width 0.35s ease,
-    padding 0.35s ease;
+    var(--transition),
+    border-width 300ms ease-in-out,
+    padding 300ms ease-in-out;
 }
 
-select:hover {
+select:hover,
+input[type='number']:hover,
+input[type='text']:hover,
+input[type='search']:hover {
   border-color: var(--muted);
 }
 
@@ -936,6 +942,13 @@ select:active {
   padding: 6px 8px;
 }
 
+input[type='number']:focus-visible,
+input[type='text']:focus-visible,
+input[type='search']:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
 input[type='checkbox'] {
   accent-color: var(--accent);
   width: 17px;
@@ -943,6 +956,10 @@ input[type='checkbox'] {
   flex-shrink: 0;
   margin: 0;
   cursor: pointer;
+  transition:
+    var(--transition),
+    accent-color 300ms ease-in-out,
+    opacity 300ms ease-in-out;
 }
 
 /* ==========================================================================
@@ -1067,9 +1084,7 @@ input[type='checkbox'] {
   background: var(--surface) !important;
   box-shadow: var(--card-shadow);
   gap: 0;
-  transition:
-    background-color 0.3s ease-in-out,
-    box-shadow 0.3s ease-in-out;
+  transition: var(--transition);
 }
 
 .upload-zone:hover,
@@ -1134,17 +1149,49 @@ input[type='checkbox'] {
 }
 
 .upload-zone .upload-buttons {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
   gap: 12px;
-  width: min(100%, 380px);
+  width: auto;
   margin: 28px 0 0;
 }
 
 .upload-zone .upload-buttons>.btn,
 .upload-zone .upload-buttons>button {
-  width: 100%;
-  min-height: max(44px, calc(var(--font-size-button, 15px) * 2.8));
+  width: auto;
+  min-width: 0;
+  min-height: var(--control-size);
+  padding: 0;
+  gap: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.upload-zone .upload-buttons .btn-label {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 14px;
+}
+
+.upload-zone .upload-buttons .btn-icon-divider {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  padding: 0 11px;
+  border-left: 1px solid rgba(0, 0, 0, 0.14);
+  transition: var(--transition);
+}
+
+.upload-zone .upload-buttons .btn.blue .btn-icon-divider {
+  border-left-color: rgba(255, 255, 255, 0.25);
+}
+
+:root.dark .upload-zone .upload-buttons .btn.secondary .btn-icon-divider,
+.dark .upload-zone .upload-buttons .btn.secondary .btn-icon-divider {
+  border-left-color: rgba(255, 255, 255, 0.14);
 }
 
 /* ==========================================================================
@@ -1249,9 +1296,7 @@ input[type='checkbox'] {
   box-shadow: var(--card-shadow);
   content-visibility: auto;
   contain-intrinsic-size: auto 350px auto 175px;
-  transition:
-    box-shadow 0.22s ease,
-    background-color 0.22s ease;
+  transition: var(--transition);
 }
 
 .manga-card:hover,
@@ -1327,7 +1372,7 @@ input[type='checkbox'] {
   color: var(--text);
   cursor: pointer;
   border-radius: inherit;
-  transition: background 0.15s ease;
+  transition: var(--transition);
   user-select: none;
 }
 
@@ -1383,7 +1428,7 @@ input[type='checkbox'] {
   height: 100%;
   background: var(--accent);
   border-radius: 4px;
-  transition: background-color 0.2s ease;
+  transition: var(--transition);
 }
 
 .manga-card:hover .reading-progress span,
@@ -1415,9 +1460,7 @@ input[type='checkbox'] {
   padding: 3px 6px;
   margin-left: -6px;
   border-radius: 5px;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
+  transition: var(--transition);
   user-select: none;
 }
 
@@ -1479,9 +1522,7 @@ summary.card-menu-trigger svg {
   padding: 4px;
   border-radius: 5px;
   line-height: 1;
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
+  transition: var(--transition);
 }
 
 .manga-bookmark-btn:hover,
@@ -1540,7 +1581,7 @@ summary.card-menu-trigger svg {
   font-family: inherit;
   text-align: left;
   font-weight: 500;
-  transition: color 0.15s ease;
+  transition: var(--transition);
 }
 
 .relink-needed-btn:hover,
@@ -1572,6 +1613,7 @@ summary.card-menu-trigger svg {
   border-radius: 5px;
   display: grid;
   place-items: center;
+  transition: var(--transition);
 }
 
 .card-menu summary::-webkit-details-marker {
@@ -1581,8 +1623,9 @@ summary.card-menu-trigger svg {
 .card-menu summary svg {
   grid-area: 1 / 1;
   transition:
-    opacity 0.3s ease-in-out,
-    transform 0.3s ease-in-out;
+    var(--transition),
+    opacity 300ms ease-in-out,
+    transform 300ms ease-in-out;
 }
 
 .card-menu .card-menu-close {
@@ -1610,9 +1653,7 @@ summary.card-menu-trigger svg {
   padding: 4px;
   border-radius: 5px;
   color: var(--muted);
-  transition:
-    color 0.15s ease,
-    background-color 0.15s ease;
+  transition: var(--transition);
 }
 
 .manga-card-bottom .card-menu summary:hover,
@@ -1662,6 +1703,7 @@ summary.card-menu-trigger svg {
   border-radius: 4px;
   margin: 2px 0;
   box-shadow: none;
+  transition: var(--transition);
 }
 
 .menu-popover button:hover {
@@ -1869,7 +1911,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   background: var(--surface);
   border-radius: 9px;
   box-shadow: var(--card-shadow);
-  transition: box-shadow 180ms ease;
+  transition: var(--transition);
 }
 
 .bookmark-card:hover {
@@ -1957,6 +1999,9 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   --control-size: 32px;
   opacity: 0;
   pointer-events: none;
+  transition:
+    var(--transition),
+    opacity 300ms ease-in-out;
 }
 
 .bookmark-card:hover .bookmark-remove,
@@ -2010,11 +2055,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   cursor: pointer;
   line-height: 1.2;
   box-shadow: none !important;
-  transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    box-shadow 160ms ease;
+  transition: var(--transition);
 }
 
 :root.dark .bookmark-tab-button {
@@ -2249,9 +2290,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   box-shadow: var(--card-shadow);
   text-decoration: none;
   overflow-wrap: anywhere;
-  transition:
-    box-shadow 0.3s ease-in-out,
-    background-color 0.3s ease-in-out;
+  transition: var(--transition);
 }
 
 .chapter-card:hover,
@@ -2276,14 +2315,19 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   background: var(--btn-dark);
   color: var(--muted);
   box-shadow: var(--card-shadow);
-  transition:
-    box-shadow 0.3s ease-in-out,
-    background-color 0.3s ease-in-out;
+  transition: var(--transition);
 }
 
 .chapter-search:hover,
 .chapter-search:focus-within {
-  background: var(--btn-hover);
+  background: color-mix(in srgb, var(--btn-dark) 65%, #000);
+}
+
+:root.dark .chapter-search:hover,
+.dark .chapter-search:hover,
+:root.dark .chapter-search:focus-within,
+.dark .chapter-search:focus-within {
+  background: color-mix(in srgb, var(--btn-dark) 78%, #fff);
 }
 
 .chapter-search input {
@@ -2296,6 +2340,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   color: var(--text);
   outline: none;
   box-shadow: none;
+  transition: var(--transition);
 }
 
 .chapter-search svg {
@@ -2718,6 +2763,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   background: transparent !important;
   border-color: transparent !important;
   font-size: var(--font-size-button, 14px) !important;
+  transition: var(--transition);
 }
 
 .current-page-input::-webkit-inner-spin-button,
@@ -2846,6 +2892,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   user-select: none;
   cursor: pointer;
   box-sizing: border-box;
+  transition: var(--transition);
 }
 
 .zoom-trigger .zoom-value,
@@ -3336,10 +3383,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   padding: 8px 14px;
   font-size: var(--font-size-ui, 15px);
   color: var(--muted);
-  transition:
-    color 0.2s ease,
-    background-color 0.2s ease,
-    border-color 0.2s ease;
+  transition: var(--transition);
 }
 
 .settings-tabs button.btn[aria-selected='true'],
@@ -3611,6 +3655,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   margin-left: 6px;
   padding: 6px 10px;
   text-decoration: none;
+  transition: var(--transition);
 }
 
 .update-banner button:disabled {
@@ -3756,9 +3801,7 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   background: var(--surface);
   color: var(--text);
   font-size: 16px;
-  transition:
-    border-color 0.35s ease,
-    background-color 0.35s ease;
+  transition: var(--transition);
 }
 
 .import-options {
@@ -4217,7 +4260,6 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
   .upload-buttons>.btn,
   .upload-buttons>button {
     font-size: var(--font-size-button, 15px) !important;
-    padding: 10px 12px;
   }
 
   .manga-grid {
@@ -4532,8 +4574,6 @@ button.btn.icon:is(.next-chapter-btn, .prev-chapter-btn):not(:disabled):hover {
 
 @media (max-width: 390px) {
   .upload-zone .upload-buttons {
-    grid-template-columns: 1fr;
-    width: min(100%, 240px);
     gap: 10px;
   }
 }
